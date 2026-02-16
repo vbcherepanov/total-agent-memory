@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+sdist/
+wheels/
+*.whl
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Type checking
+.mypy_cache/
+.pytype/
+.pyre/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Memory data (user-specific, not committed)
+*.db
+*.db-wal
+*.db-shm
+chroma/
+raw/
+transcripts/
+queue/
+backups/
+extract-queue/
+
+# ChromaDB / ML model cache
+.chromadb/
+model_cache/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Distribution / packaging
+*.tar.gz
+*.zip
+
+# Jupyter (if used for dev)
+.ipynb_checkpoints/

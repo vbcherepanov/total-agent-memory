@@ -1,0 +1,61 @@
+# Memory System
+
+Persistent memory is available via MCP tools. Use it to build on past experience.
+
+## Before starting any task — SEARCH:
+```
+memory_recall(query="description of your current task", project="project-name")
+```
+
+## Save important knowledge:
+```
+memory_save(content="what was decided and WHY", type="decision", project="project-name", tags=["relevant", "tags"], context="Why this decision was made")
+```
+
+## Knowledge types:
+| Type | When | Example |
+|------|------|---------|
+| `decision` | Architectural choice (include WHY) | "Chose PostgreSQL over MySQL because..." |
+| `solution` | Bug fix / workaround | "Fixed timeout by chunking to 50 items" |
+| `lesson` | Gotcha / pitfall | "API returns 200 but hangs on >50 items" |
+| `fact` | Config / version / endpoint | "Production DB: pg18 on port 5433" |
+| `convention` | Project pattern / rule | "All DTOs must be readonly classes" |
+
+## Browse history:
+```
+memory_timeline(sessions_ago=100)
+memory_timeline(date_from="2025-01-01", date_to="2025-01-31")
+memory_timeline(query="docker networking")
+```
+
+## Maintenance:
+```
+memory_stats()                                    # View health metrics
+memory_consolidate(dry_run=true)                  # Preview duplicate merges
+memory_consolidate(dry_run=false)                 # Execute merge
+memory_export(project="my-project")               # Backup to JSON
+memory_forget(dry_run=true)                       # Preview retention cleanup
+memory_update(find="old fact", new_content="new") # Update existing knowledge
+```
+
+## Advanced tools:
+```
+memory_recall(query="topic", detail="summary")       # Token-saving mode (150 chars)
+memory_history(id=42)                                # Version history for a record
+memory_delete(id=42)                                 # Soft-delete a record
+memory_relate(from_id=1, to_id=2, type="solution")  # Link related records
+memory_search_by_tag(tag="docker")                   # Browse by tag
+memory_extract_session(action="list")                # Pending transcript extractions
+```
+
+## Web Dashboard:
+```bash
+python src/dashboard.py   # Open http://localhost:37737
+```
+
+## Auto-save triggers (save automatically after):
+- Architectural decisions (type=decision, include WHY)
+- Non-trivial bug fixes (type=solution)
+- Gotchas/pitfalls (type=lesson)
+- Infrastructure setup (type=fact)
+- Project conventions (type=convention)

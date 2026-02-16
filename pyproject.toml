@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-total-memory"
+version = "2.2.0"
+description = "Persistent memory MCP server for Claude Code — 4-tier search, BM25 scoring, knowledge graph, web dashboard, and 13 tools"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["claude", "mcp", "memory", "ai", "llm", "claude-code", "persistent-memory"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "chromadb>=0.4.0",
+    "sentence-transformers>=2.2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/vbcherepanov/claude-total-memory"
+Repository = "https://github.com/vbcherepanov/claude-total-memory"
+Issues = "https://github.com/vbcherepanov/claude-total-memory/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["claude_total_memory*"]
