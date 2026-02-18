@@ -66,7 +66,8 @@ $VenvPython = Join-Path $VenvDir "Scripts" "python.exe"
 $VenvPip = Join-Path $VenvDir "Scripts" "pip.exe"
 
 if (Test-Path $VenvPython) {
-    Write-Host "  Existing venv found, reusing..."
+    Write-Host "  Existing venv found, updating dependencies..."
+    & $VenvPip install -q --upgrade "mcp[cli]>=1.0.0" chromadb sentence-transformers 2>&1 | Select-Object -Last 1
 } else {
     Write-Host "  Creating virtual environment..."
     & $pythonCmd -m venv $VenvDir
@@ -106,13 +107,21 @@ $PyPathToml = $VenvPython.Replace("\", "/")
 $SrvPathToml = $SrvPath.Replace("\", "/")
 $MemoryDirToml = $MemoryDir.Replace("\", "/")
 
+$env:_CTM_CONFIG = $CodexConfig
+$env:_CTM_PY = $PyPathToml
+$env:_CTM_SRV = $SrvPathToml
+$env:_CTM_MEM = $MemoryDirToml
+
 & $VenvPython -c @"
 import os, re
 
-config_path = r'$CodexConfig'
-py_path = '$PyPathToml'
-srv_path = '$SrvPathToml'
-memory_dir = '$MemoryDirToml'
+config_path = os.environ['_CTM_CONFIG']
+# Escape backslashes and double quotes for safe TOML embedding
+def toml_escape(s):
+    return s.replace('\\', '/').replace('"', '\\"')
+py_path = toml_escape(os.environ['_CTM_PY'])
+srv_path = toml_escape(os.environ['_CTM_SRV'])
+memory_dir = toml_escape(os.environ['_CTM_MEM'])
 
 toml_block = f'''
 # --- Claude Total Memory MCP Server ---
@@ -145,9 +154,16 @@ else:
     content = content.rstrip() + '\n' + toml_block
     print('  OK: Added memory config to ' + config_path)
 
+content = content.lstrip('\n')
 with open(config_path, 'w') as f:
     f.write(content)
 "@
+
+# Clean up temp env vars
+Remove-Item Env:\_CTM_CONFIG -ErrorAction SilentlyContinue
+Remove-Item Env:\_CTM_PY -ErrorAction SilentlyContinue
+Remove-Item Env:\_CTM_SRV -ErrorAction SilentlyContinue
+Remove-Item Env:\_CTM_MEM -ErrorAction SilentlyContinue
 
 # -- 5. Install Codex Skill --
 Write-Host "-> Step 5: Installing memory skill..." -ForegroundColor Yellow
@@ -174,9 +190,18 @@ $TaskName = "ClaudeTotalMemoryDashboard"
 try { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue } catch {}
 
 try {
+    # Create wrapper script to pass environment variables to dashboard
+    $WrapperPath = Join-Path $InstallDir "start-dashboard.cmd"
+    @"
+@echo off
+set CLAUDE_MEMORY_DIR=$MemoryDir
+set DASHBOARD_PORT=37737
+"$VenvPython" "$DashboardPath"
+"@ | Set-Content -Path $WrapperPath -Encoding ASCII
+
     $Action = New-ScheduledTaskAction `
-        -Execute $VenvPython `
-        -Argument "`"$DashboardPath`"" `
+        -Execute "cmd.exe" `
+        -Argument "/c `"$WrapperPath`"" `
         -WorkingDirectory $InstallDir
 
     $Trigger = New-ScheduledTaskTrigger -AtLogon

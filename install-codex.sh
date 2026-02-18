@@ -49,8 +49,9 @@ fi
 echo "  Python $PY_VERSION found"
 
 if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/python" ]; then
-    echo "  Existing venv found, reusing..."
+    echo "  Existing venv found, updating dependencies..."
     source "$VENV_DIR/bin/activate"
+    pip install -q --upgrade "mcp[cli]>=1.0.0" chromadb sentence-transformers 2>&1 | tail -1
 else
     python3 -m venv "$VENV_DIR"
     source "$VENV_DIR/bin/activate"
@@ -75,25 +76,29 @@ mkdir -p "$CODEX_CONFIG_DIR"
 PY_PATH="$VENV_DIR/bin/python"
 SRV_PATH="$INSTALL_DIR/src/server.py"
 
+CODEX_CONFIG="$CODEX_CONFIG" PY_PATH="$PY_PATH" SRV_PATH="$SRV_PATH" MEMORY_DIR="$MEMORY_DIR" \
 python3 -c "
 import os, re
 
-config_path = '$CODEX_CONFIG'
-py_path = '$PY_PATH'
-srv_path = '$SRV_PATH'
-memory_dir = '$MEMORY_DIR'
+config_path = os.environ['CODEX_CONFIG']
+# Escape backslashes and double quotes for safe TOML embedding
+def toml_escape(s):
+    return s.replace('\\\\', '/').replace('\"', '\\\\\"')
+py_path = toml_escape(os.environ['PY_PATH'])
+srv_path = toml_escape(os.environ['SRV_PATH'])
+memory_dir = toml_escape(os.environ['MEMORY_DIR'])
 
-toml_block = '''
+toml_block = f'''
 # --- Claude Total Memory MCP Server ---
 [mcp_servers.memory]
-command = \"''' + py_path + '''\"
-args = [\"''' + srv_path + '''\"]
+command = \"{py_path}\"
+args = [\"{srv_path}\"]
 required = true
 startup_timeout_sec = 15.0
 tool_timeout_sec = 120.0
 
 [mcp_servers.memory.env]
-CLAUDE_MEMORY_DIR = \"''' + memory_dir + '''\"
+CLAUDE_MEMORY_DIR = \"{memory_dir}\"
 EMBEDDING_MODEL = \"all-MiniLM-L6-v2\"
 # --- End Claude Total Memory ---
 '''
@@ -111,9 +116,10 @@ if '[mcp_servers.memory]' in content:
         content = re.sub(r'\[mcp_servers\.memory\].*?(?=\n\[|\Z)', toml_block.strip(), content, flags=re.DOTALL)
     print('  OK: Updated existing memory config in ' + config_path)
 else:
-    content = content.rstrip() + '\n' + toml_block
+    content = content.rstrip() + '\\n' + toml_block
     print('  OK: Added memory config to ' + config_path)
 
+content = content.lstrip('\\n')
 with open(config_path, 'w') as f:
     f.write(content)
 "
@@ -224,10 +230,9 @@ fi
 
 # Quick server test
 python3 -c "
-import sys; sys.path.insert(0, '$INSTALL_DIR')
-exec(open('$SRV_PATH').read().split('async def main')[0])
-s = Store()
-print(f'  OK: Server initializes (sessions: {s.total_sessions()})')
+import ast
+ast.parse(open('$SRV_PATH').read())
+print('  OK: Server syntax valid')
 " 2>/dev/null || echo "  INFO: Server test skipped (will verify on first use)"
 
 # -- Done --

@@ -9,4 +9,4 @@ dependencies:
   tools:
     - type: "mcp"
       value: "memory"
-      description: "Claude Total Memory MCP server — 20 tools for persistent knowledge storage, 4-tier search (keyword, semantic, fuzzy, graph), self-improving error-to-insight-to-rule pipeline, privacy stripping, branch-aware context, and observations tracking"
+      description: "Total Memory MCP server — 20 tools for persistent knowledge storage, 4-tier search (keyword, semantic, fuzzy, graph), self-improving error-to-insight-to-rule pipeline, privacy stripping, branch-aware context, and observations tracking"
