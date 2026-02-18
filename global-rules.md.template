@@ -74,3 +74,21 @@ memory_stats()                        # Check health score
 memory_consolidate(dry_run=true)      # Preview merging similar records
 memory_forget(dry_run=true)           # Preview archiving stale records
 ```
+
+### Self-Improvement — automatic error learning
+
+At session start, load behavioral rules learned from past mistakes:
+```
+self_rules_context(project="<project-name>")
+```
+
+When any error occurs during work (command failure, wrong assumption, timeout),
+log it automatically — do not ask the user:
+```
+self_error_log(description="what happened", category="code_error|api_error|...", fix="how fixed", project="<project>")
+```
+
+At session end, record a brief reflection:
+```
+self_reflect(reflection="key takeaways", task_summary="what was done", outcome="success|partial|failure")
+```

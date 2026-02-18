@@ -26,7 +26,7 @@ MEMORY_DIR = Path(os.environ.get("CLAUDE_MEMORY_DIR", os.path.expanduser("~/.cla
 DB_PATH = MEMORY_DIR / "memory.db"
 
 
-def get_db():
+def get_db() -> sqlite3.Connection | None:
     """Open a read-only SQLite connection with WAL mode."""
     if not DB_PATH.exists():
         return None
@@ -36,7 +36,7 @@ def get_db():
     return db
 
 
-def q(db, sql, params=()):
+def q(db: sqlite3.Connection, sql: str, params: tuple = ()) -> list[dict]:
     """Execute a query and return a list of dicts."""
     try:
         return [dict(r) for r in db.execute(sql, params).fetchall()]
@@ -44,7 +44,7 @@ def q(db, sql, params=()):
         return []
 
 
-def q1(db, sql, params=()):
+def q1(db: sqlite3.Connection, sql: str, params: tuple = ()) -> dict | None:
     """Execute a query and return a single dict or None."""
     try:
         r = db.execute(sql, params).fetchone()
@@ -53,7 +53,7 @@ def q1(db, sql, params=()):
         return None
 
 
-def api_stats(db):
+def api_stats(db: sqlite3.Connection) -> dict:
     """Gather statistics about the memory database."""
     total_knowledge = db.execute(
         "SELECT COUNT(*) FROM knowledge WHERE status='active'"
@@ -114,10 +114,17 @@ def api_stats(db):
     }
 
 
-def api_knowledge(db, search=None, ktype=None, project=None, page=1, limit=50):
+def api_knowledge(
+    db: sqlite3.Connection,
+    search: str | None = None,
+    ktype: str | None = None,
+    project: str | None = None,
+    page: int = 1,
+    limit: int = 50,
+) -> dict:
     """Paginated knowledge listing with optional filters."""
     conds = ["status='active'"]
-    params = []
+    params: list = []
 
     if search:
         conds.append("(content LIKE ? OR context LIKE ? OR tags LIKE ?)")
@@ -163,7 +170,7 @@ def api_knowledge(db, search=None, ktype=None, project=None, page=1, limit=50):
     }
 
 
-def api_knowledge_detail(db, kid):
+def api_knowledge_detail(db: sqlite3.Connection, kid: int) -> dict | None:
     """Single knowledge record with full content and version history."""
     record = q1(db, "SELECT * FROM knowledge WHERE id=?", (kid,))
     if not record:
@@ -175,7 +182,9 @@ def api_knowledge_detail(db, kid):
         except Exception:
             record["tags"] = []
 
-    history = []
+    # Build superseded chain (version history)
+    history: list[dict] = []
+    # Find records that this one superseded
     predecessors = q(
         db,
         "SELECT id, content, created_at, status FROM knowledge WHERE superseded_by=?",
@@ -184,6 +193,7 @@ def api_knowledge_detail(db, kid):
     for p in predecessors:
         history.append({**p, "relation": "superseded_by_this"})
 
+    # Find what supersedes this record
     if record.get("superseded_by"):
         successor = q1(
             db,
@@ -197,7 +207,7 @@ def api_knowledge_detail(db, kid):
     return record
 
 
-def api_sessions(db, limit=20):
+def api_sessions(db: sqlite3.Connection, limit: int = 20) -> list[dict]:
     """Recent sessions with knowledge count."""
     sessions = q(
         db,
@@ -212,7 +222,7 @@ def api_sessions(db, limit=20):
     return sessions
 
 
-def api_graph(db):
+def api_graph(db: sqlite3.Connection) -> dict:
     """Nodes and edges for the graph visualization."""
     nodes = q(
         db,
@@ -233,6 +243,169 @@ def api_graph(db):
     ]
 
     return {"nodes": nodes, "edges": edges}
+
+
+def api_errors(
+    db: sqlite3.Connection,
+    category: str | None = None,
+    project: str | None = None,
+    page: int = 1,
+    limit: int = 50,
+) -> dict:
+    """Paginated error listing with optional filters."""
+    try:
+        conds: list[str] = []
+        params: list = []
+
+        if category:
+            conds.append("category=?")
+            params.append(category)
+        if project:
+            conds.append("project=?")
+            params.append(project)
+
+        where = (" WHERE " + " AND ".join(conds)) if conds else ""
+
+        total = db.execute(
+            f"SELECT COUNT(*) FROM errors{where}", params
+        ).fetchone()[0]
+
+        offset = (page - 1) * limit
+        rows = q(
+            db,
+            f"""SELECT id, category, severity, description, context,
+                       fix, status, project, tags, created_at
+                FROM errors{where}
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?""",
+            (*params, limit, offset),
+        )
+
+        return {
+            "items": rows,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": max(1, (total + limit - 1) // limit),
+        }
+    except Exception:
+        return {"items": [], "total": 0, "page": 1, "limit": limit, "pages": 1}
+
+
+def api_insights(
+    db: sqlite3.Connection,
+    project: str | None = None,
+) -> list[dict]:
+    """Active insights ordered by importance."""
+    try:
+        conds = ["status='active'"]
+        params: list = []
+
+        if project:
+            conds.append("project=?")
+            params.append(project)
+
+        where = " AND ".join(conds)
+
+        rows = q(
+            db,
+            f"""SELECT id, content, category, importance, confidence,
+                       source_error_ids, status, project, created_at
+                FROM insights
+                WHERE {where}
+                ORDER BY importance DESC""",
+            tuple(params),
+        )
+
+        for row in rows:
+            row["promotion_eligible"] = (
+                (row.get("importance") or 0) >= 5
+                and (row.get("confidence") or 0) >= 0.8
+            )
+
+        return rows
+    except Exception:
+        return []
+
+
+def api_rules(
+    db: sqlite3.Connection,
+    project: str | None = None,
+) -> list[dict]:
+    """Active and suspended rules ordered by priority."""
+    try:
+        conds = ["status != 'retired'"]
+        params: list = []
+
+        if project:
+            conds.append("(scope='global' OR project=?)")
+            params.append(project)
+
+        where = " AND ".join(conds)
+
+        rows = q(
+            db,
+            f"""SELECT id, content, category, scope, priority,
+                       fire_count, success_rate, status, project, created_at
+                FROM rules
+                WHERE {where}
+                ORDER BY priority DESC, success_rate DESC""",
+            tuple(params),
+        )
+
+        return rows
+    except Exception:
+        return []
+
+
+def api_self_improvement(db: sqlite3.Connection) -> dict:
+    """Summary stats for the self-improving agent feature."""
+    result: dict = {
+        "error_count": 0,
+        "errors_by_category": {},
+        "insight_count": 0,
+        "rule_count": 0,
+        "avg_success_rate": 0.0,
+    }
+
+    try:
+        result["error_count"] = db.execute(
+            "SELECT COUNT(*) FROM errors"
+        ).fetchone()[0]
+    except Exception:
+        pass
+
+    try:
+        rows = db.execute(
+            "SELECT category, COUNT(*) FROM errors GROUP BY category"
+        ).fetchall()
+        result["errors_by_category"] = dict(rows)
+    except Exception:
+        pass
+
+    try:
+        result["insight_count"] = db.execute(
+            "SELECT COUNT(*) FROM insights WHERE status='active'"
+        ).fetchone()[0]
+    except Exception:
+        pass
+
+    try:
+        result["rule_count"] = db.execute(
+            "SELECT COUNT(*) FROM rules WHERE status='active'"
+        ).fetchone()[0]
+    except Exception:
+        pass
+
+    try:
+        row = db.execute(
+            "SELECT AVG(success_rate) FROM rules WHERE status='active'"
+        ).fetchone()
+        result["avg_success_rate"] = round(row[0] or 0.0, 2)
+    except Exception:
+        pass
+
+    return result
 
 
 # ============================================================
@@ -263,6 +436,13 @@ HTML_PAGE = r"""<!DOCTYPE html>
     --solution: #22c55e;
     --lesson: #ef4444;
     --convention: #8b5cf6;
+
+    --error-low: #94a3b8;
+    --error-medium: #f59e0b;
+    --error-high: #ef4444;
+    --error-critical: #dc2626;
+    --insight-color: #8b5cf6;
+    --rule-color: #06b6d4;
 }
 
 body {
@@ -275,6 +455,7 @@ body {
 
 .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
 
+/* Header */
 header {
     display: flex;
     align-items: center;
@@ -287,6 +468,7 @@ header h1 { font-size: 24px; font-weight: 700; }
 header h1 span { color: var(--accent); }
 header .subtitle { color: var(--text-dim); font-size: 14px; }
 
+/* Stats cards */
 .stats-row {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -305,6 +487,7 @@ header .subtitle { color: var(--text-dim); font-size: 14px; }
 .stat-card .value.green { color: var(--solution); }
 .stat-card .value.amber { color: var(--decision); }
 
+/* Tabs */
 .tabs {
     display: flex;
     gap: 4px;
@@ -329,6 +512,7 @@ header .subtitle { color: var(--text-dim); font-size: 14px; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 
+/* Filters */
 .filters {
     display: flex;
     gap: 12px;
@@ -350,6 +534,7 @@ header .subtitle { color: var(--text-dim); font-size: 14px; }
 .filters input { flex: 1; min-width: 200px; }
 .filters select { min-width: 140px; }
 
+/* Table */
 .table-wrap { overflow-x: auto; }
 table {
     width: 100%;
@@ -379,6 +564,7 @@ td.content-col { max-width: 400px; overflow: hidden; text-overflow: ellipsis; wh
 td.num-col { text-align: right; font-family: monospace; }
 td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
 
+/* Badge */
 .badge {
     display: inline-block;
     padding: 2px 8px;
@@ -394,6 +580,7 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
 .badge-lesson    { background: rgba(239,68,68,0.15); color: var(--lesson); }
 .badge-convention{ background: rgba(139,92,246,0.15); color: var(--convention); }
 
+/* Pagination */
 .pagination {
     display: flex;
     align-items: center;
@@ -415,6 +602,7 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
 .pagination button:disabled { opacity: 0.4; cursor: default; }
 .pagination .page-info { color: var(--text-dim); font-size: 13px; }
 
+/* Modal */
 .modal-overlay {
     display: none;
     position: fixed;
@@ -503,6 +691,99 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
     margin-bottom: 4px;
 }
 
+/* Severity badges */
+.badge-low      { background: rgba(148,163,184,0.15); color: var(--error-low); }
+.badge-medium   { background: rgba(245,158,11,0.15); color: var(--error-medium); }
+.badge-high     { background: rgba(239,68,68,0.15); color: var(--error-high); }
+.badge-critical { background: rgba(220,38,38,0.2); color: var(--error-critical); font-weight: 700; }
+
+/* Status badges for self-improvement */
+.badge-active    { background: rgba(6,182,212,0.15); color: var(--rule-color); }
+.badge-suspended { background: rgba(245,158,11,0.15); color: var(--error-medium); }
+.badge-retired   { background: rgba(148,163,184,0.15); color: var(--error-low); }
+.badge-resolved  { background: rgba(34,197,94,0.15); color: var(--solution); }
+.badge-pending   { background: rgba(59,130,246,0.15); color: var(--fact); }
+
+/* Importance badge */
+.badge-importance {
+    background: rgba(139,92,246,0.15);
+    color: var(--insight-color);
+    min-width: 28px;
+    text-align: center;
+}
+
+/* Priority badge */
+.badge-priority {
+    background: rgba(6,182,212,0.15);
+    color: var(--rule-color);
+    min-width: 28px;
+    text-align: center;
+}
+.badge-priority.high-priority {
+    background: rgba(239,68,68,0.15);
+    color: var(--error-high);
+}
+
+/* Progress bar for success rate */
+.progress-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 120px;
+}
+.progress-bar .bar {
+    flex: 1;
+    height: 6px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 3px;
+    overflow: hidden;
+    min-width: 60px;
+}
+.progress-bar .bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s;
+}
+.progress-bar .bar-label {
+    font-size: 12px;
+    font-family: monospace;
+    color: var(--text-dim);
+    min-width: 36px;
+    text-align: right;
+}
+
+/* Promotion eligible indicator */
+.promo-eligible {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--solution);
+    box-shadow: 0 0 6px rgba(34,197,94,0.5);
+}
+.promo-not-eligible {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--border);
+}
+
+/* Section divider within a tab */
+.section-divider {
+    margin: 32px 0 20px 0;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+}
+.section-divider .section-icon {
+    color: var(--insight-color);
+    margin-right: 8px;
+}
+
+/* Graph */
 #graph-canvas {
     width: 100%;
     height: 600px;
@@ -528,6 +809,7 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
 #graph-tooltip .tt-type { font-size: 11px; text-transform: uppercase; margin-bottom: 4px; }
 #graph-tooltip .tt-content { line-height: 1.5; }
 
+/* Loading / Error */
 .loading {
     text-align: center;
     padding: 60px 20px;
@@ -542,6 +824,7 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
     color: var(--lesson);
 }
 
+/* Responsive */
 @media (max-width: 768px) {
     .stats-row { grid-template-columns: repeat(2, 1fr); }
     .filters { flex-direction: column; }
@@ -567,14 +850,22 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
         <div class="stat-card"><div class="label">Projects</div><div class="value" id="stat-projects">--</div></div>
         <div class="stat-card"><div class="label">Health Score</div><div class="value green" id="stat-health">--</div></div>
         <div class="stat-card"><div class="label">Storage</div><div class="value" id="stat-storage">--</div></div>
+        <div class="stat-card">
+            <div class="label">Self-Improvement</div>
+            <div class="value" id="stat-si" style="color: var(--rule-color)">--</div>
+            <div class="label" id="stat-si-detail">-- errors, -- insights, -- rules</div>
+        </div>
     </div>
 
     <div class="tabs">
         <button class="tab active" data-tab="knowledge">Knowledge</button>
         <button class="tab" data-tab="sessions">Sessions</button>
         <button class="tab" data-tab="graph">Graph</button>
+        <button class="tab" data-tab="self-improvement">Self-Improvement</button>
+        <button class="tab" data-tab="rules">Rules (SOUL)</button>
     </div>
 
+    <!-- Knowledge Tab -->
     <div class="tab-content active" id="tab-knowledge">
         <div class="filters">
             <input type="text" id="search-input" placeholder="Search knowledge...">
@@ -604,6 +895,7 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
         </div>
     </div>
 
+    <!-- Sessions Tab -->
     <div class="tab-content" id="tab-sessions">
         <div class="table-wrap">
             <table>
@@ -621,6 +913,7 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
         </div>
     </div>
 
+    <!-- Graph Tab -->
     <div class="tab-content" id="tab-graph">
         <canvas id="graph-canvas"></canvas>
         <div id="graph-tooltip">
@@ -628,8 +921,82 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
             <div class="tt-content"></div>
         </div>
     </div>
+
+    <!-- Self-Improvement Tab -->
+    <div class="tab-content" id="tab-self-improvement">
+        <div class="filters">
+            <select id="si-category-filter"><option value="">All categories</option></select>
+            <select id="si-project-filter"><option value="">All projects</option></select>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Category</th>
+                        <th>Severity</th>
+                        <th>Description</th>
+                        <th>Fix</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody id="errors-body"></tbody>
+            </table>
+        </div>
+        <div class="pagination" id="errors-pagination">
+            <button id="errors-prev-btn" disabled>&laquo; Prev</button>
+            <span class="page-info" id="errors-page-info">Page 1</span>
+            <button id="errors-next-btn">&raquo; Next</button>
+        </div>
+
+        <div class="section-divider"><span class="section-icon">&#9670;</span>Insights</div>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Content</th>
+                        <th>Category</th>
+                        <th>Importance</th>
+                        <th>Confidence</th>
+                        <th>Status</th>
+                        <th>Promotion</th>
+                    </tr>
+                </thead>
+                <tbody id="insights-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Rules Tab -->
+    <div class="tab-content" id="tab-rules">
+        <div class="filters">
+            <select id="rules-project-filter"><option value="">All projects</option></select>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Content</th>
+                        <th>Category</th>
+                        <th>Scope</th>
+                        <th>Priority</th>
+                        <th>Fire Count</th>
+                        <th>Success Rate</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="rules-body"></tbody>
+            </table>
+        </div>
+    </div>
 </div>
 
+<!-- Detail Modal -->
 <div class="modal-overlay" id="detail-modal">
     <div class="modal">
         <button class="modal-close" id="modal-close">&times;</button>
@@ -655,6 +1022,9 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
 </div>
 
 <script>
+// ============================================================
+// State
+// ============================================================
 let currentPage = 1;
 const pageLimit = 50;
 let totalPages = 1;
@@ -669,6 +1039,9 @@ const typeColors = {
     convention: '#8b5cf6',
 };
 
+// ============================================================
+// API helpers
+// ============================================================
 async function api(path) {
     const resp = await fetch(path);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -696,8 +1069,13 @@ function formatDate(iso) {
     } catch { return iso; }
 }
 
-function badgeClass(type) { return 'badge badge-' + (type || 'fact'); }
+function badgeClass(type) {
+    return 'badge badge-' + (type || 'fact');
+}
 
+// ============================================================
+// Stats
+// ============================================================
 async function loadStats() {
     try {
         const s = await api('/api/stats');
@@ -707,6 +1085,7 @@ async function loadStats() {
         document.getElementById('stat-health').textContent = (s.health_score * 100).toFixed(0) + '%';
         document.getElementById('stat-storage').textContent = s.storage_mb.toFixed(1) + ' MB';
 
+        // Populate filters
         const typeSelect = document.getElementById('type-filter');
         for (const t of Object.keys(s.by_type).sort()) {
             const opt = document.createElement('option');
@@ -727,6 +1106,9 @@ async function loadStats() {
     }
 }
 
+// ============================================================
+// Knowledge table
+// ============================================================
 async function loadKnowledge() {
     const search = document.getElementById('search-input').value;
     const type = document.getElementById('type-filter').value;
@@ -773,6 +1155,9 @@ async function loadKnowledge() {
     }
 }
 
+// ============================================================
+// Detail modal
+// ============================================================
 async function openDetail(id) {
     try {
         const r = await api('/api/knowledge/' + id);
@@ -796,8 +1181,12 @@ async function openDetail(id) {
 
         const ctxSection = document.getElementById('modal-context-section');
         const ctxBody = document.getElementById('modal-context');
-        if (r.context) { ctxSection.style.display = ''; ctxBody.textContent = r.context; }
-        else { ctxSection.style.display = 'none'; }
+        if (r.context) {
+            ctxSection.style.display = '';
+            ctxBody.textContent = r.context;
+        } else {
+            ctxSection.style.display = 'none';
+        }
 
         const tagsSection = document.getElementById('modal-tags-section');
         const tagsEl = document.getElementById('modal-tags');
@@ -805,7 +1194,9 @@ async function openDetail(id) {
         if (tags.length > 0) {
             tagsSection.style.display = '';
             tagsEl.innerHTML = tags.map(t => '<span class="tag">' + escapeHtml(t) + '</span>').join('');
-        } else { tagsSection.style.display = 'none'; }
+        } else {
+            tagsSection.style.display = 'none';
+        }
 
         const histSection = document.getElementById('modal-history-section');
         const histEl = document.getElementById('modal-history');
@@ -819,18 +1210,27 @@ async function openDetail(id) {
                 '<div style="color:var(--text-dim);font-size:12px;margin-top:4px">' + formatDate(h.created_at) + '</div>' +
                 '</div>'
             ).join('');
-        } else { histSection.style.display = 'none'; }
+        } else {
+            histSection.style.display = 'none';
+        }
 
         document.getElementById('detail-modal').classList.add('open');
-    } catch (e) { console.error('Failed to load detail:', e); }
+    } catch (e) {
+        console.error('Failed to load detail:', e);
+    }
 }
 
 function metaItem(label, value) {
     return '<div class="meta-item"><div class="meta-label">' + label + '</div><div class="meta-value">' + value + '</div></div>';
 }
 
-function closeModal() { document.getElementById('detail-modal').classList.remove('open'); }
+function closeModal() {
+    document.getElementById('detail-modal').classList.remove('open');
+}
 
+// ============================================================
+// Sessions
+// ============================================================
 async function loadSessions() {
     try {
         const sessions = await api('/api/sessions?limit=50');
@@ -855,6 +1255,223 @@ async function loadSessions() {
     }
 }
 
+// ============================================================
+// Self-Improvement: Errors + Insights
+// ============================================================
+let errorsPage = 1;
+let errorsTotalPages = 1;
+const errorsLimit = 50;
+let siLoaded = false;
+
+function severityBadge(severity) {
+    const s = (severity || 'low').toLowerCase();
+    return '<span class="badge badge-' + s + '">' + escapeHtml(s) + '</span>';
+}
+
+function statusBadge(status) {
+    const s = (status || 'pending').toLowerCase();
+    const cls = {active:'active', suspended:'suspended', retired:'retired',
+                 resolved:'resolved', pending:'pending', promoted:'active'}[s] || 'fact';
+    return '<span class="badge badge-' + cls + '">' + escapeHtml(s) + '</span>';
+}
+
+function importanceBadge(val) {
+    const v = val || 0;
+    const cls = v >= 7 ? 'high-priority' : '';
+    return '<span class="badge badge-importance ' + cls + '">' + v + '</span>';
+}
+
+function priorityBadge(val) {
+    const v = val || 0;
+    const cls = v >= 8 ? 'high-priority' : '';
+    return '<span class="badge badge-priority ' + cls + '">' + v + '</span>';
+}
+
+function successRateBar(rate) {
+    const pct = Math.round((rate || 0) * 100);
+    const color = pct >= 80 ? 'var(--solution)' : pct >= 50 ? 'var(--decision)' : 'var(--error-high)';
+    return '<div class="progress-bar">' +
+        '<div class="bar"><div class="bar-fill" style="width:' + pct + '%;background:' + color + '"></div></div>' +
+        '<span class="bar-label">' + pct + '%</span>' +
+        '</div>';
+}
+
+async function loadErrors() {
+    const category = document.getElementById('si-category-filter').value;
+    const project = document.getElementById('si-project-filter').value;
+
+    const params = new URLSearchParams();
+    if (category) params.set('category', category);
+    if (project) params.set('project', project);
+    params.set('page', errorsPage);
+    params.set('limit', errorsLimit);
+
+    try {
+        const data = await api('/api/errors?' + params.toString());
+        errorsTotalPages = data.pages;
+
+        const tbody = document.getElementById('errors-body');
+        tbody.innerHTML = '';
+
+        for (const row of data.items) {
+            const tr = document.createElement('tr');
+            tr.innerHTML =
+                '<td class="id-col">' + row.id + '</td>' +
+                '<td>' + escapeHtml(row.category || '') + '</td>' +
+                '<td>' + severityBadge(row.severity) + '</td>' +
+                '<td class="content-col">' + escapeHtml(truncate(row.description, 80)) + '</td>' +
+                '<td class="content-col">' + escapeHtml(truncate(row.fix || '', 60)) + '</td>' +
+                '<td>' + statusBadge(row.status) + '</td>' +
+                '<td class="date-col">' + formatDate(row.created_at) + '</td>';
+            tbody.appendChild(tr);
+        }
+
+        if (data.items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:40px">No errors recorded</td></tr>';
+        }
+
+        document.getElementById('errors-page-info').textContent = 'Page ' + errorsPage + ' of ' + errorsTotalPages;
+        document.getElementById('errors-prev-btn').disabled = errorsPage <= 1;
+        document.getElementById('errors-next-btn').disabled = errorsPage >= errorsTotalPages;
+
+        // Populate category filter if not done
+        if (document.getElementById('si-category-filter').options.length <= 1 && data.items.length > 0) {
+            const cats = new Set(data.items.map(i => i.category).filter(Boolean));
+            const sel = document.getElementById('si-category-filter');
+            for (const c of [...cats].sort()) {
+                const opt = document.createElement('option');
+                opt.value = c;
+                opt.textContent = c;
+                sel.appendChild(opt);
+            }
+        }
+    } catch (e) {
+        document.getElementById('errors-body').innerHTML =
+            '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:40px">Errors table not available</td></tr>';
+    }
+}
+
+async function loadInsights() {
+    const project = document.getElementById('si-project-filter').value;
+    const params = new URLSearchParams();
+    if (project) params.set('project', project);
+
+    try {
+        const data = await api('/api/insights?' + params.toString());
+        const tbody = document.getElementById('insights-body');
+        tbody.innerHTML = '';
+
+        for (const row of data) {
+            const tr = document.createElement('tr');
+            const confPct = Math.round((row.confidence || 0) * 100);
+            tr.innerHTML =
+                '<td class="id-col">' + row.id + '</td>' +
+                '<td class="content-col">' + escapeHtml(truncate(row.content, 100)) + '</td>' +
+                '<td>' + escapeHtml(row.category || '') + '</td>' +
+                '<td>' + importanceBadge(row.importance) + '</td>' +
+                '<td class="num-col">' + confPct + '%</td>' +
+                '<td>' + statusBadge(row.status) + '</td>' +
+                '<td style="text-align:center">' +
+                    (row.promotion_eligible
+                        ? '<span class="promo-eligible" title="Eligible for promotion"></span>'
+                        : '<span class="promo-not-eligible" title="Not eligible"></span>') +
+                '</td>';
+            tbody.appendChild(tr);
+        }
+
+        if (data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:40px">No insights generated</td></tr>';
+        }
+    } catch (e) {
+        document.getElementById('insights-body').innerHTML =
+            '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:40px">Insights table not available</td></tr>';
+    }
+}
+
+async function loadSelfImprovement() {
+    siLoaded = true;
+    await Promise.all([loadErrors(), loadInsights()]);
+}
+
+// ============================================================
+// Rules (SOUL)
+// ============================================================
+let rulesLoaded = false;
+
+async function loadRules() {
+    rulesLoaded = true;
+    const project = document.getElementById('rules-project-filter').value;
+    const params = new URLSearchParams();
+    if (project) params.set('project', project);
+
+    try {
+        const data = await api('/api/rules?' + params.toString());
+        const tbody = document.getElementById('rules-body');
+        tbody.innerHTML = '';
+
+        for (const row of data) {
+            const tr = document.createElement('tr');
+            const statusCls = (row.status || 'active').toLowerCase();
+            tr.style.opacity = statusCls === 'suspended' ? '0.7' : '1';
+            tr.innerHTML =
+                '<td class="id-col">' + row.id + '</td>' +
+                '<td class="content-col">' + escapeHtml(truncate(row.content, 100)) + '</td>' +
+                '<td>' + escapeHtml(row.category || '') + '</td>' +
+                '<td>' + escapeHtml(row.scope || 'global') + '</td>' +
+                '<td>' + priorityBadge(row.priority) + '</td>' +
+                '<td class="num-col">' + (row.fire_count || 0) + '</td>' +
+                '<td>' + successRateBar(row.success_rate) + '</td>' +
+                '<td>' + statusBadge(row.status) + '</td>';
+            tbody.appendChild(tr);
+        }
+
+        if (data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:40px">No rules defined</td></tr>';
+        }
+    } catch (e) {
+        document.getElementById('rules-body').innerHTML =
+            '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:40px">Rules table not available</td></tr>';
+    }
+}
+
+// ============================================================
+// Self-Improvement stats
+// ============================================================
+async function loadSIStats() {
+    try {
+        const si = await api('/api/self-improvement');
+        const total = (si.error_count || 0) + (si.insight_count || 0) + (si.rule_count || 0);
+        document.getElementById('stat-si').textContent = total;
+        document.getElementById('stat-si-detail').textContent =
+            (si.error_count || 0) + ' errors, ' +
+            (si.insight_count || 0) + ' insights, ' +
+            (si.rule_count || 0) + ' rules';
+
+        // Populate project filters for SI tabs from stats
+        try {
+            const stats = await api('/api/stats');
+            const projects = Object.keys(stats.by_project || {}).sort();
+            for (const selId of ['si-project-filter', 'rules-project-filter']) {
+                const sel = document.getElementById(selId);
+                if (sel && sel.options.length <= 1) {
+                    for (const p of projects) {
+                        const opt = document.createElement('option');
+                        opt.value = p;
+                        opt.textContent = p;
+                        sel.appendChild(opt);
+                    }
+                }
+            }
+        } catch (_) {}
+    } catch (e) {
+        document.getElementById('stat-si').textContent = 'N/A';
+        document.getElementById('stat-si-detail').textContent = 'tables not available';
+    }
+}
+
+// ============================================================
+// Graph (simple force-directed, pure JS + Canvas)
+// ============================================================
 function initGraph() {
     if (graphLoaded) return;
     graphLoaded = true;
@@ -862,6 +1479,7 @@ function initGraph() {
     const canvas = document.getElementById('graph-canvas');
     const ctx = canvas.getContext('2d');
     const tooltip = document.getElementById('graph-tooltip');
+    const rect = canvas.parentElement.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
 
     function resize() {
@@ -878,6 +1496,7 @@ function initGraph() {
     let edges = [];
     let hoveredNode = null;
     let dragNode = null;
+    let offsetX = 0, offsetY = 0;
 
     api('/api/graph').then(data => {
         graphData = data;
@@ -892,7 +1511,8 @@ function initGraph() {
                 id: n.id,
                 x: W / 2 + r * Math.cos(angle) + (Math.random() - 0.5) * 60,
                 y: H / 2 + r * Math.sin(angle) + (Math.random() - 0.5) * 60,
-                vx: 0, vy: 0,
+                vx: 0,
+                vy: 0,
                 type: n.type,
                 label: n.label,
                 recall_count: n.recall_count || 0,
@@ -925,6 +1545,7 @@ function initGraph() {
             const k = Math.sqrt((W * H) / Math.max(nodes.length, 1));
             const cooling = 1 - iterations / maxIter;
 
+            // Repulsion
             for (let i = 0; i < nodes.length; i++) {
                 for (let j = i + 1; j < nodes.length; j++) {
                     let dx = nodes[j].x - nodes[i].x;
@@ -933,11 +1554,14 @@ function initGraph() {
                     let force = (k * k) / dist * 0.5;
                     let fx = (dx / dist) * force;
                     let fy = (dy / dist) * force;
-                    nodes[i].vx -= fx; nodes[i].vy -= fy;
-                    nodes[j].vx += fx; nodes[j].vy += fy;
+                    nodes[i].vx -= fx;
+                    nodes[i].vy -= fy;
+                    nodes[j].vx += fx;
+                    nodes[j].vy += fy;
                 }
             }
 
+            // Attraction along edges
             for (const e of edges) {
                 let dx = e.target.x - e.source.x;
                 let dy = e.target.y - e.source.y;
@@ -945,16 +1569,21 @@ function initGraph() {
                 let force = (dist * dist) / k * 0.02;
                 let fx = (dx / dist) * force;
                 let fy = (dy / dist) * force;
-                e.source.vx += fx; e.source.vy += fy;
-                e.target.vx -= fx; e.target.vy -= fy;
+                e.source.vx += fx;
+                e.source.vy += fy;
+                e.target.vx -= fx;
+                e.target.vy -= fy;
             }
 
+            // Center gravity
             for (const n of nodes) {
                 let dx = W / 2 - n.x;
                 let dy = H / 2 - n.y;
-                n.vx += dx * 0.001; n.vy += dy * 0.001;
+                n.vx += dx * 0.001;
+                n.vy += dy * 0.001;
             }
 
+            // Apply velocity
             for (const n of nodes) {
                 if (n === dragNode) continue;
                 let speed = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
@@ -963,8 +1592,12 @@ function initGraph() {
                     n.vx = (n.vx / speed) * maxSpeed;
                     n.vy = (n.vy / speed) * maxSpeed;
                 }
-                n.x += n.vx; n.y += n.vy;
-                n.vx *= 0.9; n.vy *= 0.9;
+                n.x += n.vx;
+                n.y += n.vy;
+                n.vx *= 0.9;
+                n.vy *= 0.9;
+
+                // Bounds
                 n.x = Math.max(n.radius, Math.min(W - n.radius, n.x));
                 n.y = Math.max(n.radius, Math.min(H - n.radius, n.y));
             }
@@ -980,6 +1613,7 @@ function initGraph() {
         const H = canvas.clientHeight;
         ctx.clearRect(0, 0, W, H);
 
+        // Edges
         ctx.lineWidth = 0.5;
         ctx.strokeStyle = 'rgba(100,116,139,0.3)';
         for (const e of edges) {
@@ -989,11 +1623,15 @@ function initGraph() {
             ctx.stroke();
         }
 
+        // Nodes
         for (const n of nodes) {
             ctx.beginPath();
             ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
-            ctx.fillStyle = n === hoveredNode ? n.color : n.color + '99';
+            ctx.fillStyle = n === hoveredNode
+                ? n.color
+                : n.color + '99';
             ctx.fill();
+
             if (n === hoveredNode) {
                 ctx.strokeStyle = '#ffffff';
                 ctx.lineWidth = 2;
@@ -1002,41 +1640,73 @@ function initGraph() {
         }
     }
 
+    // Mouse interaction
     canvas.addEventListener('mousemove', e => {
         const br = canvas.getBoundingClientRect();
         const mx = e.clientX - br.left;
         const my = e.clientY - br.top;
 
         if (dragNode) {
-            dragNode.x = mx; dragNode.y = my;
-            dragNode.vx = 0; dragNode.vy = 0;
+            dragNode.x = mx;
+            dragNode.y = my;
+            dragNode.vx = 0;
+            dragNode.vy = 0;
             draw();
             return;
         }
 
         let found = null;
         for (const n of nodes) {
-            const dx = n.x - mx; const dy = n.y - my;
-            if (dx * dx + dy * dy < (n.radius + 4) * (n.radius + 4)) { found = n; break; }
+            const dx = n.x - mx;
+            const dy = n.y - my;
+            if (dx * dx + dy * dy < (n.radius + 4) * (n.radius + 4)) {
+                found = n;
+                break;
+            }
         }
 
-        if (found !== hoveredNode) { hoveredNode = found; draw(); }
+        if (found !== hoveredNode) {
+            hoveredNode = found;
+            draw();
+        }
 
         if (hoveredNode) {
             tooltip.style.display = 'block';
             tooltip.style.left = (e.clientX + 12) + 'px';
             tooltip.style.top = (e.clientY + 12) + 'px';
-            tooltip.querySelector('.tt-type').textContent = hoveredNode.type;
-            tooltip.querySelector('.tt-type').style.color = hoveredNode.color;
-            tooltip.querySelector('.tt-content').textContent = hoveredNode.label;
-        } else { tooltip.style.display = 'none'; }
+            const ttType = tooltip.querySelector('.tt-type');
+            const ttContent = tooltip.querySelector('.tt-content');
+            ttType.textContent = hoveredNode.type;
+            ttType.style.color = hoveredNode.color;
+            ttContent.textContent = hoveredNode.label;
+        } else {
+            tooltip.style.display = 'none';
+        }
     });
 
-    canvas.addEventListener('mousedown', e => { if (hoveredNode) { dragNode = hoveredNode; canvas.style.cursor = 'grabbing'; } });
-    canvas.addEventListener('mouseup', () => { dragNode = null; canvas.style.cursor = 'grab'; });
-    canvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; hoveredNode = null; dragNode = null; draw(); });
+    canvas.addEventListener('mousedown', e => {
+        if (hoveredNode) {
+            dragNode = hoveredNode;
+            canvas.style.cursor = 'grabbing';
+        }
+    });
+
+    canvas.addEventListener('mouseup', () => {
+        dragNode = null;
+        canvas.style.cursor = 'grab';
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+        tooltip.style.display = 'none';
+        hoveredNode = null;
+        dragNode = null;
+        draw();
+    });
 }
 
+// ============================================================
+// Tabs
+// ============================================================
 document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -1044,14 +1714,44 @@ document.querySelectorAll('.tab').forEach(tab => {
         tab.classList.add('active');
         const target = tab.dataset.tab;
         document.getElementById('tab-' + target).classList.add('active');
+
         if (target === 'sessions') loadSessions();
         if (target === 'graph') initGraph();
+        if (target === 'self-improvement') loadSelfImprovement();
+        if (target === 'rules') loadRules();
     });
 });
 
-document.getElementById('prev-btn').addEventListener('click', () => { if (currentPage > 1) { currentPage--; loadKnowledge(); } });
-document.getElementById('next-btn').addEventListener('click', () => { if (currentPage < totalPages) { currentPage++; loadKnowledge(); } });
+// ============================================================
+// Pagination
+// ============================================================
+document.getElementById('prev-btn').addEventListener('click', () => {
+    if (currentPage > 1) { currentPage--; loadKnowledge(); }
+});
+document.getElementById('next-btn').addEventListener('click', () => {
+    if (currentPage < totalPages) { currentPage++; loadKnowledge(); }
+});
 
+// ============================================================
+// Errors pagination
+// ============================================================
+document.getElementById('errors-prev-btn').addEventListener('click', () => {
+    if (errorsPage > 1) { errorsPage--; loadErrors(); }
+});
+document.getElementById('errors-next-btn').addEventListener('click', () => {
+    if (errorsPage < errorsTotalPages) { errorsPage++; loadErrors(); }
+});
+
+// ============================================================
+// Self-Improvement filters
+// ============================================================
+document.getElementById('si-category-filter').addEventListener('change', () => { errorsPage = 1; loadErrors(); });
+document.getElementById('si-project-filter').addEventListener('change', () => { errorsPage = 1; loadErrors(); loadInsights(); });
+document.getElementById('rules-project-filter').addEventListener('change', () => { loadRules(); });
+
+// ============================================================
+// Search / filters
+// ============================================================
 let searchTimeout;
 document.getElementById('search-input').addEventListener('input', () => {
     clearTimeout(searchTimeout);
@@ -1060,12 +1760,21 @@ document.getElementById('search-input').addEventListener('input', () => {
 document.getElementById('type-filter').addEventListener('change', () => { currentPage = 1; loadKnowledge(); });
 document.getElementById('project-filter').addEventListener('change', () => { currentPage = 1; loadKnowledge(); });
 
+// ============================================================
+// Modal
+// ============================================================
 document.getElementById('modal-close').addEventListener('click', closeModal);
-document.getElementById('detail-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
+document.getElementById('detail-modal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+});
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
+// ============================================================
+// Init
+// ============================================================
 loadStats();
 loadKnowledge();
+loadSIStats();
 </script>
 </body>
 </html>
@@ -1075,10 +1784,12 @@ loadKnowledge();
 class DashboardHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the memory dashboard."""
 
-    def log_message(self, format, *args):
+    def log_message(self, format: str, *args: object) -> None:
+        """Suppress default access log noise; print only errors."""
         pass
 
-    def _send_json(self, data, status=200):
+    def _send_json(self, data: object, status: int = 200) -> None:
+        """Send a JSON response."""
         body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1087,7 +1798,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_html(self, html, status=200):
+    def _send_html(self, html: str, status: int = 200) -> None:
+        """Send an HTML response."""
         body = html.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1095,23 +1807,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_error(self, status, message):
+    def _send_error(self, status: int, message: str) -> None:
+        """Send an error JSON response."""
         self._send_json({"error": message}, status)
 
-    def do_GET(self):
+    def _get_db(self) -> sqlite3.Connection | None:
+        """Open a read-only DB connection. Returns None if DB is missing."""
+        return get_db()
+
+    def do_GET(self) -> None:
+        """Route GET requests."""
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
         params = parse_qs(parsed.query)
 
-        def p(key, default=""):
+        # Helper to get single param values
+        def p(key: str, default: str = "") -> str:
             vals = params.get(key, [default])
             return vals[0] if vals else default
 
+        # --- Main page ---
         if path in ("", "/"):
             self._send_html(HTML_PAGE)
             return
 
-        db = get_db()
+        # --- API routes require DB ---
+        db = self._get_db()
         if db is None:
             self._send_error(503, "Database not found at " + str(DB_PATH))
             return
@@ -1129,6 +1850,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send_json(api_knowledge(db, search, ktype, project, page, limit))
 
             elif path.startswith("/api/knowledge/"):
+                # Extract ID from path
                 parts = path.split("/")
                 if len(parts) == 4 and parts[3].isdigit():
                     kid = int(parts[3])
@@ -1147,6 +1869,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
             elif path == "/api/graph":
                 self._send_json(api_graph(db))
 
+            elif path == "/api/errors":
+                category = p("category") or None
+                project = p("project") or None
+                page = max(1, int(p("page", "1")))
+                limit = min(200, max(1, int(p("limit", "50"))))
+                self._send_json(api_errors(db, category, project, page, limit))
+
+            elif path == "/api/insights":
+                project = p("project") or None
+                self._send_json(api_insights(db, project))
+
+            elif path == "/api/rules":
+                project = p("project") or None
+                self._send_json(api_rules(db, project))
+
+            elif path == "/api/self-improvement":
+                self._send_json(api_self_improvement(db))
+
             else:
                 self._send_error(404, "Not found")
         except Exception as e:
@@ -1155,7 +1895,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             db.close()
 
 
-def main():
+def main() -> None:
     """Start the dashboard HTTP server."""
     print(f"Memory dir: {MEMORY_DIR}")
     print(f"Database:   {DB_PATH} ({'exists' if DB_PATH.exists() else 'NOT FOUND'})")

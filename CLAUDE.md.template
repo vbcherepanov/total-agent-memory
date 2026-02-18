@@ -96,6 +96,42 @@ memory_relate(from_id=1, to_id=2, type="solution")      # Link related records
 memory_extract_session(action="list")                    # Pending transcript extractions
 ```
 
+## Self-Improvement (Automatic Error Learning)
+
+Claude learns from mistakes across sessions via a 3-level pipeline.
+
+### At session start — load behavioral rules:
+```
+self_rules_context(project="my-project")
+```
+
+### On any error (bash failure, wrong assumption, API error) — log it automatically:
+```
+self_error_log(
+    description="What went wrong",
+    category="code_error",
+    fix="How it was fixed",
+    project="my-project"
+)
+```
+
+Categories: `code_error`, `logic_error`, `config_error`, `api_error`, `timeout`, `loop_detected`, `wrong_assumption`, `missing_context`
+
+### When patterns emerge (3+ similar errors) — extract insight:
+```
+self_insight(action="add", content="Lesson learned", category="code_error")
+```
+
+### At session end — reflect:
+```
+self_reflect(reflection="What went well, what to improve", task_summary="What was done")
+```
+
+### Analyze improvement:
+```
+self_patterns(view="full_report", project="my-project")
+```
+
 ## Web Dashboard
 
 Open http://localhost:37737 to browse knowledge, sessions, and the knowledge graph.

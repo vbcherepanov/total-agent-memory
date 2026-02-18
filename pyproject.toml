@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-total-memory"
-version = "2.2.0"
-description = "Persistent memory MCP server for Claude Code — 4-tier search, BM25 scoring, knowledge graph, web dashboard, and 13 tools"
+version = "3.0.0"
+description = "Persistent memory MCP server for Claude Code — 4-tier search, BM25 scoring, knowledge graph, self-improving agent, web dashboard, and 19 tools"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"

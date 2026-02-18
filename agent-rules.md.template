@@ -73,6 +73,18 @@ add this single line at the top:
 Use memory_recall before tasks and memory_save after decisions/fixes/lessons. Project: "my-project".
 ```
 
+## Option 4: Add self-improvement to agents
+
+For agents that should learn from their mistakes, add:
+
+```markdown
+## Self-Improvement
+
+At session start: `self_rules_context(project="my-project")`
+On errors: `self_error_log(description="...", category="code_error", project="my-project")`
+At session end: `self_reflect(reflection="...", task_summary="...", project="my-project")`
+```
+
 ## Tips for Agent Memory Configuration
 
 ### DO:

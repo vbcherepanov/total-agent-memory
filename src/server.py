@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
-Claude Total Memory — MCP Server v2.2
+Claude Total Memory — MCP Server v3.0 (Self-Improving Agent)
 
-Tools (13): memory_recall, memory_save, memory_update, memory_timeline,
+Tools (19): memory_recall, memory_save, memory_update, memory_timeline,
             memory_stats, memory_consolidate, memory_export, memory_forget,
             memory_history, memory_delete, memory_relate, memory_search_by_tag,
-            memory_extract_session
+            memory_extract_session,
+            self_error_log, self_insight, self_rules, self_patterns,
+            self_reflect, self_rules_context
 Storage: SQLite FTS5 + ChromaDB (semantic) + relations (graph)
 Features: BM25 scoring, progressive disclosure, decay scoring, fuzzy search,
-          deduplication, retention zones, consolidation, version history, graph relations
+          deduplication, retention zones, consolidation, version history, graph relations,
+          self-improvement pipeline (errors → insights → rules/SOUL)
 """
 
 import asyncio
@@ -46,9 +49,9 @@ PURGE_AFTER_DAYS = int(os.environ.get("PURGE_AFTER_DAYS", "365"))
 LOG = lambda msg: sys.stderr.write(f"[memory-mcp] {msg}\n")
 
 
-# ===================================================================
+# ═══════════════════════════════════════════════════════════
 # Storage
-# ===================================================================
+# ═══════════════════════════════════════════════════════════
 
 class Store:
     def __init__(self):
@@ -140,13 +143,116 @@ class Store:
         self.db.commit()
 
     def _migrate(self):
-        """Add columns that may not exist in older databases."""
+        """Add columns/tables that may not exist in older databases."""
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(knowledge)").fetchall()}
         if "recall_count" not in cols:
             self.db.execute("ALTER TABLE knowledge ADD COLUMN recall_count INTEGER DEFAULT 0")
         if "last_recalled" not in cols:
             self.db.execute("ALTER TABLE knowledge ADD COLUMN last_recalled TEXT")
+
+        # Self-Improvement tables (v3.0)
+        tables = {r[0] for r in self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "errors" not in tables:
+            self._create_self_improvement_tables()
+            LOG("Migration: created self-improvement tables (errors, insights, rules)")
+        else:
+            # Migrate existing errors table if missing columns
+            ecols = {r[1] for r in self.db.execute("PRAGMA table_info(errors)").fetchall()}
+            if "resolved_at" not in ecols:
+                self.db.execute("ALTER TABLE errors ADD COLUMN resolved_at TEXT")
+                LOG("Migration: added resolved_at to errors table")
+            # Ensure session index exists
+            self.db.execute("CREATE INDEX IF NOT EXISTS idx_e_session ON errors(session_id)")
+
         self.db.commit()
+
+    def _create_self_improvement_tables(self):
+        """Create errors, insights, rules tables for Self-Improving Agent."""
+        self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS errors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                category TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'medium',
+                description TEXT NOT NULL,
+                context TEXT DEFAULT '',
+                fix TEXT DEFAULT '',
+                project TEXT DEFAULT 'general',
+                tags TEXT DEFAULT '[]',
+                status TEXT DEFAULT 'open',
+                resolved_at TEXT,
+                insight_id INTEGER,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_e_category ON errors(category);
+            CREATE INDEX IF NOT EXISTS idx_e_project ON errors(project);
+            CREATE INDEX IF NOT EXISTS idx_e_status ON errors(status);
+            CREATE INDEX IF NOT EXISTS idx_e_session ON errors(session_id);
+            CREATE INDEX IF NOT EXISTS idx_e_created ON errors(created_at DESC);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS errors_fts USING fts5(
+                description, context, fix, tags,
+                content='errors', content_rowid='id'
+            );
+            CREATE TRIGGER IF NOT EXISTS e_fts_i AFTER INSERT ON errors BEGIN
+                INSERT INTO errors_fts(rowid, description, context, fix, tags)
+                VALUES (new.id, new.description, new.context, new.fix, new.tags);
+            END;
+            CREATE TRIGGER IF NOT EXISTS e_fts_u AFTER UPDATE ON errors BEGIN
+                INSERT INTO errors_fts(errors_fts, rowid, description, context, fix, tags)
+                VALUES ('delete', old.id, old.description, old.context, old.fix, old.tags);
+                INSERT INTO errors_fts(rowid, description, context, fix, tags)
+                VALUES (new.id, new.description, new.context, new.fix, new.tags);
+            END;
+
+            CREATE TABLE IF NOT EXISTS insights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                context TEXT DEFAULT '',
+                category TEXT NOT NULL,
+                importance INTEGER NOT NULL DEFAULT 2,
+                confidence REAL NOT NULL DEFAULT 0.5,
+                source_error_ids TEXT DEFAULT '[]',
+                project TEXT DEFAULT 'general',
+                tags TEXT DEFAULT '[]',
+                status TEXT DEFAULT 'active',
+                promoted_to_rule_id INTEGER,
+                fire_count INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_i_status ON insights(status);
+            CREATE INDEX IF NOT EXISTS idx_i_category ON insights(category);
+            CREATE INDEX IF NOT EXISTS idx_i_project ON insights(project);
+            CREATE INDEX IF NOT EXISTS idx_i_importance ON insights(importance DESC);
+
+            CREATE TABLE IF NOT EXISTS rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                context TEXT DEFAULT '',
+                category TEXT NOT NULL,
+                scope TEXT DEFAULT 'global',
+                priority INTEGER NOT NULL DEFAULT 5,
+                source_insight_id INTEGER,
+                project TEXT DEFAULT 'general',
+                tags TEXT DEFAULT '[]',
+                status TEXT DEFAULT 'active',
+                fire_count INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
+                fail_count INTEGER DEFAULT 0,
+                success_rate REAL DEFAULT 0.0,
+                last_fired TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_r_status ON rules(status);
+            CREATE INDEX IF NOT EXISTS idx_r_scope ON rules(scope);
+            CREATE INDEX IF NOT EXISTS idx_r_priority ON rules(priority DESC);
+            CREATE INDEX IF NOT EXISTS idx_r_project ON rules(project);
+        """)
 
     def _check_fts(self):
         """Verify FTS5 index integrity on startup, rebuild if corrupted."""
@@ -155,7 +261,7 @@ class Store:
                 "SELECT count(*) FROM knowledge_fts WHERE knowledge_fts MATCH '\"test\"'"
             ).fetchone()
         except Exception as e:
-            LOG(f"FTS5 index corrupted: {e} -- rebuilding...")
+            LOG(f"FTS5 index corrupted: {e} — rebuilding...")
             try:
                 self.db.execute(
                     "INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')"
@@ -163,7 +269,7 @@ class Store:
                 self.db.commit()
                 LOG("FTS5 rebuild: OK")
             except Exception as e2:
-                LOG(f"FTS5 rebuild failed: {e2} -- recreating from scratch...")
+                LOG(f"FTS5 rebuild failed: {e2} — recreating from scratch...")
                 self.db.execute("DROP TABLE IF EXISTS knowledge_fts")
                 self.db.execute("DROP TRIGGER IF EXISTS k_fts_i")
                 self.db.execute("DROP TRIGGER IF EXISTS k_fts_u")
@@ -213,7 +319,7 @@ class Store:
     def total_sessions(self):
         return self.db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
 
-    # -- Similarity & Dedup --
+    # ── Similarity & Dedup ──
 
     @staticmethod
     def _jaccard(a: str, b: str) -> float:
@@ -256,7 +362,7 @@ class Store:
             LOG(f"Dedup FTS error: {e}")
         return None
 
-    # -- Decay Scoring --
+    # ── Decay Scoring ──
 
     @staticmethod
     def _decay_factor(last_confirmed_str: str, half_life_days: int = 90) -> float:
@@ -271,7 +377,7 @@ class Store:
         except Exception:
             return 0.5
 
-    # -- CRUD --
+    # ── CRUD ──
 
     def save_knowledge(self, sid, content, ktype, project="general", tags=None, context=""):
         now = datetime.utcnow().isoformat() + "Z"
@@ -311,7 +417,7 @@ class Store:
                 (now, now, kid))
         self.db.commit()
 
-    # -- Consolidation --
+    # ── Consolidation ──
 
     def find_similar_groups(self, project=None, threshold=0.75):
         """Find groups of similar active knowledge for consolidation."""
@@ -359,10 +465,10 @@ class Store:
         self.db.commit()
         return {"kept": longest["id"], "merged": merged_ids}
 
-    # -- Retention Zones --
+    # ── Retention Zones ──
 
     def apply_retention(self):
-        """Move old unconfirmed records: active->archived->purged."""
+        """Move old unconfirmed records: active→archived→purged."""
         now = datetime.utcnow()
         archive_cutoff = (now - __import__('datetime').timedelta(days=ARCHIVE_AFTER_DAYS)).isoformat() + "Z"
         purge_cutoff = (now - __import__('datetime').timedelta(days=PURGE_AFTER_DAYS)).isoformat() + "Z"
@@ -389,7 +495,7 @@ class Store:
 
         return {"archived": archived, "purged": purged}
 
-    # -- Export --
+    # ── Export ──
 
     def export_all(self, project=None):
         """Export all active knowledge as JSON."""
@@ -414,7 +520,7 @@ class Store:
             "relations": self.q("SELECT * FROM relations"),
         }
 
-    # -- Version History --
+    # ── Version History ──
 
     def get_version_history(self, kid):
         """Walk the superseded_by chain to build version history."""
@@ -444,7 +550,7 @@ class Store:
             fwd_id = nxt.get("superseded_by")
         return chain
 
-    # -- Delete --
+    # ── Delete ──
 
     def delete_knowledge(self, kid):
         """Soft-delete a knowledge record."""
@@ -460,7 +566,7 @@ class Store:
                 pass
         return rec
 
-    # -- Relations --
+    # ── Relations ──
 
     def add_relation(self, from_id, to_id, rel_type):
         """Create a relation between two knowledge records."""
@@ -481,7 +587,7 @@ class Store:
         self.db.commit()
         return {"created": True, "from_id": from_id, "to_id": to_id, "type": rel_type}
 
-    # -- Search by Tag --
+    # ── Search by Tag ──
 
     def search_by_tag(self, tag, project=None):
         """Find all active knowledge with a matching tag."""
@@ -509,10 +615,381 @@ class Store:
                 matched.append(r)
         return matched
 
+    # ═══════════════════════════════════════════════════════════
+    # Self-Improvement: Errors / Insights / Rules
+    # ═══════════════════════════════════════════════════════════
 
-# ===================================================================
+    def log_error(self, sid, description, category, severity="medium",
+                  fix="", context="", project="general", tags=None):
+        """Log a structured error and check for patterns."""
+        now = datetime.utcnow().isoformat() + "Z"
+        status = "resolved" if fix else "open"
+        cur = self.db.execute("""
+            INSERT INTO errors (session_id, category, severity, description, context,
+                               fix, project, tags, status, resolved_at, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        """, (sid, category, severity, description, context, fix, project,
+              json.dumps(tags or []), status, now if fix else None, now))
+        self.db.commit()
+        error_id = cur.lastrowid
+        pattern = self.detect_error_pattern(category, project)
+        return error_id, pattern
+
+    def detect_error_pattern(self, category, project="general"):
+        """Detect repeating error patterns (3+ same category in 30 days)."""
+        from datetime import timedelta
+        cutoff = (datetime.utcnow() - timedelta(days=30)).isoformat() + "Z"
+        row = self.db.execute("""
+            SELECT COUNT(*) as cnt, GROUP_CONCAT(id) as ids
+            FROM errors
+            WHERE category=? AND project=? AND status != 'insight_extracted'
+            AND created_at > ?
+        """, (category, project, cutoff)).fetchone()
+        count = row[0] if row else 0
+        if count < 3:
+            return None
+
+        error_ids = [int(x) for x in (row[1] or "").split(",") if x]
+
+        existing = self.q1(
+            "SELECT id, content, importance FROM insights "
+            "WHERE category=? AND project=? AND status='active'",
+            (category, project))
+
+        if existing:
+            return {
+                "pattern_detected": True, "category": category, "count": count,
+                "error_ids": error_ids[:10],
+                "existing_insight_id": existing["id"],
+                "suggestion": f"UPVOTE existing insight #{existing['id']}: "
+                             f"{existing['content'][:100]}"
+            }
+
+        descriptions = self.q(
+            "SELECT id, description, fix FROM errors WHERE id IN ({}) "
+            "ORDER BY created_at DESC".format(",".join("?" * len(error_ids[:10]))),
+            error_ids[:10])
+
+        return {
+            "pattern_detected": True, "category": category, "count": count,
+            "error_ids": error_ids[:10],
+            "descriptions": [{"id": d["id"], "desc": d["description"][:200],
+                              "fix": (d["fix"] or "")[:200]} for d in descriptions],
+            "suggestion": "Extract an insight from these repeated errors using "
+                          "self_insight(action='add', ...)"
+        }
+
+    def _find_similar_insight(self, content, category, project):
+        """Find existing insight with similar content via fuzzy match."""
+        rows = self.q(
+            "SELECT * FROM insights WHERE category=? AND project=? AND status='active'",
+            (category, project))
+        for r in rows:
+            if self._fuzzy_ratio(content, r["content"]) > 0.70:
+                return r
+        return None
+
+    def manage_insight(self, sid, action, **kw):
+        """ExpeL-style insight management: add/upvote/downvote/edit/list/promote."""
+        now = datetime.utcnow().isoformat() + "Z"
+
+        if action == "add":
+            content = kw["content"]
+            category = kw["category"]
+            project = kw.get("project", "general")
+            existing = self._find_similar_insight(content, category, project)
+            if existing:
+                self.db.execute(
+                    "UPDATE insights SET importance=importance+1, "
+                    "confidence=MIN(1.0, confidence+0.05), updated_at=? WHERE id=?",
+                    (now, existing["id"]))
+                self.db.commit()
+                return {"action": "auto_upvoted", "id": existing["id"],
+                        "importance": existing["importance"] + 1}
+
+            source_ids = kw.get("source_error_ids", [])
+            cur = self.db.execute("""
+                INSERT INTO insights (session_id, content, context, category, importance,
+                                     confidence, source_error_ids, project, tags,
+                                     status, created_at, updated_at)
+                VALUES (?,?,?,?,2,0.5,?,?,?,'active',?,?)
+            """, (sid, content, kw.get("context", ""), category,
+                  json.dumps(source_ids), project,
+                  json.dumps(kw.get("tags", [])), now, now))
+            self.db.commit()
+            insight_id = cur.lastrowid
+            for eid in source_ids:
+                self.db.execute(
+                    "UPDATE errors SET status='insight_extracted', insight_id=? WHERE id=?",
+                    (insight_id, eid))
+            self.db.commit()
+            return {"action": "added", "id": insight_id, "importance": 2}
+
+        elif action == "upvote":
+            self.db.execute(
+                "UPDATE insights SET importance=importance+1, "
+                "confidence=MIN(1.0, confidence+0.05), updated_at=? "
+                "WHERE id=? AND status='active'", (now, kw["id"]))
+            self.db.commit()
+            rec = self.q1("SELECT id, importance, confidence FROM insights WHERE id=?", (kw["id"],))
+            eligible = rec and rec["importance"] >= 5 and rec["confidence"] >= 0.8
+            return {"action": "upvoted", "id": kw["id"],
+                    "importance": rec["importance"] if rec else None,
+                    "promotion_eligible": eligible}
+
+        elif action == "downvote":
+            self.db.execute(
+                "UPDATE insights SET importance=importance-1, updated_at=? "
+                "WHERE id=? AND status='active'", (now, kw["id"]))
+            self.db.commit()
+            rec = self.q1("SELECT id, importance FROM insights WHERE id=?", (kw["id"],))
+            if rec and rec["importance"] <= 0:
+                self.db.execute(
+                    "UPDATE insights SET status='archived', updated_at=? WHERE id=?",
+                    (now, kw["id"]))
+                self.db.commit()
+                return {"action": "archived", "id": kw["id"],
+                        "reason": "importance reached 0"}
+            return {"action": "downvoted", "id": kw["id"],
+                    "importance": rec["importance"] if rec else None}
+
+        elif action == "edit":
+            self.db.execute(
+                "UPDATE insights SET content=?, updated_at=? WHERE id=? AND status='active'",
+                (kw["content"], now, kw["id"]))
+            self.db.commit()
+            return {"action": "edited", "id": kw["id"]}
+
+        elif action == "list":
+            project = kw.get("project")
+            category = kw.get("category")
+            conds, params = ["status='active'"], []
+            if project:
+                conds.append("project=?"); params.append(project)
+            if category:
+                conds.append("category=?"); params.append(category)
+            rows = self.q(
+                f"SELECT * FROM insights WHERE {' AND '.join(conds)} "
+                "ORDER BY importance DESC, confidence DESC LIMIT 50", params)
+            for r in rows:
+                r["promotion_eligible"] = (r["importance"] >= 5 and r["confidence"] >= 0.8)
+            return {"insights": rows, "total": len(rows)}
+
+        elif action == "promote":
+            return self.promote_insight_to_rule(sid, kw["id"])
+
+        return {"error": f"Unknown action: {action}"}
+
+    def promote_insight_to_rule(self, sid, insight_id):
+        """Promote a high-value insight to a behavioral rule."""
+        now = datetime.utcnow().isoformat() + "Z"
+        insight = self.q1("SELECT * FROM insights WHERE id=? AND status='active'", (insight_id,))
+        if not insight:
+            return {"error": "Insight not found or not active"}
+        if insight["importance"] < 5 or insight["confidence"] < 0.8:
+            return {"error": "Not eligible", "importance": insight["importance"],
+                    "confidence": insight["confidence"],
+                    "required": "importance >= 5 AND confidence >= 0.8"}
+
+        scope = "global" if insight["project"] == "general" else f"project:{insight['project']}"
+        priority = min(10, max(1, insight["importance"]))
+
+        cur = self.db.execute("""
+            INSERT INTO rules (session_id, content, context, category, scope, priority,
+                              source_insight_id, project, tags, status, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,'active',?,?)
+        """, (sid, insight["content"],
+              f"Promoted from insight #{insight_id}. {insight.get('context', '')}",
+              insight["category"], scope, priority, insight_id,
+              insight["project"], insight.get("tags", "[]"), now, now))
+        self.db.commit()
+        rule_id = cur.lastrowid
+
+        self.db.execute(
+            "UPDATE insights SET status='promoted', promoted_to_rule_id=?, updated_at=? WHERE id=?",
+            (rule_id, now, insight_id))
+        self.db.commit()
+
+        return {"promoted": True, "insight_id": insight_id, "rule_id": rule_id,
+                "scope": scope, "priority": priority}
+
+    def manage_rule(self, sid, action, **kw):
+        """Manage behavioral rules (SOUL)."""
+        now = datetime.utcnow().isoformat() + "Z"
+
+        if action == "list":
+            conds, params = ["status='active'"], []
+            if kw.get("project"):
+                conds.append("(project=? OR scope='global')")
+                params.append(kw["project"])
+            if kw.get("scope"):
+                conds.append("scope=?"); params.append(kw["scope"])
+            rows = self.q(
+                f"SELECT * FROM rules WHERE {' AND '.join(conds)} "
+                "ORDER BY priority DESC, success_rate DESC LIMIT 30", params)
+            return {"rules": rows, "total": len(rows)}
+
+        elif action == "fire":
+            self.db.execute(
+                "UPDATE rules SET fire_count=fire_count+1, last_fired=?, updated_at=? "
+                "WHERE id=? AND status='active'", (now, now, kw["id"]))
+            self.db.commit()
+            return {"fired": True, "id": kw["id"]}
+
+        elif action == "rate":
+            rid = kw["id"]
+            if kw.get("success"):
+                self.db.execute(
+                    "UPDATE rules SET success_count=success_count+1, updated_at=? WHERE id=?",
+                    (now, rid))
+            else:
+                self.db.execute(
+                    "UPDATE rules SET fail_count=fail_count+1, updated_at=? WHERE id=?",
+                    (now, rid))
+            self.db.commit()
+            # Recalculate success_rate
+            self.db.execute(
+                "UPDATE rules SET success_rate=CASE WHEN fire_count>0 "
+                "THEN CAST(success_count AS REAL)/CAST(fire_count AS REAL) "
+                "ELSE 0.0 END WHERE id=?", (rid,))
+            self.db.commit()
+            rec = self.q1("SELECT * FROM rules WHERE id=?", (rid,))
+            # Auto-suspend ineffective rules
+            if rec and rec["fire_count"] >= 10 and rec["success_rate"] < 0.2:
+                self.db.execute(
+                    "UPDATE rules SET status='suspended', updated_at=? WHERE id=?",
+                    (now, rid))
+                self.db.commit()
+                return {"rated": True, "auto_suspended": True,
+                        "reason": "success_rate < 0.2 after 10+ fires"}
+            return {"rated": True, "id": rid,
+                    "success_rate": rec["success_rate"] if rec else None}
+
+        elif action == "suspend":
+            self.db.execute("UPDATE rules SET status='suspended', updated_at=? WHERE id=?",
+                           (now, kw["id"]))
+            self.db.commit()
+            return {"suspended": True, "id": kw["id"]}
+
+        elif action == "activate":
+            self.db.execute("UPDATE rules SET status='active', updated_at=? WHERE id=?",
+                           (now, kw["id"]))
+            self.db.commit()
+            return {"activated": True, "id": kw["id"]}
+
+        elif action == "retire":
+            self.db.execute("UPDATE rules SET status='retired', updated_at=? WHERE id=?",
+                           (now, kw["id"]))
+            self.db.commit()
+            return {"retired": True, "id": kw["id"]}
+
+        elif action == "add_manual":
+            cur = self.db.execute("""
+                INSERT INTO rules (session_id, content, context, category, scope, priority,
+                                  project, tags, status, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,'active',?,?)
+            """, (sid, kw["content"], kw.get("context", ""),
+                  kw["category"], kw.get("scope", "global"),
+                  kw.get("priority", 5), kw.get("project", "general"),
+                  json.dumps(kw.get("tags", [])), now, now))
+            self.db.commit()
+            return {"added": True, "id": cur.lastrowid}
+
+        return {"error": f"Unknown action: {action}"}
+
+    def get_rules_for_context(self, project="general", categories=None):
+        """Get active rules relevant to current context."""
+        scopes = ["'global'", f"'project:{project}'"]
+        if categories:
+            scopes.extend(f"'category:{c}'" for c in categories)
+        rows = self.q(f"""
+            SELECT * FROM rules
+            WHERE status='active' AND scope IN ({','.join(scopes)})
+            ORDER BY priority DESC, success_rate DESC LIMIT 20
+        """)
+        now = datetime.utcnow().isoformat() + "Z"
+        for r in rows:
+            self.db.execute(
+                "UPDATE rules SET fire_count=fire_count+1, last_fired=?, updated_at=? WHERE id=?",
+                (now, now, r["id"]))
+        self.db.commit()
+        return {"rules_count": len(rows), "rules": rows}
+
+    def analyze_patterns(self, view="full_report", project=None, days=30):
+        """Analyze error patterns and self-improvement metrics."""
+        from datetime import timedelta
+        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat() + "Z"
+        pf = "AND project=?" if project else ""
+        pp = (project,) if project else ()
+        result = {}
+
+        if view in ("error_patterns", "full_report"):
+            freq = self.q(f"""
+                SELECT category, severity, COUNT(*) as count,
+                       SUM(CASE WHEN status='open' THEN 1 ELSE 0 END) as unresolved
+                FROM errors WHERE created_at > ? {pf}
+                GROUP BY category, severity ORDER BY count DESC
+            """, (cutoff, *pp))
+            patterns = self.q(f"""
+                SELECT category, COUNT(*) as count, GROUP_CONCAT(id) as error_ids,
+                       MIN(created_at) as first_seen, MAX(created_at) as last_seen
+                FROM errors WHERE created_at > ? AND status != 'insight_extracted' {pf}
+                GROUP BY category HAVING count >= 3 ORDER BY count DESC
+            """, (cutoff, *pp))
+            result["error_patterns"] = {"frequency": freq, "repeating_patterns": patterns}
+
+        if view in ("insight_candidates", "full_report"):
+            candidates = self.q(f"""
+                SELECT * FROM insights
+                WHERE status='active' AND importance >= 5 AND confidence >= 0.8
+                {pf} ORDER BY importance DESC
+            """, pp)
+            result["promotion_candidates"] = {"count": len(candidates), "insights": candidates}
+
+        if view in ("rule_effectiveness", "full_report"):
+            stats = self.q(f"""
+                SELECT id, content, scope, priority, fire_count,
+                       success_count, fail_count, success_rate, status
+                FROM rules WHERE fire_count > 0 {pf} ORDER BY success_rate DESC
+            """, pp)
+            stale = self.q("""
+                SELECT id, content, last_fired FROM rules
+                WHERE status='active'
+                AND (last_fired IS NULL OR last_fired < datetime('now', '-60 days'))
+            """)
+            result["rule_effectiveness"] = {"rules": stats, "stale_rules": stale}
+
+        if view in ("improvement_trend", "full_report"):
+            from datetime import timedelta
+            weeks = []
+            for w in range(4):
+                start = (datetime.utcnow() - timedelta(days=(w+1)*7)).isoformat() + "Z"
+                end = (datetime.utcnow() - timedelta(days=w*7)).isoformat() + "Z"
+                cnt = self.db.execute(f"""
+                    SELECT COUNT(*) FROM errors WHERE created_at BETWEEN ? AND ? {pf}
+                """, (start, end, *pp)).fetchone()[0]
+                weeks.append({"week_ago": w, "errors": cnt})
+            result["improvement_trend"] = {
+                "weekly_errors": weeks,
+                "direction": "improving" if weeks and weeks[0]["errors"] <= weeks[-1]["errors"]
+                            else "degrading"
+            }
+
+        if view == "full_report":
+            result["summary"] = {
+                "total_errors": self.db.execute(
+                    f"SELECT COUNT(*) FROM errors WHERE 1=1 {pf}", pp).fetchone()[0],
+                "active_insights": self.db.execute(
+                    f"SELECT COUNT(*) FROM insights WHERE status='active' {pf}", pp).fetchone()[0],
+                "active_rules": self.db.execute(
+                    f"SELECT COUNT(*) FROM rules WHERE status='active' {pf}", pp).fetchone()[0],
+            }
+        return result
+
+
+# ═══════════════════════════════════════════════════════════
 # Retrieval
-# ===================================================================
+# ═══════════════════════════════════════════════════════════
 
 class Recall:
     def __init__(self, store: Store):
@@ -762,12 +1239,40 @@ class Recall:
                 "has_chromadb": HAS_CHROMA,
                 "has_sentence_transformers": HAS_ST,
             },
+            "self_improvement": self._si_stats(s),
         }
 
+    @staticmethod
+    def _si_stats(s):
+        """Self-improvement stats (safe: returns empty if tables missing)."""
+        try:
+            return {
+                "errors": {
+                    "total": s.db.execute("SELECT COUNT(*) FROM errors").fetchone()[0],
+                    "open": s.db.execute("SELECT COUNT(*) FROM errors WHERE status='open'").fetchone()[0],
+                    "by_category": dict(s.db.execute(
+                        "SELECT category, COUNT(*) FROM errors GROUP BY category").fetchall()),
+                },
+                "insights": {
+                    "active": s.db.execute("SELECT COUNT(*) FROM insights WHERE status='active'").fetchone()[0],
+                    "promoted": s.db.execute("SELECT COUNT(*) FROM insights WHERE status='promoted'").fetchone()[0],
+                    "avg_importance": round(
+                        s.db.execute("SELECT AVG(importance) FROM insights WHERE status='active'").fetchone()[0] or 0, 1),
+                },
+                "rules": {
+                    "active": s.db.execute("SELECT COUNT(*) FROM rules WHERE status='active'").fetchone()[0],
+                    "suspended": s.db.execute("SELECT COUNT(*) FROM rules WHERE status='suspended'").fetchone()[0],
+                    "avg_success_rate": round(
+                        s.db.execute("SELECT AVG(success_rate) FROM rules WHERE status='active' AND fire_count>0").fetchone()[0] or 0, 2),
+                },
+            }
+        except Exception:
+            return {}
 
-# ===================================================================
+
+# ═══════════════════════════════════════════════════════════
 # MCP Server
-# ===================================================================
+# ═══════════════════════════════════════════════════════════
 
 app = Server("claude-total-memory")
 store: Store = None
@@ -781,7 +1286,7 @@ async def list_tools():
         Tool(
             name="memory_recall",
             description="Search ALL memory: decisions, solutions, facts, lessons from ALL past sessions. "
-                        "Uses 4-tier search: FTS5 keyword -> semantic (ChromaDB) -> fuzzy -> graph expansion. "
+                        "Uses 4-tier search: FTS5 keyword → semantic (ChromaDB) → fuzzy → graph expansion. "
                         "Results include decay scoring (recent = higher rank). Use BEFORE starting any task.",
             inputSchema={
                 "type": "object",
@@ -888,7 +1393,7 @@ async def list_tools():
         Tool(
             name="memory_history",
             description="View version history for a knowledge record. Shows the chain of superseded versions "
-                        "(newest -> oldest), enabling time-travel through knowledge evolution.",
+                        "(newest → oldest), enabling time-travel through knowledge evolution.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -962,6 +1467,133 @@ async def list_tools():
                     },
                 },
                 "required": ["action"],
+            },
+        ),
+        # ── Self-Improvement Tools ──
+        Tool(
+            name="self_error_log",
+            description="Log an error/failure for pattern analysis. Call AUTOMATICALLY when: "
+                        "bash command fails, wrong assumption discovered, API returns error, "
+                        "config issue found, loop detected, or any mistake occurs. "
+                        "System detects patterns (3+ same category) and suggests insights.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string",
+                                    "description": "What went wrong: symptom, expectation vs reality"},
+                    "category": {"type": "string",
+                                 "enum": ["code_error", "logic_error", "config_error", "api_error",
+                                          "timeout", "loop_detected", "wrong_assumption", "missing_context"],
+                                 "description": "Error category for pattern grouping"},
+                    "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"],
+                                 "default": "medium"},
+                    "fix": {"type": "string", "description": "How it was fixed (empty if unresolved)",
+                            "default": ""},
+                    "context": {"type": "string", "description": "What was being done when error occurred",
+                                "default": ""},
+                    "project": {"type": "string", "default": "general"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["description", "category"],
+            },
+        ),
+        Tool(
+            name="self_insight",
+            description="Manage insights from error patterns (ExpeL-style). Actions: "
+                        "add (create, importance=2), upvote (+1), downvote (-1, auto-archive at 0), "
+                        "edit, list, promote (to rule when importance>=5 AND confidence>=0.8). "
+                        "Call 'add' when pattern detected. Call 'upvote' when insight confirmed again.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string",
+                               "enum": ["add", "upvote", "downvote", "edit", "list", "promote"]},
+                    "id": {"type": "integer", "description": "Insight ID (for upvote/downvote/edit/promote)"},
+                    "content": {"type": "string", "description": "Insight text (for add/edit)"},
+                    "category": {"type": "string", "description": "Error category (for add)"},
+                    "context": {"type": "string", "default": ""},
+                    "source_error_ids": {"type": "array", "items": {"type": "integer"},
+                                         "description": "Error IDs that spawned this (for add)"},
+                    "project": {"type": "string", "default": "general"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["action"],
+            },
+        ),
+        Tool(
+            name="self_rules",
+            description="Manage behavioral rules (SOUL). Rules are promoted insights that shape agent behavior. "
+                        "Actions: list, fire (record relevance), rate (success=true/false), "
+                        "suspend, activate, retire, add_manual. "
+                        "Auto-suspend: success_rate < 0.2 after 10+ fires.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string",
+                               "enum": ["list", "fire", "rate", "suspend", "activate", "retire", "add_manual"]},
+                    "id": {"type": "integer", "description": "Rule ID (for fire/rate/suspend/activate/retire)"},
+                    "success": {"type": "boolean", "description": "For rate: was rule helpful?"},
+                    "content": {"type": "string", "description": "Rule text (for add_manual)"},
+                    "category": {"type": "string", "description": "Category (for add_manual)"},
+                    "scope": {"type": "string", "default": "global",
+                              "description": "global | project:<name> | category:<name>"},
+                    "priority": {"type": "integer", "default": 5, "description": "1-10"},
+                    "project": {"type": "string", "default": "general"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["action"],
+            },
+        ),
+        Tool(
+            name="self_patterns",
+            description="Analyze error patterns and self-improvement stats. Views: "
+                        "error_patterns (frequency, repeating 3+), insight_candidates (ready for promotion), "
+                        "rule_effectiveness (success rates, stale rules), improvement_trend (weekly errors), "
+                        "full_report (all). Call periodically to track improvement.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "view": {"type": "string",
+                             "enum": ["error_patterns", "insight_candidates", "rule_effectiveness",
+                                      "improvement_trend", "full_report"],
+                             "default": "full_report"},
+                    "project": {"type": "string"},
+                    "days": {"type": "integer", "default": 30},
+                },
+            },
+        ),
+        Tool(
+            name="self_reflect",
+            description="Save a verbal self-reflection (Reflexion pattern). "
+                        "Call after completing a task or encountering difficulty. "
+                        "NOT for errors (use self_error_log). For meta-observations about strategy, "
+                        "approach effectiveness, process improvements.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "reflection": {"type": "string",
+                                   "description": "What went well, what to improve, what to do differently"},
+                    "task_summary": {"type": "string", "description": "Brief description of what was done"},
+                    "outcome": {"type": "string", "enum": ["success", "partial", "failure", "ongoing"],
+                                "default": "success"},
+                    "project": {"type": "string", "default": "general"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["reflection", "task_summary"],
+            },
+        ),
+        Tool(
+            name="self_rules_context",
+            description="Get active behavioral rules for current session. "
+                        "Call at SESSION START to load rules. Returns rules filtered by project and scope. "
+                        "After task completion, rate rules: self_rules(action='rate', id=X, success=true/false).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "default": "general"},
+                    "categories": {"type": "array", "items": {"type": "string"},
+                                   "description": "Error categories relevant to current task"},
+                },
             },
         ),
     ]
@@ -1157,7 +1789,7 @@ async def _do(name, a):
                 data = json.loads(content)
                 data["_hint"] = (
                     "Analyze this conversation and save important knowledge via memory_save. "
-                    "Focus on: decisions (with WHY), solutions (problem->fix), lessons (gotchas), "
+                    "Focus on: decisions (with WHY), solutions (problem→fix), lessons (gotchas), "
                     "facts (configs, architecture). Skip items already in memory_saves_in_session."
                 )
                 data["_total_chunks"] = 1
@@ -1197,6 +1829,43 @@ async def _do(name, a):
             return J({"completed": True, "session_id": sid})
 
         return J({"error": f"Unknown action: {action}"})
+
+    # ── Self-Improvement Handlers ──
+
+    elif name == "self_error_log":
+        error_id, pattern = store.log_error(
+            SID, a["description"], a["category"],
+            a.get("severity", "medium"), a.get("fix", ""),
+            a.get("context", ""), a.get("project", "general"),
+            a.get("tags", []))
+        result = {"logged": True, "error_id": error_id}
+        if pattern:
+            result["pattern"] = pattern
+        return J(result)
+
+    elif name == "self_insight":
+        return J(store.manage_insight(SID, a["action"], **{
+            k: v for k, v in a.items() if k != "action"}))
+
+    elif name == "self_rules":
+        return J(store.manage_rule(SID, a["action"], **{
+            k: v for k, v in a.items() if k != "action"}))
+
+    elif name == "self_patterns":
+        return J(store.analyze_patterns(
+            a.get("view", "full_report"), a.get("project"), a.get("days", 30)))
+
+    elif name == "self_reflect":
+        rid = store.save_knowledge(
+            SID, a["reflection"], "reflection",
+            a.get("project", "general"),
+            (a.get("tags") or []) + ["self-reflection", a.get("outcome", "success")],
+            f"Task: {a['task_summary']}. Outcome: {a.get('outcome', 'success')}")
+        return J({"saved": True, "id": rid, "type": "reflection"})
+
+    elif name == "self_rules_context":
+        return J(store.get_rules_for_context(
+            a.get("project", "general"), a.get("categories")))
 
     return J({"error": "Unknown tool"})
 

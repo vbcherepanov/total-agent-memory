@@ -5,9 +5,9 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)
 ![MCP Server](https://img.shields.io/badge/MCP-Server-purple.svg)
-![Version 2.2](https://img.shields.io/badge/Version-2.2.0-orange.svg)
+![Version 3.0](https://img.shields.io/badge/Version-3.0.0-orange.svg)
 
-An MCP server that gives Claude Code a persistent, searchable memory. It stores decisions, solutions, lessons, facts, and conventions -- then retrieves them automatically across sessions using a 4-tier search pipeline.
+An MCP server that gives Claude Code a persistent, searchable memory and the ability to learn from its own mistakes. It stores decisions, solutions, lessons, facts, and conventions -- then retrieves them automatically across sessions using a 4-tier search pipeline. In v3.0, a new Self-Improving Agent learns from errors, extracts patterns, and builds behavioral rules that persist across sessions.
 
 ---
 
@@ -17,9 +17,11 @@ Claude Code starts every session with a blank slate. Yesterday you spent an hour
 
 This means you repeat yourself, re-explain decisions, re-discover solutions, and lose the compounding value of working with an AI assistant over time.
 
+Worse, Claude keeps making the same mistakes. It tries the same wrong approach, hits the same API gotcha, or misses the same config requirement -- because it has no way to learn from past failures.
+
 ## The Solution
 
-Claude Total Memory is an MCP server that runs alongside Claude Code. It provides 13 tools for saving and retrieving knowledge. When Claude saves a decision, a bug fix, or a project convention, that knowledge persists in a local database. Next session, Claude searches memory before starting work and builds on what it already knows.
+Claude Total Memory is an MCP server that runs alongside Claude Code. It provides 19 tools for saving knowledge, retrieving it, and learning from mistakes. When Claude saves a decision, a bug fix, or a project convention, that knowledge persists in a local database. When Claude hits an error, it logs the failure and the fix. Over time, error patterns are detected, insights are extracted, and behavioral rules are formed -- making Claude measurably better at its job.
 
 No cloud services. No API keys. Everything stays on your machine.
 
@@ -40,6 +42,15 @@ No cloud services. No API keys. Everything stays on your machine.
 - Knowledge graph with typed relations between records
 - Tag-based browsing and filtering
 
+**Self-Improving Agent** (new in v3.0)
+- Automatic error logging with structured categories and severity levels
+- Pattern detection: 3+ errors of the same category in 30 days triggers an insight suggestion
+- Insight extraction with ExpeL-style voting (importance + confidence scoring)
+- Rule promotion: high-confidence insights become persistent behavioral rules (SOUL)
+- Auto-suspend: rules with success rate below 20% after 10+ applications are suspended
+- Session reflections for meta-observations about strategy and approach
+- Rules loaded at session start, rated after task completion -- a closed feedback loop
+
 **Lifecycle and Maintenance**
 - Retention zones: active -> archived (180d) -> purged (365d)
 - Consolidation: find and merge similar records
@@ -50,6 +61,8 @@ No cloud services. No API keys. Everything stays on your machine.
 - Web UI at `localhost:37737`
 - Statistics, health score, knowledge table, session browser
 - Interactive knowledge graph visualization
+- Self-Improvement tab: error patterns, insights, promotion candidates
+- Rules/SOUL tab: active rules, effectiveness metrics, success rates
 - Read-only -- safe to leave running
 
 ---
@@ -186,6 +199,17 @@ Restart Claude Code. You should see `memory` listed in the MCP servers. Run `mem
 |------|-------------|
 | `memory_extract_session` | Process pending session transcripts. List, read, and mark as complete. |
 
+### Self-Improvement (6 tools)
+
+| Tool | Description |
+|------|-------------|
+| `self_error_log` | Log structured errors for pattern analysis. Called automatically on failures -- bash errors, wrong assumptions, API errors, config issues, timeouts, and loops. System detects patterns (3+ same category) and suggests insights. |
+| `self_insight` | Manage insights extracted from error patterns. Supports add/upvote/downvote/edit/list/promote. ExpeL-style voting: upvote increases importance (+1) and confidence (+0.05), downvote decreases them. Auto-archives at importance 0. |
+| `self_rules` | Manage behavioral rules (SOUL). Supports list/fire/rate/suspend/activate/retire/add_manual. Auto-suspend when success_rate < 0.2 after 10+ fires. |
+| `self_patterns` | Analyze error patterns, promotion candidates, rule effectiveness, and improvement trends. Views: error_patterns, insight_candidates, rule_effectiveness, improvement_trend, full_report. |
+| `self_reflect` | Save session reflections for meta-observations about strategy and approach. Not for errors (use self_error_log). For process improvements and what to do differently. |
+| `self_rules_context` | Load active rules at session start. Returns rules filtered by project and scope. Call at beginning of every session, then rate rules after task completion. |
+
 ---
 
 ## How It Works
@@ -267,6 +291,106 @@ When a duplicate is found, the existing record's `last_confirmed` timestamp is r
 
 ---
 
+## Self-Improving Agent
+
+New in v3.0. The self-improvement system gives Claude the ability to learn from mistakes across sessions. It follows a three-level pipeline inspired by the ExpeL (Experience and Learning) and Reflexion research patterns.
+
+### Pipeline Overview
+
+```
+  Error occurs (bash fail, wrong assumption, API error, ...)
+       |
+       v
+  +------------------+
+  | self_error_log   |  Log structured error with category, severity, fix
+  +------------------+
+       |
+       | (3+ errors of same category within 30 days)
+       v
+  +------------------+
+  | Pattern Detected |  System flags the pattern automatically
+  +------------------+
+       |
+       v
+  +------------------+
+  | self_insight     |  Extract a generalizable lesson from the pattern
+  | (add)            |  Initial: importance=2, confidence=0.5
+  +------------------+
+       |
+       | Confirmed again? -> upvote (+1 importance, +0.05 confidence)
+       | Wrong? -> downvote (-1 importance, auto-archive at 0)
+       |
+       | (importance >= 5 AND confidence >= 0.8)
+       v
+  +------------------+
+  | self_insight     |  Promote insight to a behavioral rule
+  | (promote)        |
+  +------------------+
+       |
+       v
+  +------------------+
+  | self_rules       |  Rule becomes part of SOUL
+  | (SOUL)           |  Loaded at session start, rated after tasks
+  +------------------+
+       |
+       | success_rate < 0.2 after 10+ fires?
+       v
+  +------------------+
+  | Auto-Suspend     |  Ineffective rules are suspended automatically
+  +------------------+
+```
+
+### Error Categories
+
+| Category | When to Log |
+|----------|------------|
+| `code_error` | Bash command fails, test fails after changes, compilation error |
+| `logic_error` | Incorrect reasoning about code behavior or architecture |
+| `config_error` | Missing config, wrong dependency, environment issue |
+| `api_error` | External API returns 4xx/5xx or unexpected response |
+| `timeout` | Operation hangs, request times out |
+| `loop_detected` | Same fix attempted 3+ times without success |
+| `wrong_assumption` | Assumption about codebase proved incorrect |
+| `missing_context` | Had to ask user because context was insufficient |
+
+### Insight Lifecycle
+
+| Stage | Importance | Confidence | What Happens |
+|-------|-----------|------------|--------------|
+| Created | 2 | 0.50 | Extracted from error pattern, linked to source errors |
+| Upvoted | +1 per vote | +0.05 per vote | Confirmed by encountering the same pattern again |
+| Downvoted | -1 per vote | -0.05 per vote | Contradicted by evidence |
+| Archived | 0 | any | Auto-archived when importance drops to 0 |
+| Promoted | >= 5 | >= 0.80 | Becomes a behavioral rule in the SOUL |
+
+### Rule Statuses
+
+| Status | Meaning |
+|--------|---------|
+| `active` | Loaded at session start, applied during work |
+| `suspended` | Auto-suspended (success_rate < 0.2 after 10+ fires) or manually paused |
+| `retired` | Permanently deactivated, kept for history |
+
+### Session Workflow
+
+1. **Session start**: call `self_rules_context(project="...")` to load active rules
+2. **During work**: call `self_error_log(...)` on every error automatically
+3. **Pattern detected**: the system returns `pattern_detected: true` -- call `self_insight(action='add', ...)`
+4. **Insight confirmed**: call `self_insight(action='upvote', id=N)` when seeing the same pattern
+5. **Promotion ready**: the system returns `promotion_eligible: true` -- call `self_insight(action='promote', id=N)`
+6. **Task complete**: call `self_rules(action='rate', id=N, success=true/false)` for each rule used
+7. **Session end**: call `self_reflect(...)` with meta-observations about the session
+
+### Periodic Analysis
+
+Run `self_patterns(view='full_report')` periodically to see:
+- Most frequent error categories
+- Insights ready for promotion
+- Rule effectiveness rankings
+- Weekly error trend (improving or not)
+
+---
+
 ## Web Dashboard
 
 The installer sets up the dashboard as a system service that starts automatically on login:
@@ -304,10 +428,12 @@ Unregister-ScheduledTask -TaskName ClaudeTotalMemoryDashboard
 
 The dashboard provides:
 
-- **Statistics**: total knowledge, sessions, projects, health score, storage size
+- **Statistics**: total knowledge, sessions, projects, health score, storage size, self-improvement stats
 - **Knowledge table**: searchable and filterable list of all active records with detail modal
 - **Sessions**: chronological session history with knowledge counts
 - **Graph**: interactive force-directed visualization of knowledge relations
+- **Self-Improvement** (new in v3.0): error patterns, insight candidates, promotion pipeline
+- **Rules/SOUL** (new in v3.0): active rules with fire counts, success rates, and status management
 
 The dashboard is read-only and connects to the same SQLite database used by the MCP server (via WAL mode for safe concurrent access).
 
@@ -344,6 +470,8 @@ cat global-rules.md.template >> ~/.claude/CLAUDE.md
 Or copy the relevant sections manually. The key instructions are:
 - **Always recall** before starting a task (`memory_recall`)
 - **Always save** after significant actions (`memory_save`) -- without asking
+- **Always log errors** automatically (`self_error_log`) -- without asking
+- **Load rules** at session start (`self_rules_context`)
 - Use the correct knowledge types (decision, solution, lesson, fact, convention)
 
 See `global-rules.md.template` for the full ready-to-paste block.
@@ -361,6 +489,7 @@ Then replace every `my-project` with your actual project name. This ensures all 
 The project template adds:
 - Auto-recall with project filter before every task
 - Auto-save triggers with project name and tags
+- Auto-error-logging triggers for self-improvement
 - Knowledge type reference table
 - Maintenance commands
 
@@ -375,19 +504,20 @@ If you use custom agents (`.claude/agents/*.md`), each agent needs its own memor
 **Option C: One-liner** -- add a single line to existing agents:
 
 ```
-Use memory_recall before tasks and memory_save after decisions/fixes/lessons. Project: "my-project".
+Use memory_recall before tasks and memory_save after decisions/fixes/lessons. Use self_error_log on failures. Project: "my-project".
 ```
 
 ### How the layers work together
 
 ```
-~/.claude/CLAUDE.md          → "Always use memory_recall and memory_save"
+~/.claude/CLAUDE.md          -> "Always use memory_recall and memory_save"
+                                "Always log errors with self_error_log"
                                 (applies to ALL projects)
 
-/your-project/CLAUDE.md      → "Project is 'my-app', save with these tags"
+/your-project/CLAUDE.md      -> "Project is 'my-app', save with these tags"
                                 (adds project-specific context)
 
-.claude/agents/backend.md    → "You are a backend developer. Use memory."
+.claude/agents/backend.md    -> "You are a backend developer. Use memory."
                                 (adds agent-specific behavior)
 ```
 
@@ -400,11 +530,13 @@ All three layers are optional. Each one makes memory more automatic:
 
 With proper configuration, Claude will:
 
-1. **At session start** -- search memory for context relevant to the current task
+1. **At session start** -- search memory for context relevant to the current task and load behavioral rules
 2. **During work** -- save decisions, bug fixes, gotchas, and conventions as they happen
-3. **At session end** -- save a summary of what was accomplished
-4. **Never ask** "should I save this?" -- it just saves automatically
-5. **Never duplicate** -- the server deduplicates via Jaccard + fuzzy similarity
+3. **On every error** -- log failures with category, severity, and fix for pattern analysis
+4. **At session end** -- save a summary of what was accomplished and reflect on the session
+5. **Never ask** "should I save this?" -- it just saves automatically
+6. **Never duplicate** -- the server deduplicates via Jaccard + fuzzy similarity
+7. **Learn over time** -- errors become insights, insights become rules, rules improve behavior
 
 ### Templates reference
 
@@ -422,7 +554,7 @@ Ready-to-use hooks are provided in the `hooks/` directory:
 
 | Hook | macOS/Linux | Windows | What it does |
 |------|-------------|---------|--------------|
-| SessionStart | `hooks/session-start.sh` | `hooks/session-start.ps1` | Reminds Claude to use `memory_recall` |
+| SessionStart | `hooks/session-start.sh` | `hooks/session-start.ps1` | Reminds Claude to use `memory_recall` and `self_rules_context` |
 | Stop | `hooks/on-stop.sh` | `hooks/on-stop.ps1` | Reminds Claude to save knowledge |
 | PostToolUse:Bash | `hooks/memory-trigger.sh` | `hooks/memory-trigger.ps1` | Suggests `memory_save` after git/docker |
 
@@ -505,7 +637,8 @@ The transcript extractor:
 
 ```
 ~/.claude-memory/
-  memory.db              SQLite database (FTS5, knowledge, sessions, relations)
+  memory.db              SQLite database (7 tables: sessions, knowledge, relations,
+                         timeline, errors, insights, rules + FTS5 indexes)
   raw/                   Raw JSONL session logs
     mcp_20260215_*.jsonl
   chroma/                ChromaDB vector store (semantic embeddings)
@@ -554,39 +687,97 @@ Typical storage sizes after moderate use:
 
 ## Architecture
 
-The server is a single-file MCP server (`src/server.py`, ~1200 lines) built on:
+The server is a single-file MCP server (`src/server.py`, ~1900 lines) built on:
 
 - **MCP SDK** (`mcp` package): protocol implementation and stdio transport
 - **SQLite FTS5**: full-text search with BM25 scoring, triggers for index sync
 - **ChromaDB**: persistent vector store with cosine similarity search
 - **sentence-transformers**: local embedding model (`all-MiniLM-L6-v2`, 384d)
 
+The database contains 7 tables: `sessions`, `knowledge`, `relations`, `timeline` (core), and `errors`, `insights`, `rules` (self-improvement).
+
 ```
 Claude Code
     |
     | (MCP protocol over stdio)
     v
-+---------------------------+
-|  MCP Server (server.py)   |
-|                           |
-|  +--------+  +---------+  |
-|  | Store   |  | Recall  |  |
-|  | (write) |  | (read)  |  |
-|  +----+----+  +----+----+  |
-|       |            |        |
-|  +----v------------v----+   |
-|  |   SQLite FTS5        |   |
-|  |   + ChromaDB         |   |
-|  |   + Relations Graph  |   |
-|  +-----------------------+  |
-+---------------------------+
++--------------------------------------+
+|  MCP Server (server.py) — 19 tools   |
+|                                      |
+|  +--------+  +---------+  +-------+  |
+|  | Store   |  | Recall  |  | Self- |  |
+|  | (write) |  | (read)  |  | Impr. |  |
+|  +----+----+  +----+----+  +---+---+  |
+|       |            |           |      |
+|  +----v------------v-----------v--+   |
+|  |   SQLite (7 tables + FTS5)     |   |
+|  |   + ChromaDB (vectors)         |   |
+|  |   + Relations Graph            |   |
+|  +--------------------------------+   |
++--------------------------------------+
 ```
 
 - **Store**: handles writes -- save, update, delete, consolidate, retention, dedup
 - **Recall**: handles reads -- 4-tier search, timeline browsing, statistics
+- **Self-Improvement**: handles learning -- error logging, pattern detection, insight management, rule lifecycle
 - **Dashboard** (`src/dashboard.py`): standalone HTTP server using Python stdlib, read-only SQLite access
 
 The server creates a new session ID on each startup and logs all tool calls to raw JSONL files for auditability.
+
+---
+
+## Upgrading from v2.x
+
+If you are upgrading from v2.x (13 tools) to v3.0 (19 tools):
+
+**1. Update the code**
+
+```bash
+cd /path/to/claude-total-memory
+git pull origin main
+```
+
+Or re-clone if you prefer a fresh copy.
+
+**2. Install dependencies**
+
+No new dependencies are required. The self-improvement system uses only SQLite and the existing Python stdlib.
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt  # just in case
+```
+
+**3. Database migration**
+
+No manual migration is needed. The server automatically creates the three new tables (`errors`, `insights`, `rules`) and their FTS5 indexes on first startup. Your existing knowledge, sessions, and relations are untouched.
+
+**4. Dashboard**
+
+The two new tabs (Self-Improvement, Rules/SOUL) and the self-improvement stat card appear automatically. Restart the dashboard if it is running as a service:
+
+```bash
+# macOS
+launchctl bootout gui/$(id -u)/com.claude-total-memory.dashboard
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.claude-total-memory.dashboard.plist
+```
+
+```powershell
+# Windows
+Restart-ScheduledTask -TaskName ClaudeTotalMemoryDashboard
+```
+
+**5. Configure self-improvement instructions (optional)**
+
+For Claude to use the new self-improvement tools automatically, add the self-improvement block to your `CLAUDE.md`. The key instructions are:
+
+- Call `self_rules_context(project="...")` at session start
+- Call `self_error_log(...)` automatically on every error
+- Call `self_insight(action='add', ...)` when pattern detected
+- Call `self_reflect(...)` at session end
+- Rate rules after task completion
+
+See `global-rules.md.template` for the full ready-to-paste block.
 
 ---
 
