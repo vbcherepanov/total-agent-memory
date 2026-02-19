@@ -92,6 +92,7 @@ def extract(transcript_path: str, session_id: str, output_dir: str) -> dict:
 
             ts = obj.get("timestamp", "")
 
+            # Capture metadata from first available record
             if not project_dir and obj.get("cwd"):
                 project_dir = obj["cwd"]
                 project_name = os.path.basename(project_dir)
@@ -102,6 +103,7 @@ def extract(transcript_path: str, session_id: str, output_dir: str) -> dict:
                     first_ts = ts
                 last_ts = ts
 
+            # Only process user and assistant messages
             msg = obj.get("message")
             if not isinstance(msg, dict):
                 continue
@@ -156,6 +158,7 @@ def extract(transcript_path: str, session_id: str, output_dir: str) -> dict:
                             tool_input = c.get("input", {})
                             tools_used.add(tool_name.split("__")[-1] if "__" in tool_name else tool_name)
 
+                            # Track memory_save calls
                             if "memory_save" in tool_name:
                                 content_preview = str(tool_input.get("content", ""))[:200]
                                 ktype = tool_input.get("type", "")
@@ -165,6 +168,7 @@ def extract(transcript_path: str, session_id: str, output_dir: str) -> dict:
                                     f"content={content_preview})"
                                 )
 
+                            # Track file writes
                             if tool_name in ("Write", "Edit") or tool_name.endswith("Write") or tool_name.endswith("Edit"):
                                 fp = tool_input.get("file_path", "")
                                 if fp:
@@ -178,6 +182,7 @@ def extract(transcript_path: str, session_id: str, output_dir: str) -> dict:
                                 "input_summary": sanitize(input_str[:MAX_TOOL_INPUT_TEXT]),
                             })
 
+    # Skip empty sessions
     if not conversation:
         return {}
 
@@ -200,6 +205,7 @@ def extract(transcript_path: str, session_id: str, output_dir: str) -> dict:
         "status": "pending",
     }
 
+    # Trim conversation if output too large
     max_bytes = MAX_OUTPUT_KB * 1024
     output_str = json.dumps(output, ensure_ascii=False)
 
@@ -216,6 +222,7 @@ def extract(transcript_path: str, session_id: str, output_dir: str) -> dict:
         output["stats"]["dropped_messages"] = dropped
         output_str = json.dumps(output, ensure_ascii=False)
 
+    # If still too large, truncate assistant texts further
     if len(output_str) > max_bytes:
         for item in output["conversation"]:
             if item.get("role") == "assistant" and "text" in item:
@@ -224,9 +231,11 @@ def extract(transcript_path: str, session_id: str, output_dir: str) -> dict:
                 item["input_summary"] = item["input_summary"][:100]
         output_str = json.dumps(output, ensure_ascii=False)
 
+    # Write to extract-queue
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     output_path = Path(output_dir) / f"pending-{session_id}.json"
 
+    # Atomic write: temp file then rename
     tmp_path = output_path.with_suffix(".tmp")
     tmp_path.write_text(output_str, encoding="utf-8")
     tmp_path.rename(output_path)
@@ -234,94 +243,138 @@ def extract(transcript_path: str, session_id: str, output_dir: str) -> dict:
     return output
 
 
-def build_session_summary(data: dict) -> str:
-    """Build a concise session summary from extracted data."""
-    project = data.get("project_name", "unknown")
+def auto_save_knowledge(db_path: str, session_id: str, data: dict) -> list:
+    """Save meaningful knowledge from session directly to memory.db.
+
+    Creates up to 3 records:
+    1. Session task — what the user was working on (first request)
+    2. Work log — files changed and tools used
+    3. Recovery context — last messages for continuing work
+    """
+    project = data.get("project_name", "general")
     branch = data.get("git_branch", "")
-    stats = data.get("stats", {})
     user_texts = data.get("user_texts", [])
     assistant_texts = data.get("assistant_texts", [])
-    tools = data.get("tools_used", [])
     files = data.get("files_written", [])
-    memory_saves = data.get("memory_saves_in_session", [])
+    tools = data.get("tools_used", [])
+    stats = data.get("stats", {})
 
-    parts = [f"Session on project '{project}'"]
-    if branch:
-        parts[0] += f" (branch: {branch})"
-    parts[0] += f": {stats.get('user_messages', 0)} user msgs, {stats.get('tool_calls', 0)} tool calls."
+    records = []
 
+    # 1. Session task — first user message is the main task
     if user_texts:
-        first_task = user_texts[0][:300]
-        parts.append(f"Task: {first_task}")
+        task_text = user_texts[0][:1500]
+        branch_info = f" (branch: {branch})" if branch else ""
+        records.append({
+            "sid_suffix": "task",
+            "type": "fact",
+            "content": f"[{project}{branch_info}] Session task: {task_text}",
+            "context": (
+                f"User's main request in this session. "
+                f"{stats.get('user_messages', 0)} user msgs, "
+                f"{stats.get('tool_calls', 0)} tool calls total."
+            ),
+            "tags": ["session-task", "auto-extract", project],
+        })
 
-    if assistant_texts:
-        last_result = assistant_texts[-1][:300]
-        parts.append(f"Last output: {last_result}")
-
-    if tools:
-        tool_list = ", ".join(tools[:10])
-        parts.append(f"Tools: {tool_list}")
-
+    # 2. Work log — files changed and tools used
     if files:
-        file_list = ", ".join(sorted(set(files))[:10])
-        parts.append(f"Files modified: {file_list}")
+        unique_files = sorted(set(files))[:20]
+        file_list = ", ".join(unique_files)
+        tool_list = ", ".join(tools[:15]) if tools else "N/A"
+        records.append({
+            "sid_suffix": "worklog",
+            "type": "fact",
+            "content": (
+                f"[{project}] Files modified: {file_list}. "
+                f"Tools used: {tool_list}."
+            ),
+            "context": (
+                f"Auto-extracted work log. "
+                f"{len(files)} file operations, "
+                f"{len(unique_files)} unique files."
+            ),
+            "tags": ["work-log", "auto-extract", project],
+        })
 
-    if memory_saves:
-        parts.append(f"Explicit memory_save calls: {len(memory_saves)}")
+    # 3. Recovery context — last messages for continuation
+    last_user = user_texts[-5:] if len(user_texts) > 1 else user_texts
+    last_assistant = assistant_texts[-5:] if assistant_texts else []
 
-    return " | ".join(parts)
+    if last_user or last_assistant:
+        parts = []
+        if last_user:
+            parts.append("Last user messages:")
+            for msg in last_user:
+                parts.append(f"  - {msg[:600]}")
+        if last_assistant:
+            parts.append("Last assistant responses:")
+            for msg in last_assistant:
+                parts.append(f"  - {msg[:600]}")
 
+        recovery_text = "\n".join(parts)
+        records.append({
+            "sid_suffix": "recovery",
+            "type": "fact",
+            "content": f"[{project}] Session recovery context:\n{recovery_text}",
+            "context": (
+                f"Recovery data for continuing work on {project}. "
+                f"Session ended at {data.get('ended_at', 'unknown')}."
+            ),
+            "tags": ["recovery", "auto-extract", project],
+        })
 
-def auto_save_to_db(db_path: str, session_id: str, data: dict):
-    """Save session summary directly to memory.db as a fact."""
-    summary = build_session_summary(data)
-    if not summary or len(summary) < 20:
-        return None
+    if not records:
+        return []
 
-    project = data.get("project_name", "general")
-    now = datetime.now(tz=timezone.utc).isoformat()
-
+    saved_ids = []
     try:
         db = sqlite3.connect(db_path)
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("PRAGMA synchronous=NORMAL")
 
-        existing = db.execute(
-            "SELECT id FROM knowledge WHERE session_id=? AND source='auto-extract'",
-            (f"auto_{session_id}",)
-        ).fetchone()
-        if existing:
-            db.close()
-            return existing[0]
+        now = datetime.now(tz=timezone.utc).isoformat()
 
-        cur = db.execute("""
-            INSERT INTO knowledge (session_id, type, content, context, project, tags,
-                                   source, confidence, created_at, last_confirmed, recall_count)
-            VALUES (?, 'fact', ?, ?, ?, ?, 'auto-extract', 0.8, ?, ?, 0)
-        """, (
-            f"auto_{session_id}",
-            sanitize(summary),
-            f"Auto-extracted session summary. Started: {data.get('started_at', '')}. "
-            f"Ended: {data.get('ended_at', '')}.",
-            project,
-            json.dumps(["session-summary", "auto-extract", project]),
-            now,
-            now,
-        ))
+        for record in records:
+            dedup_key = f"auto_{session_id}_{record['sid_suffix']}"
+
+            existing = db.execute(
+                "SELECT id FROM knowledge WHERE session_id=? AND source='auto-extract'",
+                (dedup_key,)
+            ).fetchone()
+            if existing:
+                saved_ids.append(existing[0])
+                continue
+
+            cur = db.execute("""
+                INSERT INTO knowledge (session_id, type, content, context, project, tags,
+                                       source, confidence, created_at, last_confirmed, recall_count)
+                VALUES (?, ?, ?, ?, ?, ?, 'auto-extract', 0.7, ?, ?, 0)
+            """, (
+                dedup_key,
+                record["type"],
+                sanitize(record["content"]),
+                record["context"],
+                project,
+                json.dumps(record["tags"]),
+                now,
+                now,
+            ))
+            saved_ids.append(cur.lastrowid)
+
         db.commit()
-        rid = cur.lastrowid
         db.close()
-        return rid
     except Exception as e:
         print(f"Auto-save to DB failed: {e}", file=sys.stderr)
-        return None
+
+    return saved_ids
 
 
 def main():
     parser = argparse.ArgumentParser(description="Extract Claude Code transcript for knowledge extraction")
     parser.add_argument("--transcript", required=True, help="Path to JSONL transcript file")
     parser.add_argument("--session-id", required=True, help="Session UUID")
-    parser.add_argument("--output-dir", required=True, help="Output directory for pending extraction")
+    parser.add_argument("--output-dir", required=True, help="Output directory for extraction archive")
     parser.add_argument("--db", default=os.path.expanduser("~/.claude-memory/memory.db"),
                         help="Path to memory.db for auto-save")
     args = parser.parse_args()
@@ -335,13 +388,20 @@ def main():
         print("Empty session, nothing to extract", file=sys.stderr)
         return
 
-    size = os.path.getsize(Path(args.output_dir) / f"pending-{args.session_id}.json")
-    print(f"Extracted {size} bytes to {args.output_dir}/pending-{args.session_id}.json", file=sys.stderr)
+    # Rename output from pending-* to done-* (auto-processed)
+    pending_path = Path(args.output_dir) / f"pending-{args.session_id}.json"
+    done_path = Path(args.output_dir) / f"done-{args.session_id}.json"
+    if pending_path.exists():
+        pending_path.rename(done_path)
 
+    size = done_path.stat().st_size if done_path.exists() else 0
+    print(f"Extracted {size} bytes to {done_path}", file=sys.stderr)
+
+    # Auto-save meaningful knowledge to memory.db (3 records)
     if os.path.isfile(args.db):
-        rid = auto_save_to_db(args.db, args.session_id, data)
-        if rid:
-            print(f"Auto-saved session summary to memory.db (id={rid})", file=sys.stderr)
+        saved_ids = auto_save_knowledge(args.db, args.session_id, data)
+        if saved_ids:
+            print(f"Auto-saved {len(saved_ids)} knowledge records to memory.db (ids={saved_ids})", file=sys.stderr)
 
 
 if __name__ == "__main__":
