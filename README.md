@@ -11,6 +11,7 @@
 [![MCP Server](https://img.shields.io/badge/MCP-Server-purple.svg)](https://modelcontextprotocol.io)
 [![Version](https://img.shields.io/github/v/release/vbcherepanov/claude-total-memory)](https://github.com/vbcherepanov/claude-total-memory/releases)
 [![GitHub stars](https://img.shields.io/github/stars/vbcherepanov/claude-total-memory)](https://github.com/vbcherepanov/claude-total-memory/stargazers)
+[![PayPal](https://img.shields.io/badge/PayPal-Donate-blue.svg?logo=paypal)](https://paypal.me/VitaliiCherepanov)
 
 [Quick Start](#quick-start) · [Features](#features) · [20 MCP Tools](#mcp-tools) · [Dashboard](#web-dashboard) · [Self-Improving Agent](#self-improving-agent)
 
@@ -1081,6 +1082,16 @@ Contributions are welcome! Feel free to open issues and pull requests.
 3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+---
+
+## Support the Project
+
+If Claude Total Memory saves you time, consider supporting its development:
+
+<a href="https://paypal.me/VitaliiCherepanov">
+  <img src="https://img.shields.io/badge/PayPal-Donate-blue.svg?style=for-the-badge&logo=paypal" alt="Donate via PayPal" />
+</a>
 
 ---
 
