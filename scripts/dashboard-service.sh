@@ -41,6 +41,7 @@ install_service() {
     install_dir="$2"
     memory_dir="$3"
     dashboard_path="$install_dir/src/dashboard.py"
+    dashboard_port="${DASHBOARD_PORT:-37737}"
     log_dir="$memory_dir/logs"
     plist_name="com.claude-total-memory.dashboard"
     plist_path="$HOME/Library/LaunchAgents/$plist_name.plist"
@@ -53,6 +54,7 @@ install_service() {
     mkdir -p "$log_dir"
 
     if [ "$(platform_name)" = "Darwin" ]; then
+        mkdir -p "$(dirname "$plist_path")"
         launchctl bootout "gui/$(id -u)/$plist_name" 2>/dev/null || true
 
         cat > "$plist_path" <<PLIST
@@ -72,7 +74,7 @@ install_service() {
         <key>CLAUDE_MEMORY_DIR</key>
         <string>$memory_dir</string>
         <key>DASHBOARD_PORT</key>
-        <string>37737</string>
+        <string>$dashboard_port</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
@@ -94,7 +96,7 @@ PLIST
         launchctl bootstrap "gui/$(id -u)" "$plist_path" 2>/dev/null || \
         launchctl load "$plist_path" 2>/dev/null || true
         echo "  OK: Dashboard service installed (auto-starts on login)"
-        echo "  OK: http://localhost:37737"
+        echo "  OK: http://localhost:$dashboard_port"
     elif systemd_user_available; then
         mkdir -p "$systemd_dir"
         cat > "$systemd_path" <<UNIT
@@ -108,7 +110,7 @@ ExecStart=$py_path $dashboard_path
 Restart=on-failure
 RestartSec=5
 Environment=CLAUDE_MEMORY_DIR=$memory_dir
-Environment=DASHBOARD_PORT=37737
+Environment=DASHBOARD_PORT=$dashboard_port
 WorkingDirectory=$install_dir
 StandardOutput=append:$log_dir/dashboard.log
 StandardError=append:$log_dir/dashboard.err
@@ -120,7 +122,7 @@ UNIT
         systemctl --user daemon-reload
         systemctl --user enable --now "$systemd_name" >/dev/null 2>&1 || true
         echo "  OK: Dashboard service installed with systemd --user"
-        echo "  OK: http://localhost:37737"
+        echo "  OK: http://localhost:$dashboard_port"
     else
         cat > "$autostart_script" <<EOF
 #!/usr/bin/env bash
@@ -128,7 +130,7 @@ if ! "$py_path" - <<'PY' >/dev/null 2>&1
 import socket
 s = socket.socket()
 try:
-    s.connect(("127.0.0.1", 37737))
+    s.connect(("127.0.0.1", $dashboard_port))
     raise SystemExit(0)
 except OSError:
     raise SystemExit(1)
@@ -136,7 +138,8 @@ finally:
     s.close()
 PY
 then
-  nohup "$py_path" "$dashboard_path" >>"$log_dir/dashboard.log" 2>>"$log_dir/dashboard.err" </dev/null &
+  CLAUDE_MEMORY_DIR="$memory_dir" DASHBOARD_PORT="$dashboard_port" \
+    nohup "$py_path" "$dashboard_path" >>"$log_dir/dashboard.log" 2>>"$log_dir/dashboard.err" </dev/null &
 fi
 EOF
         chmod +x "$autostart_script"
@@ -158,7 +161,7 @@ EOF
         else
             echo "  OK: Shell-login auto-start installed via ~/.profile"
         fi
-        echo "  OK: http://localhost:37737"
+        echo "  OK: http://localhost:$dashboard_port"
     fi
 }
 
