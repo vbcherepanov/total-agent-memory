@@ -139,7 +139,7 @@ The installer:
 
 1. Creates `~/.claude-memory/` (DB, embeddings, blobs, transcripts, backups)
 2. Sets up Python venv in `~/claude-memory-server/.venv/`
-3. Installs deps from `requirements.txt`
+3. Installs deps from `requirements.txt` and `requirements-dev.txt`
 4. Pre-downloads the FastEmbed multilingual MiniLM model
 5. Wires the MCP server into `~/.claude/settings.json`
 6. Applies all migrations 001..007 to a fresh `memory.db`
@@ -172,7 +172,7 @@ What it does (7 stages):
 
 1. **Pre-flight** — disk space check, snapshot DB to `~/.claude-memory/backups/memory.db.YYYYMMDD_HHMMSS.gz` (keeps 7 last)
 2. **Source pull** — `git pull --ff-only` if repo, or HTTPS+SHA-256-verified tarball if `UPDATE_URL` set
-3. **Dependencies** — `pip install -r requirements.txt` only if hash changed
+3. **Dependencies** — `pip install -r requirements.txt -r requirements-dev.txt` only if either file hash changed
 4. **Tests** — full pytest suite. Aborts (with snapshot kept) if red
 5. **Schema** — `Store()` init applies pending migrations idempotently. v3/v4/v5 → v6 means up to 7 migrations roll forward
 6. **Services** — reloads LaunchAgents + restarts dashboard
@@ -183,7 +183,7 @@ What it does (7 stages):
 ```bash
 cd ~/claude-memory-server
 git pull
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
 .venv/bin/python src/tools/version_status.py    # see pending migrations
 .venv/bin/python -m pytest tests/                # gate
 # Restart MCP from Claude Code: /mcp → memory → Reconnect

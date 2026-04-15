@@ -75,7 +75,7 @@ if (-not (Test-Path $VenvPython)) {
 
 & $VenvPip install -q --upgrade pip 2>$null
 Write-Host "  Installing dependencies (this may take 2-3 minutes on first run)..."
-& $VenvPip install -q "mcp[cli]>=1.0.0" chromadb sentence-transformers 2>&1 | Select-Object -Last 1
+& $VenvPip install -q -r (Join-Path $InstallDir "requirements.txt") -r (Join-Path $InstallDir "requirements-dev.txt") 2>&1 | Select-Object -Last 1
 Write-Host "  OK: Dependencies installed" -ForegroundColor Green
 
 # -- 3. Pre-download embedding model --

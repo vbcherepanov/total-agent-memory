@@ -4,7 +4,7 @@
 # Stages (skip-friendly — every stage tolerates absence of prerequisites):
 #   1. Pre-flight  — verify dirs, disk space, snapshot DB
 #   2. Source      — git pull (if repo) OR curl tarball (if UPDATE_URL set)
-#   3. Deps        — pip install only if requirements.txt hash changed
+#   3. Deps        — pip install only if requirements*.txt hash changed
 #   4. Tests       — pytest gate; abort + rollback if red
 #   5. Schema      — Store() init applies pending migrations idempotently
 #   6. Services    — reload LaunchAgents + restart dashboard
@@ -158,20 +158,29 @@ else
 fi
 
 # ────────────────────────────────────────────────
-# 3. Deps (only if requirements.txt changed)
+# 3. Deps (only if requirements*.txt changed)
 # ────────────────────────────────────────────────
 
 say "stage 3/7: dependencies"
+req_files=("$ROOT/requirements.txt")
+if [[ -f "$ROOT/requirements-dev.txt" ]]; then
+  req_files+=("$ROOT/requirements-dev.txt")
+fi
+
 req_hash_path="$ROOT/.last-requirements.sha256"
-if [[ -f "$ROOT/requirements.txt" ]]; then
-  cur_hash=$(/sbin/md5 -q "$ROOT/requirements.txt" 2>/dev/null || md5sum "$ROOT/requirements.txt" | cut -d' ' -f1)
+if [[ -f "${req_files[0]}" ]]; then
+  cur_hash=$(
+    cat "${req_files[@]}" | \
+    (/sbin/md5 -q 2>/dev/null || md5sum | cut -d' ' -f1)
+  )
   prev_hash=$(cat "$req_hash_path" 2>/dev/null || echo "")
   if [[ "$cur_hash" != "$prev_hash" ]]; then
+    changed_files=$(printf '%s ' "${req_files[@]##*/}")
     if $DRY_RUN; then
-      say "  requirements.txt changed — would pip install (hash $prev_hash → $cur_hash)"
+      say "  ${changed_files% }changed — would pip install (hash $prev_hash → $cur_hash)"
     else
-      say "  requirements.txt changed — installing"
-      "$PIP" install -q -r "$ROOT/requirements.txt" || fail "pip install failed"
+      say "  ${changed_files% }changed — installing"
+      "$PIP" install -q -r "$ROOT/requirements.txt" -r "$ROOT/requirements-dev.txt" || fail "pip install failed"
       echo "$cur_hash" > "$req_hash_path"
     fi
   else

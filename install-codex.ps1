@@ -67,7 +67,7 @@ $VenvPip = Join-Path $VenvDir "Scripts" "pip.exe"
 
 if (Test-Path $VenvPython) {
     Write-Host "  Existing venv found, updating dependencies..."
-    & $VenvPip install -q --upgrade "mcp[cli]>=1.0.0" chromadb sentence-transformers 2>&1 | Select-Object -Last 1
+    & $VenvPip install -q --upgrade -r (Join-Path $InstallDir "requirements.txt") -r (Join-Path $InstallDir "requirements-dev.txt") 2>&1 | Select-Object -Last 1
 } else {
     Write-Host "  Creating virtual environment..."
     & $pythonCmd -m venv $VenvDir
@@ -77,7 +77,7 @@ if (Test-Path $VenvPython) {
     }
     & $VenvPip install -q --upgrade pip 2>$null
     Write-Host "  Installing dependencies (this may take 2-3 minutes on first run)..."
-    & $VenvPip install -q "mcp[cli]>=1.0.0" chromadb sentence-transformers 2>&1 | Select-Object -Last 1
+    & $VenvPip install -q -r (Join-Path $InstallDir "requirements.txt") -r (Join-Path $InstallDir "requirements-dev.txt") 2>&1 | Select-Object -Last 1
 }
 Write-Host "  OK: Dependencies installed" -ForegroundColor Green
 

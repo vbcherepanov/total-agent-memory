@@ -23,6 +23,7 @@ VENV_DIR="$INSTALL_DIR/.venv"
 CODEX_CONFIG_DIR="$HOME/.codex"
 CODEX_CONFIG="$CODEX_CONFIG_DIR/config.toml"
 SKILL_TARGET="$HOME/.agents/skills/memory"
+DASHBOARD_SERVICE="$INSTALL_DIR/scripts/dashboard-service.sh"
 
 # -- 1. Create memory directories --
 echo "-> Step 1: Creating memory directories..."
@@ -51,13 +52,13 @@ echo "  Python $PY_VERSION found"
 if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/python" ]; then
     echo "  Existing venv found, updating dependencies..."
     source "$VENV_DIR/bin/activate"
-    pip install -q --upgrade "mcp[cli]>=1.0.0" chromadb sentence-transformers 2>&1 | tail -1
+    pip install -q --upgrade -r "$INSTALL_DIR/requirements.txt" -r "$INSTALL_DIR/requirements-dev.txt" 2>&1 | tail -1
 else
     python3 -m venv "$VENV_DIR"
     source "$VENV_DIR/bin/activate"
     pip install -q --upgrade pip
     echo "  Installing dependencies (this may take 2-3 minutes on first run)..."
-    pip install -q "mcp[cli]>=1.0.0" chromadb sentence-transformers 2>&1 | tail -1
+    pip install -q -r "$INSTALL_DIR/requirements.txt" -r "$INSTALL_DIR/requirements-dev.txt" 2>&1 | tail -1
 fi
 echo "  OK: Dependencies installed"
 
@@ -139,62 +140,9 @@ else
     echo "  SKIP: codex-skill/ directory not found"
 fi
 
-# -- 6. Dashboard service (macOS LaunchAgent) --
+# -- 6. Dashboard service --
 echo "-> Step 6: Setting up dashboard service..."
-DASHBOARD_PATH="$INSTALL_DIR/src/dashboard.py"
-PLIST_NAME="com.claude-total-memory.dashboard"
-PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
-LOG_DIR="$MEMORY_DIR/logs"
-mkdir -p "$LOG_DIR"
-
-if [ "$(uname)" = "Darwin" ]; then
-    # Stop existing service if running
-    launchctl bootout "gui/$(id -u)/$PLIST_NAME" 2>/dev/null || true
-
-    cat > "$PLIST_PATH" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>$PLIST_NAME</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$PY_PATH</string>
-        <string>$DASHBOARD_PATH</string>
-    </array>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>CLAUDE_MEMORY_DIR</key>
-        <string>$MEMORY_DIR</string>
-        <key>DASHBOARD_PORT</key>
-        <string>37737</string>
-    </dict>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>$LOG_DIR/dashboard.log</string>
-    <key>StandardErrorPath</key>
-    <string>$LOG_DIR/dashboard.err</string>
-    <key>ProcessType</key>
-    <string>Background</string>
-</dict>
-</plist>
-PLIST
-
-    launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH" 2>/dev/null || \
-    launchctl load "$PLIST_PATH" 2>/dev/null || true
-    echo "  OK: Dashboard service installed (auto-starts on login)"
-    echo "  OK: http://localhost:37737"
-else
-    echo "  INFO: Auto-start not available on this platform"
-    echo "  Run manually: .venv/bin/python src/dashboard.py"
-fi
+"$DASHBOARD_SERVICE" install "$PY_PATH" "$INSTALL_DIR" "$MEMORY_DIR"
 
 # -- 7. Verify --
 echo ""
@@ -274,6 +222,8 @@ echo "  Next steps:"
 echo "    1. Copy AGENTS.md.template to your project as AGENTS.md"
 echo "    2. Copy codex-global-rules.md.template to ~/.codex/AGENTS.md"
 echo "    3. Restart Codex CLI"
+echo ""
+"$DASHBOARD_SERVICE" print-management
 echo ""
 echo "  Note: If you also use Claude Code, both share the same"
 echo "  memory database. Don't run them simultaneously."

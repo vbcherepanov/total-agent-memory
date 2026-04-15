@@ -17,6 +17,7 @@ INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
 MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
 VENV_DIR="$INSTALL_DIR/.venv"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+DASHBOARD_SERVICE="$INSTALL_DIR/scripts/dashboard-service.sh"
 
 # -- 1. Create memory directories --
 echo "-> Step 1: Creating memory directories..."
@@ -46,7 +47,7 @@ python3 -m venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 pip install -q --upgrade pip
 echo "  Installing dependencies (this may take 2-3 minutes on first run)..."
-pip install -q "mcp[cli]>=1.0.0" chromadb sentence-transformers 2>&1 | tail -1
+pip install -q -r "$INSTALL_DIR/requirements.txt" -r "$INSTALL_DIR/requirements-dev.txt" 2>&1 | tail -1
 echo "  OK: Dependencies installed"
 
 # -- 3. Pre-download embedding model --
@@ -185,62 +186,9 @@ else
     echo "  Set MEMORY_LLM_ENABLED=auto after Ollama is ready — it picks up automatically."
 fi
 
-# -- 5. Dashboard service (macOS LaunchAgent) --
+# -- 5. Dashboard service --
 echo "-> Step 5: Setting up dashboard service..."
-DASHBOARD_PATH="$INSTALL_DIR/src/dashboard.py"
-PLIST_NAME="com.claude-total-memory.dashboard"
-PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
-LOG_DIR="$MEMORY_DIR/logs"
-mkdir -p "$LOG_DIR"
-
-if [ "$(uname)" = "Darwin" ]; then
-    # Stop existing service if running
-    launchctl bootout "gui/$(id -u)/$PLIST_NAME" 2>/dev/null || true
-
-    cat > "$PLIST_PATH" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>$PLIST_NAME</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$PY_PATH</string>
-        <string>$DASHBOARD_PATH</string>
-    </array>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>CLAUDE_MEMORY_DIR</key>
-        <string>$MEMORY_DIR</string>
-        <key>DASHBOARD_PORT</key>
-        <string>37737</string>
-    </dict>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>$LOG_DIR/dashboard.log</string>
-    <key>StandardErrorPath</key>
-    <string>$LOG_DIR/dashboard.err</string>
-    <key>ProcessType</key>
-    <string>Background</string>
-</dict>
-</plist>
-PLIST
-
-    launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH" 2>/dev/null || \
-    launchctl load "$PLIST_PATH" 2>/dev/null || true
-    echo "  OK: Dashboard service installed (auto-starts on login)"
-    echo "  OK: http://localhost:37737"
-else
-    echo "  INFO: Auto-start not available on this platform"
-    echo "  Run manually: .venv/bin/python src/dashboard.py"
-fi
+"$DASHBOARD_SERVICE" install "$PY_PATH" "$INSTALL_DIR" "$MEMORY_DIR"
 
 # -- 6. Verify --
 echo ""
@@ -308,13 +256,10 @@ echo "    self_patterns          — Analyze error patterns & trends"
 echo "    self_reflect           — Save session reflections"
 echo "    self_rules_context     — Load rules at session start"
 echo ""
-echo "  Web dashboard (auto-started on macOS):"
+echo "  Web dashboard:"
 echo "    http://localhost:37737"
 echo ""
-echo "  Dashboard management:"
-echo "    Stop:    launchctl bootout gui/\$(id -u)/com.claude-total-memory.dashboard"
-echo "    Start:   launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.claude-total-memory.dashboard.plist"
-echo "    Logs:    tail -f ~/.claude-memory/logs/dashboard.log"
+"$DASHBOARD_SERVICE" print-management
 echo ""
 echo "  Optional: Copy CLAUDE.md.template to your project"
 echo "  to instruct Claude to use memory automatically."
