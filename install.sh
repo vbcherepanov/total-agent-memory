@@ -65,36 +65,31 @@ mkdir -p "$HOME/.claude"
 PY_PATH="$VENV_DIR/bin/python"
 SRV_PATH="$INSTALL_DIR/src/server.py"
 
-python3 -c "
-import json, os
+# Claude Code reads MCP server config from ~/.claude.json (managed via the
+# 'claude mcp' CLI), NOT from ~/.claude/settings.json — writing 'mcpServers'
+# into settings.json is silently ignored by Claude Code.
+if ! command -v claude &>/dev/null; then
+    echo "  ERROR: 'claude' CLI not found in PATH."
+    echo "         Install Claude Code first: https://claude.com/claude-code"
+    exit 1
+fi
 
-settings_path = '$CLAUDE_SETTINGS'
-new_server = {
+MCP_JSON=$(python3 -c "
+import json
+print(json.dumps({
     'command': '$PY_PATH',
     'args': ['$SRV_PATH'],
     'env': {
         'CLAUDE_MEMORY_DIR': '$MEMORY_DIR',
         'EMBEDDING_MODEL': 'all-MiniLM-L6-v2'
     }
-}
+}))
+")
 
-settings = {}
-if os.path.exists(settings_path):
-    try:
-        with open(settings_path) as f:
-            settings = json.load(f)
-    except:
-        pass
-
-if 'mcpServers' not in settings:
-    settings['mcpServers'] = {}
-settings['mcpServers']['memory'] = new_server
-
-with open(settings_path, 'w') as f:
-    json.dump(settings, f, indent=2)
-
-print('  OK: MCP server added to ' + settings_path)
-"
+# Remove any previous registration (ignore errors if absent), then add fresh
+claude mcp remove memory -s user >/dev/null 2>&1 || true
+claude mcp add-json memory "$MCP_JSON" -s user
+echo "  OK: MCP server 'memory' registered via 'claude mcp add-json' (user scope)"
 
 # -- 4b. Register hooks in settings.json --
 echo "-> Step 4b: Registering hooks..."
@@ -144,6 +139,58 @@ with open(settings_path, 'w') as f:
     json.dump(settings, f, indent=2)
 
 print('  OK: Hooks registered (SessionStart, SessionEnd, Stop, PostToolUse:Bash/Write|Edit)')
+"
+
+# -- 4b2. Grant permissions for MCP memory tools --
+# Without these, Claude Code prompts for confirmation on every memory tool call,
+# which breaks automatic recall/save/error logging from hooks.
+echo "-> Step 4b2: Granting permissions for memory tools..."
+
+python3 -c "
+import json, os
+
+settings_path = '$CLAUDE_SETTINGS'
+settings = {}
+if os.path.exists(settings_path):
+    with open(settings_path) as f:
+        settings = json.load(f)
+
+settings.setdefault('permissions', {}).setdefault('allow', [])
+allow = settings['permissions']['allow']
+
+memory_tools = [
+    'mcp__memory__memory_recall',
+    'mcp__memory__memory_save',
+    'mcp__memory__memory_update',
+    'mcp__memory__memory_timeline',
+    'mcp__memory__memory_stats',
+    'mcp__memory__memory_consolidate',
+    'mcp__memory__memory_export',
+    'mcp__memory__memory_forget',
+    'mcp__memory__memory_history',
+    'mcp__memory__memory_delete',
+    'mcp__memory__memory_relate',
+    'mcp__memory__memory_search_by_tag',
+    'mcp__memory__memory_extract_session',
+    'mcp__memory__memory_observe',
+    'mcp__memory__self_error_log',
+    'mcp__memory__self_insight',
+    'mcp__memory__self_rules',
+    'mcp__memory__self_patterns',
+    'mcp__memory__self_reflect',
+    'mcp__memory__self_rules_context',
+]
+
+added = 0
+for tool in memory_tools:
+    if tool not in allow:
+        allow.append(tool)
+        added += 1
+
+with open(settings_path, 'w') as f:
+    json.dump(settings, f, indent=2)
+
+print(f'  OK: {len(memory_tools)} memory tools in permissions.allow (+{added} new)')
 "
 
 # -- 4c. Ollama check + optional install prompt --
@@ -201,14 +248,12 @@ else
     echo "  FAIL: Server not found at $SRV_PATH"
 fi
 
-# Check settings.json
-python3 -c "
-import json
-with open('$CLAUDE_SETTINGS') as f:
-    s = json.load(f)
-assert 'memory' in s.get('mcpServers', {})
-print('  OK: MCP server configured')
-" 2>/dev/null || echo "  FAIL: MCP config issue"
+# Check MCP registration (lives in ~/.claude.json, not settings.json)
+if claude mcp get memory >/dev/null 2>&1; then
+    echo "  OK: MCP server 'memory' registered"
+else
+    echo "  FAIL: MCP config issue — run 'claude mcp list' to debug"
+fi
 
 # Check memory dir
 if [ -d "$MEMORY_DIR" ]; then

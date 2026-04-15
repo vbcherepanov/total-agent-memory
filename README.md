@@ -141,7 +141,7 @@ The installer:
 2. Sets up Python venv in `~/claude-memory-server/.venv/`
 3. Installs deps from `requirements.txt` and `requirements-dev.txt`
 4. Pre-downloads the FastEmbed multilingual MiniLM model
-5. Wires the MCP server into `~/.claude/settings.json`
+5. Registers the MCP server via `claude mcp add-json` (stored in `~/.claude.json`) and grants `permissions.allow` for memory tools in `~/.claude/settings.json`
 6. Applies all migrations 001..007 to a fresh `memory.db`
 7. Optionally installs LaunchAgents (reflection + orphan backfill + check-updates)
 8. Starts the dashboard at `http://127.0.0.1:37737`
