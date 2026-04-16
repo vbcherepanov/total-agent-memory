@@ -451,6 +451,11 @@ Environment variables (set in shell, LaunchAgent plist, or MCP server config):
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama base URL |
 | `MEMORY_LLM_ENABLED` | `auto` | `auto` (probe Ollama) / `true` / `force` (skip probe) / `false` (degrade) |
 | `MEMORY_LLM_PROBE_TTL_SEC` | `60` | Cache TTL for the Ollama availability probe |
+| `MEMORY_LLM_TIMEOUT_SEC` | `60` | Global fallback timeout for Ollama requests in seconds |
+| `MEMORY_TRIPLE_TIMEOUT_SEC` | `30` | Timeout for deep triple extraction requests in seconds |
+| `MEMORY_ENRICH_TIMEOUT_SEC` | `45` | Timeout for deep enrichment requests in seconds |
+| `MEMORY_REPR_TIMEOUT_SEC` | `60` | Timeout for representation-generation requests in seconds |
+| `MEMORY_TRIPLE_MAX_PREDICT` | `2048` | `num_predict` cap for triple extraction requests |
 | `CLAUDE_MEMORY_DIR` | `~/.claude-memory` | DB + blobs + chroma + backups location |
 | `DASHBOARD_PORT` | `37737` | Dashboard HTTP port |
 | `DASHBOARD_BIND` | `127.0.0.1` | Bind address. Set `0.0.0.0` only with auth proxy in front |
@@ -546,6 +551,14 @@ Set `MEMORY_LLM_ENABLED=false` (or remove Ollama). System runs in **degraded mod
 - Graph stays at co-occurrence edges only
 
 When you install Ollama later, set `MEMORY_LLM_ENABLED=auto` and the queues drain on next reflection cycle.
+
+### "Ollama is up, but extractor/enrichment keeps timing out"
+
+CPU-only or WSL installs can be too slow for the default `qwen2.5-coder:7b` request budgets.
+
+- `install-codex.sh` now writes more conservative local values for triple/enrichment/representation timeouts and triple `num_predict`
+- You can tune them manually with `MEMORY_TRIPLE_TIMEOUT_SEC`, `MEMORY_ENRICH_TIMEOUT_SEC`, `MEMORY_REPR_TIMEOUT_SEC`, `MEMORY_LLM_TIMEOUT_SEC`, and `MEMORY_TRIPLE_MAX_PREDICT`
+- If timeouts persist, reduce `MEMORY_TRIPLE_MAX_PREDICT` before raising timeouts further
 
 ### "Tests fail after update"
 

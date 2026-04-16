@@ -10,6 +10,11 @@ Env vars:
     MEMORY_LLM_ENABLED  — "auto" (probe Ollama, default), "true"/"force",
                           "false" (disable LLM features entirely)
     MEMORY_LLM_PROBE_TTL_SEC — cache TTL for the probe (default 60s)
+    MEMORY_LLM_TIMEOUT_SEC   — global Ollama timeout fallback (default 60)
+    MEMORY_TRIPLE_TIMEOUT_SEC — triple extraction timeout (default 30)
+    MEMORY_ENRICH_TIMEOUT_SEC — deep enrichment timeout (default 45)
+    MEMORY_REPR_TIMEOUT_SEC   — representations timeout (default 60)
+    MEMORY_TRIPLE_MAX_PREDICT — triple extraction num_predict cap (default 2048)
 """
 
 from __future__ import annotations
@@ -45,6 +50,57 @@ def get_probe_ttl() -> float:
         return float(os.environ.get("MEMORY_LLM_PROBE_TTL_SEC", "60"))
     except ValueError:
         return 60.0
+
+
+def _get_float_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _get_int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _get_phase_timeout_env(name: str, phase_default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is not None:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    if "MEMORY_LLM_TIMEOUT_SEC" in os.environ:
+        return get_llm_timeout_sec()
+    return phase_default
+
+
+def get_llm_timeout_sec() -> float:
+    """Global fallback timeout for Ollama requests."""
+    return _get_float_env("MEMORY_LLM_TIMEOUT_SEC", 60.0)
+
+
+def get_triple_timeout_sec() -> float:
+    """Timeout for deep triple extraction requests."""
+    return _get_phase_timeout_env("MEMORY_TRIPLE_TIMEOUT_SEC", 30.0)
+
+
+def get_enrich_timeout_sec() -> float:
+    """Timeout for deep enrichment requests."""
+    return _get_phase_timeout_env("MEMORY_ENRICH_TIMEOUT_SEC", 45.0)
+
+
+def get_repr_timeout_sec() -> float:
+    """Timeout for representation generation requests."""
+    return _get_phase_timeout_env("MEMORY_REPR_TIMEOUT_SEC", 60.0)
+
+
+def get_triple_max_predict() -> int:
+    """Max tokens requested from Ollama during triple extraction."""
+    return _get_int_env("MEMORY_TRIPLE_MAX_PREDICT", 2048)
 
 
 # ──────────────────────────────────────────────

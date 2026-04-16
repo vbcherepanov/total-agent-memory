@@ -21,6 +21,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from config import get_triple_max_predict, get_triple_timeout_sec
+
 OLLAMA_URL = "http://localhost:11434"
 LOG = lambda msg: sys.stderr.write(f"[memory-extractor] {msg}\n")
 
@@ -358,7 +360,10 @@ Content:
                 "model": self.OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"temperature": 0.1, "num_predict": 2048},
+                "options": {
+                    "temperature": 0.1,
+                    "num_predict": get_triple_max_predict(),
+                },
             }
         ).encode("utf-8")
 
@@ -370,7 +375,7 @@ Content:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=get_triple_timeout_sec()) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return data.get("response", "")
         except urllib.error.URLError as exc:
