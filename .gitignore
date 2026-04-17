@@ -41,3 +41,9 @@ backups/
 # Benchmark datasets (large, downloaded on demand)
 benchmarks/data/
 benchmarks/longmemeval_s*.json
+
+# Personal/local tooling — never push
+# Contains user-specific scripts (vitalii-brain Ollama model),
+# exported training data with private project info, and .env with real bot tokens.
+ollama/
+telegram/
