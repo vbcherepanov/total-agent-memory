@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch .reflect-pending → trigger reflection drain
+Documentation=https://github.com/vbcherepanov/total-agent-memory
+
+[Path]
+# Fires on IN_CLOSE_WRITE — `touch` from memory_save triggers it
+PathChanged=@MEMORY_DIR@/.reflect-pending
+Unit=claude-memory-reflection.service
+
+[Install]
+WantedBy=default.target

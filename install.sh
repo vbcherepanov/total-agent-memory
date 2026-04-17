@@ -190,6 +190,40 @@ fi
 echo "-> Step 5: Setting up dashboard service..."
 "$DASHBOARD_SERVICE" install "$PY_PATH" "$INSTALL_DIR" "$MEMORY_DIR"
 
+# -- 5b. Linux: systemd auto-drain (equivalent of macOS LaunchAgent WatchPaths) --
+# On macOS, the reflection LaunchAgent in launchagents/ picks up
+# `touch ~/.claude-memory/.reflect-pending` and runs run_reflection.py.
+# On Linux there's no LaunchAgent — this block installs a systemd.path +
+# oneshot service pair that gives the same behavior via inotify.
+if [ "$(uname)" = "Linux" ] && [ -d "$INSTALL_DIR/systemd" ]; then
+    echo "-> Step 5b: Installing Linux systemd auto-drain unit..."
+    SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+    mkdir -p "$SYSTEMD_USER_DIR"
+
+    for unit in claude-memory-reflection.service claude-memory-reflection.path; do
+        sed \
+            -e "s|@INSTALL_DIR@|$INSTALL_DIR|g" \
+            -e "s|@MEMORY_DIR@|$MEMORY_DIR|g" \
+            "$INSTALL_DIR/systemd/$unit" > "$SYSTEMD_USER_DIR/$unit"
+    done
+
+    # Ensure the trigger file exists so systemd.path can watch it from the start
+    touch "$MEMORY_DIR/.reflect-pending"
+
+    if command -v systemctl &>/dev/null; then
+        systemctl --user daemon-reload
+        systemctl --user enable --now claude-memory-reflection.path >/dev/null 2>&1 || {
+            echo "  WARN: could not enable the .path unit via systemctl --user."
+            echo "        Run manually: systemctl --user enable --now claude-memory-reflection.path"
+        }
+        if systemctl --user is-active claude-memory-reflection.path >/dev/null 2>&1; then
+            echo "  OK: Reflection auto-drain active (watch: $MEMORY_DIR/.reflect-pending)"
+        fi
+    else
+        echo "  WARN: systemctl not found — units copied to $SYSTEMD_USER_DIR but not activated"
+    fi
+fi
+
 # -- 6. Verify --
 echo ""
 echo "-> Step 6: Verifying installation..."
