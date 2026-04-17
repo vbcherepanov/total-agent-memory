@@ -101,6 +101,10 @@ tool_timeout_sec = 120.0
 [mcp_servers.memory.env]
 CLAUDE_MEMORY_DIR = \"{memory_dir}\"
 EMBEDDING_MODEL = \"all-MiniLM-L6-v2\"
+MEMORY_TRIPLE_TIMEOUT_SEC = \"120\"
+MEMORY_ENRICH_TIMEOUT_SEC = \"90\"
+MEMORY_REPR_TIMEOUT_SEC = \"120\"
+MEMORY_TRIPLE_MAX_PREDICT = \"512\"
 # --- End Claude Total Memory ---
 '''
 

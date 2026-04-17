@@ -205,6 +205,88 @@ def test_get_llm_model_respects_env(monkeypatch):
     assert get_llm_model() == "vitalii-brain"
 
 
+def test_get_llm_timeout_defaults():
+    from config import get_llm_timeout_sec
+    assert get_llm_timeout_sec() == 60.0
+
+
+def test_get_llm_timeout_respects_env(monkeypatch):
+    from config import get_llm_timeout_sec
+    monkeypatch.setenv("MEMORY_LLM_TIMEOUT_SEC", "75")
+    assert get_llm_timeout_sec() == 75.0
+
+
+def test_get_llm_timeout_invalid_env_falls_back(monkeypatch):
+    from config import get_llm_timeout_sec
+    monkeypatch.setenv("MEMORY_LLM_TIMEOUT_SEC", "nope")
+    assert get_llm_timeout_sec() == 60.0
+
+
+def test_phase_timeouts_fall_back_to_phase_defaults():
+    from config import (
+        get_enrich_timeout_sec,
+        get_repr_timeout_sec,
+        get_triple_timeout_sec,
+    )
+    assert get_triple_timeout_sec() == 30.0
+    assert get_enrich_timeout_sec() == 45.0
+    assert get_repr_timeout_sec() == 60.0
+
+
+def test_phase_timeouts_fall_back_to_global(monkeypatch):
+    from config import (
+        get_enrich_timeout_sec,
+        get_repr_timeout_sec,
+        get_triple_timeout_sec,
+    )
+    monkeypatch.setenv("MEMORY_LLM_TIMEOUT_SEC", "80")
+    assert get_triple_timeout_sec() == 80.0
+    assert get_enrich_timeout_sec() == 80.0
+    assert get_repr_timeout_sec() == 80.0
+
+
+def test_phase_timeouts_override_global(monkeypatch):
+    from config import (
+        get_enrich_timeout_sec,
+        get_repr_timeout_sec,
+        get_triple_timeout_sec,
+    )
+    monkeypatch.setenv("MEMORY_LLM_TIMEOUT_SEC", "80")
+    monkeypatch.setenv("MEMORY_TRIPLE_TIMEOUT_SEC", "31")
+    monkeypatch.setenv("MEMORY_ENRICH_TIMEOUT_SEC", "46")
+    monkeypatch.setenv("MEMORY_REPR_TIMEOUT_SEC", "61")
+    assert get_triple_timeout_sec() == 31.0
+    assert get_enrich_timeout_sec() == 46.0
+    assert get_repr_timeout_sec() == 61.0
+
+
+def test_phase_timeouts_invalid_env_fall_back(monkeypatch):
+    from config import (
+        get_enrich_timeout_sec,
+        get_repr_timeout_sec,
+        get_triple_timeout_sec,
+    )
+    monkeypatch.setenv("MEMORY_TRIPLE_TIMEOUT_SEC", "bad")
+    monkeypatch.setenv("MEMORY_ENRICH_TIMEOUT_SEC", "bad")
+    monkeypatch.setenv("MEMORY_REPR_TIMEOUT_SEC", "bad")
+    assert get_triple_timeout_sec() == 30.0
+    assert get_enrich_timeout_sec() == 45.0
+    assert get_repr_timeout_sec() == 60.0
+
+
+def test_get_triple_max_predict_defaults_and_override(monkeypatch):
+    from config import get_triple_max_predict
+    assert get_triple_max_predict() == 2048
+    monkeypatch.setenv("MEMORY_TRIPLE_MAX_PREDICT", "512")
+    assert get_triple_max_predict() == 512
+
+
+def test_get_triple_max_predict_invalid_env_falls_back(monkeypatch):
+    from config import get_triple_max_predict
+    monkeypatch.setenv("MEMORY_TRIPLE_MAX_PREDICT", "oops")
+    assert get_triple_max_predict() == 2048
+
+
 # ──────────────────────────────────────────────
 # get_status — for /api/status / dashboard
 # ──────────────────────────────────────────────

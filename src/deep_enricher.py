@@ -21,6 +21,8 @@ from typing import Any
 
 import os as _os
 
+from config import get_enrich_timeout_sec
+
 OLLAMA_URL = _os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = _os.environ.get("MEMORY_LLM_MODEL", "qwen2.5-coder:7b")
 MIN_CHARS_FOR_LLM = 120  # below this, skip LLM calls
@@ -48,7 +50,7 @@ def _llm_complete(
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=45) as resp:
+    with urllib.request.urlopen(req, timeout=get_enrich_timeout_sec()) as resp:
         data = json.loads(resp.read())
     return str(data.get("response", "")).strip()
 
