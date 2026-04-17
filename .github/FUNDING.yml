@@ -1,1 +1,13 @@
-custom: ["https://paypal.me/VitaliiCherepanov"]
+# Supported funding sources for this repository.
+# Rendered by GitHub as a "Sponsor" button on the repo homepage.
+
+# PayPal donation link
+custom:
+  - "https://www.paypal.com/donate/?business=vbcherepanov%40gmail.com&currency_code=USD&item_name=total-agent-memory"
+
+# Uncomment once GitHub Sponsors profile is live:
+# github: [vbcherepanov]
+
+# Uncomment once Ko-fi / Buy Me a Coffee pages exist:
+# ko_fi: vbcherepanov
+# buy_me_a_coffee: vbcherepanov

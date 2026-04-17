@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-total-memory"
-version = "5.0.0"
-description = "Persistent memory MCP server for Claude Code & Codex CLI with 32 tools: knowledge graph, episodic memory, cognitive engine, skill tracking, and self-improving agent"
+version = "7.0.0"
+description = "total-agent-memory — persistent memory MCP server for Claude Code & Codex CLI: 46 tools — knowledge graph, temporal facts, procedural memory, episodic memory, AST ingest, pre-edit guard, auto-consolidating error capture"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"

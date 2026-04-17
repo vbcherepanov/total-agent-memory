@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Claude Total Memory — One-Command Installer
+# total-agent-memory — One-Command Installer
 #
 # Usage: bash install.sh
 #
@@ -8,7 +8,7 @@ set -e
 
 echo ""
 echo "======================================================="
-echo "  Claude Total Memory v6.0 — Installer"
+echo "  total-agent-memory v7.0 — Installer"
 echo "======================================================="
 echo ""
 
@@ -237,6 +237,7 @@ fi
 echo "-> Step 5: Setting up dashboard service..."
 "$DASHBOARD_SERVICE" install "$PY_PATH" "$INSTALL_DIR" "$MEMORY_DIR"
 
+<<<<<<< Updated upstream
 # -- 5b. Linux: systemd auto-drain (equivalent of macOS LaunchAgent WatchPaths) --
 # On macOS, the reflection LaunchAgent in launchagents/ picks up
 # `touch ~/.claude-memory/.reflect-pending` and runs run_reflection.py.
@@ -269,6 +270,24 @@ if [ "$(uname)" = "Linux" ] && [ -d "$INSTALL_DIR/systemd" ]; then
     else
         echo "  WARN: systemctl not found — units copied to $SYSTEMD_USER_DIR but not activated"
     fi
+=======
+# -- 5b. Optional background agents (macOS only) --
+if [ "$(uname)" = "Darwin" ] && [ -d "$INSTALL_DIR/launchagents" ]; then
+    echo "-> Step 5b: Installing background LaunchAgents (reflection, orphan-backfill, check-updates)..."
+    LA_DIR="$HOME/Library/LaunchAgents"
+    mkdir -p "$LA_DIR"
+    for TPL in "$INSTALL_DIR"/launchagents/*.plist; do
+        NAME=$(basename "$TPL")
+        DEST="$LA_DIR/$NAME"
+        # Substitute __HOME__ placeholder with actual $HOME
+        sed "s|__HOME__|$HOME|g" "$TPL" > "$DEST"
+        LABEL=$(basename "$NAME" .plist)
+        launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+        launchctl bootstrap "gui/$(id -u)" "$DEST" 2>/dev/null || \
+        launchctl load "$DEST" 2>/dev/null || true
+    done
+    echo "  OK: Background agents installed"
+>>>>>>> Stashed changes
 fi
 
 # -- 6. Verify --
@@ -296,13 +315,16 @@ else
     echo "  FAIL: Memory directory issue"
 fi
 
-# Quick server test
-python3 -c "
-import sys; sys.path.insert(0, '$INSTALL_DIR')
-exec(open('$SRV_PATH').read().split('async def main')[0])
-s = Store()
-print(f'  OK: Server initializes (sessions: {s.total_sessions()})')
-" 2>/dev/null || echo "  INFO: Server test skipped (will verify on first use)"
+# Quick server test (import sanity)
+"$PY_PATH" -c "
+import sys
+sys.path.insert(0, '$INSTALL_DIR/src')
+try:
+    import server  # noqa
+    print('  OK: Server imports cleanly')
+except Exception as e:
+    print(f'  WARN: Server import issue ({e}); will verify on first use')
+" 2>/dev/null || echo "  INFO: Server test skipped"
 
 # -- Done --
 echo ""
@@ -313,27 +335,32 @@ echo ""
 echo "  Claude Code now has persistent memory."
 echo "  Just start 'claude' as usual — memory is automatic."
 echo ""
-echo "  Available MCP tools (20):"
-echo "    memory_recall          — Search all past knowledge (3-level detail)"
-echo "    memory_save            — Save decisions, solutions, lessons"
-echo "    memory_update          — Update existing knowledge"
-echo "    memory_timeline        — Browse session history"
-echo "    memory_stats           — View statistics & health"
-echo "    memory_consolidate     — Merge similar records"
-echo "    memory_export          — Backup to JSON"
-echo "    memory_forget          — Archive stale records"
-echo "    memory_history         — View version history"
-echo "    memory_delete          — Soft-delete a record"
-echo "    memory_relate          — Link related records"
-echo "    memory_search_by_tag   — Browse by tag"
-echo "    memory_extract_session — Process session transcripts"
-echo "    memory_observe         — Lightweight file change tracking"
-echo "    self_error_log         — Log errors for pattern analysis"
-echo "    self_insight           — Manage insights from error patterns"
-echo "    self_rules             — Manage behavioral rules (SOUL)"
-echo "    self_patterns          — Analyze error patterns & trends"
-echo "    self_reflect           — Save session reflections"
-echo "    self_rules_context     — Load rules at session start"
+echo "  Available MCP tools (46):"
+echo ""
+echo "  Core memory (14):"
+echo "    memory_recall, memory_save, memory_update, memory_delete,"
+echo "    memory_search_by_tag, memory_history, memory_timeline,"
+echo "    memory_stats, memory_consolidate, memory_export, memory_forget,"
+echo "    memory_relate, memory_extract_session, memory_observe"
+echo ""
+echo "  Knowledge graph (6):"
+echo "    memory_graph, memory_graph_index, memory_graph_stats,"
+echo "    memory_concepts, memory_associate, memory_context_build"
+echo ""
+echo "  Episodic memory & skills (4):"
+echo "    memory_episode_save, memory_episode_recall,"
+echo "    memory_skill_get, memory_skill_update"
+echo ""
+echo "  Reflection & self-improvement (7):"
+echo "    memory_reflect_now, memory_self_assess,"
+echo "    self_error_log, self_insight, self_patterns,"
+echo "    self_reflect, self_rules, self_rules_context"
+echo ""
+echo "  Temporal KG (4) + Procedural (3) + Pre-flight/automation (8):"
+echo "    kg_add_fact, kg_invalidate_fact, kg_at, kg_timeline,"
+echo "    workflow_learn, workflow_predict, workflow_track,"
+echo "    file_context, learn_error, session_init, session_end,"
+echo "    ingest_codebase, analogize, benchmark"
 echo ""
 echo "  Web dashboard:"
 echo "    http://localhost:37737"

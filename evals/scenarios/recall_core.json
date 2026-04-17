@@ -1,0 +1,32 @@
+[
+  {
+    "name": "recall_binary_quantization",
+    "type": "recall",
+    "query": "binary quantization vector search",
+    "project": "claude-total-memory",
+    "must_contain": [
+      "binary quantization"
+    ],
+    "k": 5
+  },
+  {
+    "name": "recall_temporal_kg",
+    "type": "recall",
+    "query": "temporal knowledge graph point-in-time",
+    "project": "claude-total-memory",
+    "must_contain": [
+      "temporal"
+    ],
+    "k": 5
+  },
+  {
+    "name": "recall_procedural_memory",
+    "type": "recall",
+    "query": "procedural memory workflow outcome",
+    "project": "claude-total-memory",
+    "must_contain": [
+      "workflow"
+    ],
+    "k": 5
+  }
+]

@@ -1,0 +1,52 @@
+{
+  "run_date": "2026-04-17",
+  "version": "7.0.0",
+  "host": "darwin/arm64, Ollama qwen2.5-coder:7b",
+  "dataset": "evals/scenarios/*.json (recall_core + prevention_core)",
+  "summary": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0
+  },
+  "recall": {
+    "r_at_1": 0.6667,
+    "r_at_5": 1.0,
+    "r_at_10": 1.0,
+    "note": "3 recall scenarios over 1859 active knowledge records, all must_contain terms hit inside top-5"
+  },
+  "prevention": {
+    "rate": 1.0,
+    "note": "pre-edit risk warnings for src/server.py correctly emitted sqlite + fts hazards"
+  },
+  "latency_cold_ms": {
+    "mean": 1054.099,
+    "p50": 1332.738,
+    "p95": 2314.115,
+    "max": 2547.564,
+    "note": "first invocation after process start — model load + index warmup"
+  },
+  "latency_warm_ms": {
+    "mean": 1.185,
+    "p50": 0.065,
+    "p95": 2.972,
+    "max": 3.033,
+    "note": "steady-state recall after warmup, 5 scenarios averaged"
+  },
+  "vs_competitors": {
+    "supermemory_longmemeval": {
+      "their": "85.4% accuracy, sub-300ms",
+      "ours": "R@5 100% on internal scenarios, warm p50 0.065ms",
+      "note": "Different datasets. total-agent-memory scenarios focus on coding-agent recall; LongMemEval is conversational. Re-run with LongMemEval dump pending."
+    },
+    "langmem_latency": {
+      "their": "p95 59.82s (third-party benchmark)",
+      "ours": "p95 2.97ms warm / 2.3s cold",
+      "ratio": "20000x faster warm"
+    }
+  },
+  "caveats": [
+    "Warm latency benefits from local SQLite + FastEmbed binary-quantization HNSW + LRU cache.",
+    "Cold latency includes Ollama model load; excluding that gives ~200ms cold for pure retrieval.",
+    "Scenarios are project-specific — absolute R@5 not directly comparable to mem0/Zep benchmarks on public datasets until LongMemEval dump run (TODO)."
+  ]
+}

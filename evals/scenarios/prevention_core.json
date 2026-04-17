@@ -1,0 +1,20 @@
+[
+  {
+    "name": "prevent_sqlite_locked",
+    "type": "prevention",
+    "file": "src/server.py",
+    "project": "claude-total-memory",
+    "must_warn_about": [
+      "sqlite"
+    ]
+  },
+  {
+    "name": "prevent_fts_corruption",
+    "type": "prevention",
+    "file": "src/server.py",
+    "project": "claude-total-memory",
+    "must_warn_about": [
+      "fts"
+    ]
+  }
+]

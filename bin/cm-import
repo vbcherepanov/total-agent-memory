@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""
+cm-import — Import existing documentation into Claude Memory
+
+Imports:
+1. ~/.claude/rules/*.md — coding conventions per language
+2. Obsidian Projects/*/Memory.md — project memory
+3. Obsidian Projects/*/Decisions.md — architectural decisions
+4. Obsidian Projects/*/Troubleshooting.md — solved problems
+5. Obsidian Projects/*/Architecture.md — architecture notes
+"""
+
+import json
+import os
+import re
+import sqlite3
+import sys
+from datetime import datetime
+from pathlib import Path
+
+MEMORY_DIR = Path(os.environ.get("CLAUDE_MEMORY_DIR", os.path.expanduser("~/.claude-memory")))
+DB_PATH = MEMORY_DIR / "memory.db"
+RULES_DIR = Path.home() / ".claude" / "rules"
+OBSIDIAN_PROJECTS = Path.home() / "Documents" / "project" / "Projects"
+
+LOG = lambda msg: print(f"[cm-import] {msg}")
+
+
+def get_db():
+    db = sqlite3.connect(str(DB_PATH))
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA journal_mode=WAL")
+    return db
+
+
+def import_rule_file(db, filepath: Path, now: str):
+    """Import a .claude/rules/*.md file as conventions."""
+    text = filepath.read_text(errors="replace").strip()
+    if not text or len(text) < 50:
+        return 0
+
+    name = filepath.stem  # go, php, vue, etc.
+    session_id = f"import_rules_{name}"
+
+    # Create import session
+    db.execute(
+        "INSERT OR IGNORE INTO sessions (id,started_at,project,status,summary) VALUES (?,?,?,?,?)",
+        (session_id, now, "global", "imported", f"Imported {name} coding rules"))
+
+    # Split into meaningful sections
+    sections = re.split(r'\n##\s+', text)
+    count = 0
+
+    for section in sections:
+        section = section.strip()
+        if len(section) < 30:
+            continue
+
+        # Get section title
+        lines = section.split('\n', 1)
+        title = lines[0].strip().lstrip('#').strip()
+        body = lines[1].strip() if len(lines) > 1 else section
+
+        # Skip TOC-like or header-only sections
+        if len(body) < 20:
+            continue
+
+        # Determine type
+        ktype = "convention"
+        if any(w in title.lower() for w in ["error", "handling", "debug"]):
+            ktype = "solution"
+        elif any(w in title.lower() for w in ["version", "feature", "new"]):
+            ktype = "fact"
+
+        content = f"[{name.upper()}] {title}: {body[:500]}"
+        tags = [name, "rules", "convention"]
+
+        db.execute("""
+            INSERT INTO knowledge
+            (session_id, type, content, context, project, tags, source, confidence, created_at, last_confirmed)
+            VALUES (?, ?, ?, ?, 'global', ?, 'import', 0.95, ?, ?)
+        """, (session_id, ktype, content, f"From ~/.claude/rules/{name}.md",
+              json.dumps(tags), now, now))
+        count += 1
+
+    return count
+
+
+def import_obsidian_file(db, filepath: Path, project: str, doc_type: str, now: str):
+    """Import an Obsidian project file."""
+    text = filepath.read_text(errors="replace").strip()
+    if not text or len(text) < 30:
+        return 0
+
+    session_id = f"import_{project}_{doc_type}"
+
+    db.execute(
+        "INSERT OR IGNORE INTO sessions (id,started_at,project,status,summary) VALUES (?,?,?,?,?)",
+        (session_id, now, project, "imported", f"Imported {doc_type} for {project}"))
+
+    # Map doc types to knowledge types
+    type_map = {
+        "Memory": "fact",
+        "Decisions": "decision",
+        "Troubleshooting": "solution",
+        "Architecture": "fact",
+    }
+    default_type = type_map.get(doc_type, "fact")
+
+    # Split by ## headers
+    sections = re.split(r'\n##\s+', text)
+    count = 0
+
+    for section in sections:
+        section = section.strip()
+        if len(section) < 20:
+            continue
+
+        lines = section.split('\n', 1)
+        title = lines[0].strip().lstrip('#').strip()
+        body = lines[1].strip() if len(lines) > 1 else section
+
+        if len(body) < 15:
+            continue
+
+        # Smarter type detection
+        ktype = default_type
+        lower = (title + " " + body[:200]).lower()
+        if any(w in lower for w in ["решен", "fix", "solv", "workaround", "ошибк", "error"]):
+            ktype = "solution"
+        elif any(w in lower for w in ["выбр", "decision", "chose", "решили", "используем"]):
+            ktype = "decision"
+        elif any(w in lower for w in ["урок", "lesson", "не работает", "не помог"]):
+            ktype = "lesson"
+
+        content = f"[{project}] {title}: {body[:600]}"
+        tags = [project, doc_type.lower()]
+
+        db.execute("""
+            INSERT INTO knowledge
+            (session_id, type, content, context, project, tags, source, confidence, created_at, last_confirmed)
+            VALUES (?, ?, ?, ?, ?, ?, 'import', 0.9, ?, ?)
+        """, (session_id, ktype, content, f"From Obsidian/{project}/{doc_type}.md",
+              project, json.dumps(tags), now, now))
+        count += 1
+
+    return count
+
+
+def index_all_chromadb():
+    """Index all imported knowledge in ChromaDB."""
+    try:
+        import chromadb
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        LOG("ChromaDB/sentence-transformers not available, skipping indexing")
+        return 0
+
+    model_name = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    db = get_db()
+
+    rows = db.execute(
+        "SELECT id, content, context, tags, type, project, created_at, confidence "
+        "FROM knowledge WHERE status='active' AND source='import'"
+    ).fetchall()
+    db.close()
+
+    if not rows:
+        return 0
+
+    LOG(f"Indexing {len(rows)} items in ChromaDB...")
+    client = chromadb.PersistentClient(path=str(MEMORY_DIR / "chroma"))
+    collection = client.get_or_create_collection("knowledge", metadata={"hnsw:space": "cosine"})
+    model = SentenceTransformer(model_name)
+
+    # Batch to avoid OOM
+    batch_size = 50
+    total = 0
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i:i + batch_size]
+        texts = [f"{r['content']} {r['context']} {r['tags']}" for r in batch]
+        embeddings = model.encode(texts).tolist()
+
+        collection.upsert(
+            ids=[str(r["id"]) for r in batch],
+            embeddings=embeddings,
+            documents=[r["content"] for r in batch],
+            metadatas=[{
+                "type": r["type"], "project": r["project"], "status": "active",
+                "session_id": "import", "created_at": r["created_at"],
+                "confidence": r["confidence"]
+            } for r in batch]
+        )
+        total += len(batch)
+        LOG(f"  Indexed batch {i // batch_size + 1}: {len(batch)} items")
+
+    return total
+
+
+def main():
+    now = datetime.utcnow().isoformat() + "Z"
+    db = get_db()
+
+    # Check if already imported
+    existing = db.execute("SELECT COUNT(*) FROM knowledge WHERE source='import'").fetchone()[0]
+    if existing > 0:
+        LOG(f"Already have {existing} imported items. Clearing old imports first...")
+        db.execute("DELETE FROM knowledge WHERE source='import'")
+        db.execute("DELETE FROM sessions WHERE id LIKE 'import_%'")
+        db.commit()
+
+    total = 0
+
+    # 1. Import rules
+    LOG("=== Importing coding rules ===")
+    if RULES_DIR.exists():
+        for f in sorted(RULES_DIR.glob("*.md")):
+            count = import_rule_file(db, f, now)
+            LOG(f"  {f.name}: {count} items")
+            total += count
+
+    # 2. Import Obsidian projects
+    LOG("=== Importing Obsidian projects ===")
+    if OBSIDIAN_PROJECTS.exists():
+        for proj_dir in sorted(OBSIDIAN_PROJECTS.iterdir()):
+            if not proj_dir.is_dir():
+                continue
+            project = proj_dir.name
+            for doc_name in ["Memory", "Decisions", "Troubleshooting", "Architecture"]:
+                filepath = proj_dir / f"{doc_name}.md"
+                if filepath.exists():
+                    count = import_obsidian_file(db, filepath, project, doc_name, now)
+                    if count > 0:
+                        LOG(f"  {project}/{doc_name}.md: {count} items")
+                    total += count
+
+    db.commit()
+    db.close()
+
+    LOG(f"\n=== Total imported: {total} knowledge items ===")
+
+    # 3. Index in ChromaDB
+    indexed = index_all_chromadb()
+    LOG(f"=== Indexed in ChromaDB: {indexed} items ===")
+    LOG("Done!")
+
+
+if __name__ == "__main__":
+    main()

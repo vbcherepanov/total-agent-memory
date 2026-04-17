@@ -38,3 +38,11 @@ backups/
 # Environment
 .env
 .env.local
+
+# Benchmarks output
+benchmarks/data/
+
+# Docker
+docker-compose.override.yml
+hooks/_docker-launchers/
+.claude/

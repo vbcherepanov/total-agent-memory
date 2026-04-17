@@ -1,0 +1,180 @@
+# Claude Total Memory — Full Docker Stack
+#
+# Services:
+#   ollama       — local LLM runtime (qwen2.5-coder:7b + nomic-embed-text)
+#   model-init   — one-shot job that pulls the required Ollama models
+#   mcp          — MCP server over HTTP (streamable) on :3737
+#   dashboard    — web UI on :37737
+#   reflection   — daemon: file-watch drain of reflection queues
+#   scheduler    — cron-like jobs (orphan-backfill 4×/day, check-updates weekly)
+#
+# Usage:
+#   docker compose up -d --build
+#   docker compose logs -f
+#   docker compose down           # keep data volumes
+#   docker compose down -v        # wipe everything
+#
+# After `up -d`: run `bash install-docker.sh` once to register the MCP in Claude Code.
+
+x-memory-env: &memory-env
+  CLAUDE_MEMORY_DIR: /data
+  EMBEDDING_MODEL: all-MiniLM-L6-v2
+  OLLAMA_URL: http://ollama:11434
+  MEMORY_LLM_MODEL: ${MEMORY_LLM_MODEL:-qwen2.5-coder:7b}
+  MEMORY_LLM_ENABLED: auto
+  USE_OLLAMA_EMBED: auto
+  OLLAMA_EMBED_MODEL: nomic-embed-text
+
+services:
+  # ─────────────────────────────────────────────
+  # Ollama — local LLM runtime
+  # ─────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: claude-memory-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      # Exposed on loopback so host tools can also query it.
+      - "127.0.0.1:11434:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    # GPU passthrough (Linux only — uncomment if NVIDIA Container Toolkit is set up)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ─────────────────────────────────────────────
+  # Model pre-pull (one-shot)
+  # ─────────────────────────────────────────────
+  model-init:
+    image: ollama/ollama:latest
+    container_name: claude-memory-model-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      MEMORY_LLM_MODEL: ${MEMORY_LLM_MODEL:-qwen2.5-coder:7b}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "→ Pulling ${MEMORY_LLM_MODEL:-qwen2.5-coder:7b}..."
+        ollama pull "${MEMORY_LLM_MODEL:-qwen2.5-coder:7b}"
+        echo "→ Pulling nomic-embed-text..."
+        ollama pull nomic-embed-text
+        echo "✓ Models ready."
+    restart: "no"
+
+  # ─────────────────────────────────────────────
+  # MCP server (HTTP transport)
+  # ─────────────────────────────────────────────
+  mcp:
+    build: .
+    image: claude-total-memory:latest
+    container_name: claude-memory-mcp
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      <<: *memory-env
+      MCP_TRANSPORT: http
+      MCP_HTTP_HOST: 0.0.0.0
+      MCP_HTTP_PORT: "3737"
+    ports:
+      - "127.0.0.1:3737:3737"
+    volumes:
+      - memory-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3737/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    labels:
+      # Ofelia cron jobs (executed inside this container)
+      ofelia.enabled: "true"
+      # Orphan backfill 4× per day at 00:00, 06:00, 12:00, 18:00
+      ofelia.job-exec.orphan-backfill.schedule: "0 0 0,6,12,18 * * *"
+      ofelia.job-exec.orphan-backfill.command: "python src/tools/backfill_orphan_edges.py --min-mentions=1 --trigger-now"
+      # Update check — every Sunday 03:00
+      ofelia.job-exec.check-updates.schedule: "0 0 3 * * 0"
+      ofelia.job-exec.check-updates.command: "python src/tools/check_updates.py"
+
+  # ─────────────────────────────────────────────
+  # Dashboard
+  # ─────────────────────────────────────────────
+  dashboard:
+    image: claude-total-memory:latest
+    container_name: claude-memory-dashboard
+    restart: unless-stopped
+    depends_on:
+      mcp:
+        condition: service_started
+    command: ["python", "src/dashboard.py"]
+    environment:
+      <<: *memory-env
+      DASHBOARD_PORT: "37737"
+      DASHBOARD_BIND: 0.0.0.0
+    ports:
+      - "127.0.0.1:37737:37737"
+    volumes:
+      - memory-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:37737/api/stats"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ─────────────────────────────────────────────
+  # Reflection daemon — replaces LaunchAgent com.claude.memory.reflection
+  # Watches /data/.reflect-pending and drains reflection queues
+  # ─────────────────────────────────────────────
+  reflection:
+    image: claude-total-memory:latest
+    container_name: claude-memory-reflection
+    restart: unless-stopped
+    depends_on:
+      mcp:
+        condition: service_started
+    command: ["python", "docker/reflection_daemon.py"]
+    environment:
+      <<: *memory-env
+      REFLECT_DEBOUNCE_SEC: "5"
+      REFLECT_INTERVAL_SEC: "3600"
+    volumes:
+      - memory-data:/data
+
+  # ─────────────────────────────────────────────
+  # Scheduler — replaces orphan-backfill + check-updates LaunchAgents
+  # Uses mcuadros/ofelia which reads labels from target containers
+  # ─────────────────────────────────────────────
+  scheduler:
+    image: mcuadros/ofelia:latest
+    container_name: claude-memory-scheduler
+    restart: unless-stopped
+    depends_on:
+      mcp:
+        condition: service_started
+    command: daemon --docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Ofelia discovers scheduled jobs via Docker labels on the `mcp` service.
+
+volumes:
+  memory-data:
+    name: claude-memory-data
+  ollama-models:
+    name: claude-memory-ollama-models

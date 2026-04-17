@@ -2830,6 +2830,235 @@ async def list_tools():
             description="Knowledge graph statistics: nodes, edges, communities, top concepts, health metrics.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        # ── v7.0 Temporal KG ──
+        Tool(
+            name="kg_add_fact",
+            description="Record a temporal fact assertion (subject, predicate, object). "
+                        "Supersedes any prior assertion with same (s,p) and different object — "
+                        "full history is preserved. Use for evolving architectural decisions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string"},
+                    "predicate": {"type": "string"},
+                    "object": {"type": "string"},
+                    "confidence": {"type": "number", "default": 1.0},
+                    "context": {"type": "string"},
+                    "project": {"type": "string", "default": "general"},
+                    "invalidate_previous": {"type": "boolean", "default": True},
+                },
+                "required": ["subject", "predicate", "object"],
+            },
+        ),
+        Tool(
+            name="kg_invalidate_fact",
+            description="Close a currently-valid fact assertion. History is retained.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string"},
+                    "predicate": {"type": "string"},
+                    "object": {"type": "string"},
+                    "reason": {"type": "string", "default": "manually_invalidated"},
+                    "project": {"type": "string", "default": "general"},
+                },
+                "required": ["subject", "predicate", "object"],
+            },
+        ),
+        Tool(
+            name="kg_at",
+            description="Point-in-time query: return fact assertions valid at `timestamp` "
+                        "(ISO 8601). Omit timestamp for currently-valid facts.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "timestamp": {"type": "string",
+                                    "description": "ISO 8601 or omit for now"},
+                    "subject": {"type": "string"},
+                    "predicate": {"type": "string"},
+                    "object": {"type": "string"},
+                    "project": {"type": "string"},
+                    "limit": {"type": "integer", "default": 100},
+                },
+            },
+        ),
+        Tool(
+            name="kg_timeline",
+            description="Full chronological history of assertions for a subject.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string"},
+                    "predicate": {"type": "string"},
+                    "project": {"type": "string"},
+                    "limit": {"type": "integer", "default": 500},
+                },
+                "required": ["subject"],
+            },
+        ),
+        # ── v7.0 Procedural memory ──
+        Tool(
+            name="workflow_learn",
+            description="Record a learned workflow (named sequence of steps) for future reuse.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "steps": {"type": "array", "items": {"type": "string"}},
+                    "description": {"type": "string"},
+                    "trigger_pattern": {"type": "string"},
+                    "context": {"type": "object"},
+                    "project": {"type": "string", "default": "general"},
+                },
+                "required": ["name", "steps"],
+            },
+        ),
+        Tool(
+            name="workflow_predict",
+            description="Predict outcome (success probability, avg duration) for a workflow "
+                        "by id OR by trigger keyword. Uses Laplace-smoothed success rate.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workflow_id": {"type": "string"},
+                    "trigger": {"type": "string"},
+                    "project": {"type": "string"},
+                },
+            },
+        ),
+        Tool(
+            name="workflow_track",
+            description="Record a workflow execution outcome. Outcome ∈ "
+                        "{success|failure|partial|aborted}. Aggregates update automatically.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workflow_id": {"type": "string"},
+                    "outcome": {"type": "string",
+                                "enum": ["success", "failure", "partial", "aborted"]},
+                    "duration_ms": {"type": "integer"},
+                    "error_details": {"type": "string"},
+                    "notes": {"type": "string"},
+                },
+                "required": ["workflow_id", "outcome"],
+            },
+        ),
+        # ── v7.0 File-context guard ──
+        Tool(
+            name="file_context",
+            description="BEFORE editing a file, call this to surface past errors, lessons, "
+                        "and related rules for that file path. Returns risk_score ∈ [0, 1].",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "project": {"type": "string"},
+                    "limit": {"type": "integer", "default": 20},
+                },
+                "required": ["path"],
+            },
+        ),
+        # ── v7.0 Structured error capture ──
+        Tool(
+            name="learn_error",
+            description="Structured error capture: file, error, root_cause, fix, pattern. "
+                        "After N (default 3) errors share the same pattern, a prevention "
+                        "rule is auto-synthesized into the rules table.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file": {"type": "string"},
+                    "error": {"type": "string"},
+                    "root_cause": {"type": "string"},
+                    "fix": {"type": "string"},
+                    "pattern": {"type": "string"},
+                    "severity": {"type": "string",
+                                 "enum": ["low", "medium", "high", "critical"],
+                                 "default": "medium"},
+                    "category": {"type": "string", "default": "bug"},
+                    "project": {"type": "string", "default": "general"},
+                },
+                "required": ["file", "error", "root_cause", "fix", "pattern"],
+            },
+        ),
+        # ── v7.0 Session continuity ──
+        Tool(
+            name="session_init",
+            description="At session start: return the most recent unconsumed end-of-session "
+                        "summary with highlights / pitfalls / next_steps.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "default": "general"},
+                    "mark_consumed": {"type": "boolean", "default": True},
+                },
+            },
+        ),
+        Tool(
+            name="session_end",
+            description="End-of-session capture: summary + highlights + pitfalls + next_steps "
+                        "so the next session can resume cleanly.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "highlights": {"type": "array", "items": {"type": "string"}},
+                    "pitfalls": {"type": "array", "items": {"type": "string"}},
+                    "next_steps": {"type": "array", "items": {"type": "string"}},
+                    "open_questions": {"type": "array", "items": {"type": "string"}},
+                    "project": {"type": "string", "default": "general"},
+                },
+                "required": ["session_id", "summary"],
+            },
+        ),
+        # ── v7.0 AST ingest ──
+        Tool(
+            name="ingest_codebase",
+            description="Parse a file or directory into semantic AST chunks "
+                        "(functions, classes, methods) across 8 languages. "
+                        "Returns chunk count + sample.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "include": {"type": "array", "items": {"type": "string"},
+                                "description": "Extension allowlist e.g. ['.py','.go']"},
+                    "sample_limit": {"type": "integer", "default": 5},
+                },
+                "required": ["path"],
+            },
+        ),
+        # ── v7.0 Analogy + benchmark ──
+        Tool(
+            name="analogize",
+            description="Find past solutions/lessons from OTHER projects whose feature set "
+                        "overlaps with the given problem text (Jaccard similarity).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "exclude_project": {"type": "string"},
+                    "only_types": {"type": "array", "items": {"type": "string"},
+                                   "default": ["solution", "lesson", "decision"]},
+                    "limit": {"type": "integer", "default": 10},
+                    "min_score": {"type": "number", "default": 0.1},
+                },
+                "required": ["text"],
+            },
+        ),
+        Tool(
+            name="benchmark",
+            description="Run the eval harness: recall_at_k, prevention_rate, latency percentiles. "
+                        "Loads scenarios from evals/scenarios/*.json by default.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "scenarios_path": {"type": "string",
+                                       "description": "Custom scenarios dir or file"},
+                },
+            },
+        ),
     ]
 
 
@@ -3406,6 +3635,179 @@ async def _do(name, a):
     elif name == "memory_graph_stats":
         ge = _get_v5("graph_enricher", store.db)
         return J(ge.stats())
+
+    # ══════════════════════════════════════════════════════════
+    # v7.0 Tool dispatchers
+    # ══════════════════════════════════════════════════════════
+    elif name == "kg_add_fact":
+        from temporal_kg import TemporalKG
+        tkg = TemporalKG(store.db)
+        fid = tkg.add_fact(
+            a["subject"], a["predicate"], a["object"],
+            confidence=a.get("confidence", 1.0),
+            context=a.get("context"),
+            project=a.get("project", "general"),
+            invalidate_previous=a.get("invalidate_previous", True),
+        )
+        return J({"assertion_id": fid})
+
+    elif name == "kg_invalidate_fact":
+        from temporal_kg import TemporalKG
+        tkg = TemporalKG(store.db)
+        closed = tkg.invalidate_fact(
+            a["subject"], a["predicate"], a["object"],
+            reason=a.get("reason", "manually_invalidated"),
+            project=a.get("project", "general"),
+        )
+        return J({"closed": closed})
+
+    elif name == "kg_at":
+        from temporal_kg import TemporalKG
+        tkg = TemporalKG(store.db)
+        rows = tkg.query_at(
+            a.get("timestamp"),
+            subject=a.get("subject"),
+            predicate=a.get("predicate"),
+            object=a.get("object"),
+            project=a.get("project"),
+            limit=a.get("limit", 100),
+        )
+        return J({"count": len(rows), "assertions": rows})
+
+    elif name == "kg_timeline":
+        from temporal_kg import TemporalKG
+        tkg = TemporalKG(store.db)
+        rows = tkg.timeline(
+            a["subject"],
+            predicate=a.get("predicate"),
+            project=a.get("project"),
+            limit=a.get("limit", 500),
+        )
+        return J({"count": len(rows), "timeline": rows})
+
+    elif name == "workflow_learn":
+        from procedural import ProceduralMemory
+        pm = ProceduralMemory(store.db)
+        wf_id = pm.learn_workflow(
+            a["name"], a["steps"],
+            description=a.get("description"),
+            trigger_pattern=a.get("trigger_pattern"),
+            context=a.get("context"),
+            project=a.get("project", "general"),
+        )
+        return J({"workflow_id": wf_id})
+
+    elif name == "workflow_predict":
+        from procedural import ProceduralMemory
+        pm = ProceduralMemory(store.db)
+        return J(pm.predict_outcome(
+            workflow_id=a.get("workflow_id"),
+            trigger=a.get("trigger"),
+            project=a.get("project"),
+        ))
+
+    elif name == "workflow_track":
+        from procedural import ProceduralMemory
+        pm = ProceduralMemory(store.db)
+        run_id = pm.track_outcome(
+            a["workflow_id"], a["outcome"],
+            duration_ms=a.get("duration_ms"),
+            error_details=a.get("error_details"),
+            notes=a.get("notes"),
+            session_id=SID,
+        )
+        return J({"run_id": run_id})
+
+    elif name == "file_context":
+        from file_context import FileContextGuard
+        g = FileContextGuard(store.db)
+        return J(g.get_file_warnings(
+            a["path"], project=a.get("project"),
+            limit=a.get("limit", 20),
+        ))
+
+    elif name == "learn_error":
+        from error_capture import ErrorCapture
+        ec = ErrorCapture(store.db)
+        return J(ec.learn_error(
+            file=a["file"], error=a["error"],
+            root_cause=a["root_cause"], fix=a["fix"],
+            pattern=a["pattern"],
+            severity=a.get("severity", "medium"),
+            category=a.get("category", "bug"),
+            project=a.get("project", "general"),
+            session_id=SID,
+        ))
+
+    elif name == "session_init":
+        from session_continuity import SessionContinuity
+        sc = SessionContinuity(store.db)
+        result = sc.session_init(
+            project=a.get("project", "general"),
+            mark_consumed=a.get("mark_consumed", True),
+        )
+        return J(result or {"message": "no pending summary"})
+
+    elif name == "session_end":
+        from session_continuity import SessionContinuity
+        sc = SessionContinuity(store.db)
+        return J(sc.session_end(
+            a["session_id"], a["summary"],
+            highlights=a.get("highlights"),
+            pitfalls=a.get("pitfalls"),
+            next_steps=a.get("next_steps"),
+            open_questions=a.get("open_questions"),
+            project=a.get("project", "general"),
+        ))
+
+    elif name == "ingest_codebase":
+        from ast_ingest import ASTIngester
+        ing = ASTIngester()
+        p = Path(a["path"]).expanduser()
+        include = set(a.get("include", [])) or None
+        if p.is_dir():
+            chunks = ing.parse_directory(p, include=include)
+        else:
+            chunks = ing.parse_file(p)
+        sample = [c.to_dict() for c in chunks[: a.get("sample_limit", 5)]]
+        return J({
+            "path": str(p),
+            "total_chunks": len(chunks),
+            "by_kind": {k: sum(1 for c in chunks if c.kind == k)
+                         for k in {c.kind for c in chunks}},
+            "sample": sample,
+        })
+
+    elif name == "analogize":
+        from analogy import AnalogyEngine
+        ae = AnalogyEngine(store.db)
+        results = ae.find_analogies(
+            text=a["text"],
+            exclude_project=a.get("exclude_project"),
+            only_types=a.get("only_types"),
+            limit=a.get("limit", 10),
+            min_score=a.get("min_score", 0.1),
+        )
+        return J({"count": len(results), "analogies": results})
+
+    elif name == "benchmark":
+        from eval_harness import EvalHarness
+        def _recall_fn(q, params):
+            res = recall.search(q, params.get("project"), "all",
+                                 params.get("limit", 10), "full")
+            # Flatten typed buckets to {id, content, score}
+            flat = []
+            for bucket in (res.get("results") or {}).values():
+                flat.extend(bucket)
+            return flat
+        def _warn_fn(path, params):
+            from file_context import FileContextGuard
+            return FileContextGuard(store.db).get_file_warnings(
+                path, project=params.get("project")
+            )
+        h = EvalHarness(recall_fn=_recall_fn, file_warnings_fn=_warn_fn)
+        report = h.run_suite(a.get("scenarios_path"))
+        return J(report)
 
     return J({"error": "Unknown tool"})
 

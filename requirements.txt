@@ -1,3 +1,14 @@
 mcp[cli]>=1.0.0
 chromadb>=0.4.0
 sentence-transformers>=2.2.0
+httpx>=0.25.0
+numpy>=1.24.0
+
+# HTTP transport (used by Docker / remote deployments; optional for native stdio install)
+starlette>=0.37
+uvicorn>=0.30
+
+# Optional (auto-skipped if unavailable)
+fastembed
+apscheduler
+watchdog

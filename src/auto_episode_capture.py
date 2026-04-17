@@ -167,7 +167,9 @@ def extract_concepts_from_session(
             found.append(keyword)
 
     # Add project as concept if meaningful
-    if project and project not in ("general", "vitalii-macpro"):
+    # Skip generic/home-dir names that add no semantic value
+    generic_projects = {"general", "home", "user", "default"}
+    if project and project.lower() not in generic_projects:
         found.append(project.lower())
 
     return found[:10]

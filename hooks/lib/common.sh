@@ -114,12 +114,30 @@ hook_log() {
 }
 
 # Run a Python script from src/ directory (background, with logging)
+#
+# Two modes:
+#   - Native:  execs via local venv Python.
+#   - Docker:  proxies to `docker exec` in the running MCP container when
+#              CLAUDE_MEMORY_DOCKER=1. Container name configurable via
+#              CLAUDE_MEMORY_CONTAINER (default: claude-memory-mcp).
+#
 # Usage: hook_run_script "auto_self_improve.py" "error" "--description" "msg"
 hook_run_script() {
     local script_name="$1"
     shift
-    local script_path="${CLAUDE_MEMORY_INSTALL_DIR}/src/${script_name}"
 
+    if [ "${CLAUDE_MEMORY_DOCKER:-0}" = "1" ]; then
+        local container="${CLAUDE_MEMORY_CONTAINER:-claude-memory-mcp}"
+        # Best-effort: if container isn't running, silently skip to keep hooks non-blocking
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
+            docker exec "$container" python "src/${script_name}" "$@" \
+                >> "$HOOK_LOG_FILE" 2>&1 &
+            return 0
+        fi
+        return 1
+    fi
+
+    local script_path="${CLAUDE_MEMORY_INSTALL_DIR}/src/${script_name}"
     if [ -f "$script_path" ]; then
         "$HOOK_PYTHON" "$script_path" "$@" >> "$HOOK_LOG_FILE" 2>&1 &
         return 0

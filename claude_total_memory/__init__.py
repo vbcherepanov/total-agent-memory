@@ -1,3 +1,3 @@
-"""Claude Total Memory — Persistent memory MCP server for Claude Code."""
+"""total-agent-memory — Persistent memory MCP server for Claude Code & Codex CLI."""
 
-__version__ = "4.0.0"
+__version__ = "7.0.0"

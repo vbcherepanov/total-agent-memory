@@ -1,0 +1,38 @@
+{
+  "_comment": "Merge these entries into the top-level \"hooks\" object of ~/.claude/settings.json. If a key (e.g. PreToolUse) already exists, append the hook into its array instead of overwriting. Restart Claude Code after editing.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/session-start.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/pre-edit.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/on-bash-error.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

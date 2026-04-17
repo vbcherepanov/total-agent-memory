@@ -7,8 +7,8 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/vitalii-macpro/claude-memory-server/.venv/bin/python</string>
-    <string>/Users/vitalii-macpro/claude-memory-server/src/tools/check_updates.py</string>
+    <string>__HOME__/claude-memory-server/.venv/bin/python</string>
+    <string>__HOME__/claude-memory-server/src/tools/check_updates.py</string>
   </array>
 
   <!-- Weekly: every Monday at 09:00 -->
@@ -37,7 +37,7 @@
   </dict>
 
   <key>WorkingDirectory</key>
-  <string>/Users/vitalii-macpro/claude-memory-server</string>
+  <string>__HOME__/claude-memory-server</string>
 
   <key>StandardOutPath</key>
   <string>/tmp/claude-memory-check-updates.log</string>
