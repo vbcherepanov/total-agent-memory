@@ -12,7 +12,7 @@
 [![Local-First](https://img.shields.io/badge/100%25-local-4a9.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-fa4.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/protocol-MCP-blue.svg)](https://modelcontextprotocol.io)
-[![npm](https://img.shields.io/badge/npm-%40total--agent--memory%2Fclient-cb3837.svg)](https://www.npmjs.com/package/@total-agent-memory/client)
+[![npm](https://img.shields.io/badge/npm-%40vbch%2Ftotal--agent--memory--client-cb3837.svg)](https://www.npmjs.com/package/@vbch/total-agent-memory-client)
 [![Donate](https://img.shields.io/badge/PayPal-Donate-00457C.svg?logo=paypal&logoColor=white)](https://www.paypal.com/donate/?business=vbcherepanov%40gmail.com&currency_code=USD&item_name=total-agent-memory)
 
 **Why this, not mem0 / Letta / Zep / Supermemory / Cognee?** → [docs/vs-competitors.md](docs/vs-competitors.md)
@@ -409,11 +409,11 @@ Full JSON schemas: `python -m claude_total_memory.cli tools --json` or open the 
 For Node.js / browser / any TS project that isn't an MCP-native agent:
 
 ```bash
-npm i @total-agent-memory/client
+npm i @vbch/total-agent-memory-client
 ```
 
 ```ts
-import { connectStdio } from "@total-agent-memory/client";
+import { connectStdio } from "@vbch/total-agent-memory-client";
 
 const memory = await connectStdio();
 

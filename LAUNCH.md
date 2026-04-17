@@ -58,7 +58,7 @@ Install (one line, macOS/Linux):
 
   curl -fsSL https://raw.githubusercontent.com/vbcherepanov/claude-total-memory/main/install.sh | bash
 
-TypeScript SDK: npm i @total-agent-memory/client
+TypeScript SDK: npm i @vbch/total-agent-memory-client
 
 Reproduce the benchmark yourself — evals/longmemeval-2026-04-17.json
 has the raw results, benchmarks/longmemeval_bench.py is the runner.
@@ -119,7 +119,7 @@ github.com/vbcherepanov/claude-total-memory
    
    SQLite + FastEmbed + optional Ollama. Zero cloud dependency.
    
-   TypeScript SDK out today: npm i @total-agent-memory/client
+   TypeScript SDK out today: npm i @vbch/total-agent-memory-client
 
 5/ Benchmark is reproducible — evals/longmemeval-2026-04-17.json
    has raw numbers, benchmarks/longmemeval_bench.py runs it on your data.
@@ -192,7 +192,7 @@ codebase ingest, cross-project analogy. MIT licensed, reproducible
 benchmarks.
 
 - Repo: https://github.com/vbcherepanov/claude-total-memory
-- Npm SDK: https://www.npmjs.com/package/@total-agent-memory/client
+- Npm SDK: https://www.npmjs.com/package/@vbch/total-agent-memory-client
 - Benchmarks: https://github.com/vbcherepanov/claude-total-memory/blob/main/evals/longmemeval-2026-04-17.json
 - Comparison with mem0 / Letta / Zep / Supermemory / Cognee / LangMem:
   https://github.com/vbcherepanov/claude-total-memory/blob/main/docs/vs-competitors.md
@@ -290,7 +290,7 @@ via `self_rules_context`.
 **Cross-project analogy** — `analogize()` finds similar past solutions
 across every project using Jaccard + Dempster-Shafer fusion.
 
-**TypeScript SDK** — `@total-agent-memory/client` on npm.
+**TypeScript SDK** — `@vbch/total-agent-memory-client` on npm.
 
 **Rebrand** — formerly `claude-total-memory`, now `total-agent-memory`.
 The GitHub URL stays (vbcherepanov/claude-total-memory) to avoid breaking
@@ -304,7 +304,7 @@ None. Existing v6.x databases auto-migrate.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vbcherepanov/claude-total-memory/main/install.sh | bash
-npm i @total-agent-memory/client  # TypeScript/JavaScript
+npm i @vbch/total-agent-memory-client  # TypeScript/JavaScript
 ```
 
 ### Comparison
