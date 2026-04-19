@@ -20,6 +20,9 @@ from typing import Any
 
 import os as _os
 
+import config
+from config import get_repr_timeout_sec
+
 OLLAMA_URL = _os.environ.get("OLLAMA_URL", "http://localhost:11434")
 # Default picks the first available locally-installed qwen/vitalii model.
 OLLAMA_MODEL = _os.environ.get("MEMORY_LLM_MODEL", "qwen2.5-coder:7b")
@@ -32,6 +35,20 @@ MAX_LLM_INPUT_CHARS = 8000
 
 LOG = lambda msg: sys.stderr.write(f"[memory-representations] {msg}\n")
 
+# Provider cache — keyed by phase. Rebuilt only on process restart.
+_provider_cache: dict[str, Any] = {}
+
+
+def _get_phase_provider(phase: str):
+    """Resolve LLMProvider for the representations phase, caching on first use."""
+    cached = _provider_cache.get(phase)
+    if cached is not None:
+        return cached
+    from llm_provider import make_provider
+    provider = make_provider(config.get_phase_provider(phase))
+    _provider_cache[phase] = provider
+    return provider
+
 
 # ──────────────────────────────────────────────
 # LLM adapter (override in tests via monkeypatch)
@@ -41,11 +58,30 @@ LOG = lambda msg: sys.stderr.write(f"[memory-representations] {msg}\n")
 def _llm_complete(
     prompt: str, model: str = OLLAMA_MODEL, num_predict: int = 200
 ) -> str:
-    """Call Ollama /api/generate and return the response text.
+    """Run representation completion through the configured LLM provider.
 
-    Monkeypatch this in tests. Network errors propagate — callers should
-    decide whether to swallow them.
+    Default phase provider is Ollama (original behavior preserved inline so
+    `representations.urllib.request.urlopen` monkeypatches keep working).
+    When MEMORY_REPR_PROVIDER / MEMORY_LLM_PROVIDER picks a cloud backend,
+    requests route via `llm_provider`. Network errors propagate; callers
+    already wrap this in try/except.
     """
+    phase_provider = config.get_phase_provider("repr")
+
+    if phase_provider != "ollama":
+        provider = _get_phase_provider("repr")
+        if not provider.available():
+            raise RuntimeError(
+                f"LLM provider '{getattr(provider, 'name', '?')}' unavailable"
+            )
+        return provider.complete(
+            prompt,
+            model=config.get_phase_model("repr"),
+            max_tokens=num_predict,
+            temperature=0.2,
+            timeout=get_repr_timeout_sec(),
+        )
+
     payload = {
         "model": model,
         "prompt": prompt,
@@ -57,7 +93,7 @@ def _llm_complete(
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=get_repr_timeout_sec()) as resp:
         data = json.loads(resp.read())
     return str(data.get("response", "")).strip()
 
@@ -149,7 +185,7 @@ def generate_representations(
     # Skip everything if no LLM available (degraded mode)
     try:
         from config import has_llm
-        if not has_llm():
+        if not has_llm("repr"):
             return out
     except Exception:
         pass  # config module not importable — proceed and let LLM calls fail-soft

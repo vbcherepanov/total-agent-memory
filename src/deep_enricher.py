@@ -21,12 +21,29 @@ from typing import Any
 
 import os as _os
 
+import config
+from config import get_enrich_timeout_sec
+
 OLLAMA_URL = _os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = _os.environ.get("MEMORY_LLM_MODEL", "qwen2.5-coder:7b")
 MIN_CHARS_FOR_LLM = 120  # below this, skip LLM calls
 MAX_LLM_INPUT_CHARS = 6000
 
 LOG = lambda msg: sys.stderr.write(f"[deep-enricher] {msg}\n")
+
+# Provider cache — keyed by phase. Rebuilt only on process restart.
+_provider_cache: dict[str, Any] = {}
+
+
+def _get_phase_provider(phase: str):
+    """Resolve LLMProvider for the enrichment phase, caching on first use."""
+    cached = _provider_cache.get(phase)
+    if cached is not None:
+        return cached
+    from llm_provider import make_provider
+    provider = make_provider(config.get_phase_provider(phase))
+    _provider_cache[phase] = provider
+    return provider
 
 
 # ──────────────────────────────────────────────
@@ -37,6 +54,29 @@ LOG = lambda msg: sys.stderr.write(f"[deep-enricher] {msg}\n")
 def _llm_complete(
     prompt: str, model: str = OLLAMA_MODEL, num_predict: int = 200
 ) -> str:
+    """Run enrichment completion through the configured LLM provider.
+
+    Default phase provider is Ollama; non-Ollama phases route through the
+    `llm_provider` abstraction (OpenAI / Anthropic / compatible endpoints).
+    On `ollama` we keep the inlined urllib path so existing test
+    monkeypatches on `deep_enricher.urllib.request.urlopen` still work.
+    """
+    phase_provider = config.get_phase_provider("enrich")
+
+    if phase_provider != "ollama":
+        provider = _get_phase_provider("enrich")
+        if not provider.available():
+            raise RuntimeError(
+                f"LLM provider '{getattr(provider, 'name', '?')}' unavailable"
+            )
+        return provider.complete(
+            prompt,
+            model=config.get_phase_model("enrich"),
+            max_tokens=num_predict,
+            temperature=0.1,
+            timeout=get_enrich_timeout_sec(),
+        )
+
     payload = {
         "model": model,
         "prompt": prompt,
@@ -48,7 +88,7 @@ def _llm_complete(
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=45) as resp:
+    with urllib.request.urlopen(req, timeout=get_enrich_timeout_sec()) as resp:
         data = json.loads(resp.read())
     return str(data.get("response", "")).strip()
 
@@ -215,7 +255,7 @@ def deep_enrich(
     # Degrade gracefully when Ollama / model unavailable
     try:
         from config import has_llm
-        if not has_llm():
+        if not has_llm("enrich"):
             return out
     except Exception:
         pass

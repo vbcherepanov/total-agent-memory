@@ -3,9 +3,10 @@ Concept Extractor — extract concepts, entities, and relations from text.
 
 Two modes:
 1. Fast local extraction (match against existing graph nodes) — <10ms
-2. Deep extraction via Ollama LLM (create new concepts) — ~2-5 seconds
+2. Deep extraction via LLM (create new concepts) — ~2-5 seconds
 
-All graph operations use raw SQLite. Ollama calls use urllib (no deps).
+All graph operations use raw SQLite. LLM calls routed through llm_provider
+abstraction (ollama by default; openai/anthropic if configured via env).
 """
 
 from __future__ import annotations
@@ -21,8 +22,27 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import config
+from config import get_triple_max_predict, get_triple_timeout_sec
+
 OLLAMA_URL = "http://localhost:11434"
 LOG = lambda msg: sys.stderr.write(f"[memory-extractor] {msg}\n")
+
+# Module-level provider cache keyed by phase. Rebuilt on env change only via
+# manual MCP restart (matches current Ollama-probe caching semantics).
+_provider_cache: dict[str, Any] = {}
+
+
+def _get_phase_provider(phase: str):
+    """Return cached LLMProvider for phase, building it from env on first use."""
+    cached = _provider_cache.get(phase)
+    if cached is not None:
+        return cached
+    from llm_provider import make_provider
+    name = config.get_phase_provider(phase)
+    provider = make_provider(name)
+    _provider_cache[phase] = provider
+    return provider
 
 
 def _now() -> str:
@@ -138,7 +158,7 @@ Content:
         # Skip silently if no LLM is configured (no errors, no logs)
         try:
             from config import has_llm
-            if not has_llm():
+            if not has_llm("triple"):
                 return empty
         except Exception:
             pass
@@ -352,13 +372,58 @@ Content:
         return tokens
 
     def _ollama_generate(self, prompt: str) -> str | None:
-        """Call Ollama generate API. Returns response text or None on error."""
+        """Run triple-extraction completion through the configured LLM provider.
+
+        Name kept for backward compat with tests that monkeypatch this method.
+        Provider selected via MEMORY_TRIPLE_PROVIDER / MEMORY_LLM_PROVIDER;
+        defaults to Ollama at localhost:11434.
+
+        Returns response text, or None on provider/network failure (caller
+        treats None as "skip this batch"). If the provider is configured but
+        unavailable (e.g. missing API key) we degrade to None rather than
+        raising, mirroring the old Ollama behavior.
+
+        When the phase provider resolves to `ollama` we stay on the inlined
+        urllib path below so existing monkeypatches on
+        `ingestion.extractor.urllib.request.urlopen` keep working.
+        """
+        phase_provider = config.get_phase_provider("triple")
+
+        if phase_provider != "ollama":
+            try:
+                provider = _get_phase_provider("triple")
+            except Exception as exc:  # noqa: BLE001 — unknown provider name etc.
+                LOG(f"LLM provider init failed: {exc}")
+                return None
+            if not provider.available():
+                LOG(f"LLM provider '{getattr(provider, 'name', '?')}' unavailable; skipping")
+                return None
+            model = config.get_phase_model("triple")
+            try:
+                return provider.complete(
+                    prompt,
+                    model=model,
+                    max_tokens=get_triple_max_predict(),
+                    temperature=0.1,
+                    timeout=get_triple_timeout_sec(),
+                )
+            except urllib.error.URLError as exc:
+                LOG(f"LLM request failed: {exc}")
+                return None
+            except (json.JSONDecodeError, OSError, RuntimeError) as exc:
+                LOG(f"LLM response error: {exc}")
+                return None
+
+        # Legacy Ollama path — preserves behavior on backward-compat default.
         payload = json.dumps(
             {
                 "model": self.OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"temperature": 0.1, "num_predict": 2048},
+                "options": {
+                    "temperature": 0.1,
+                    "num_predict": get_triple_max_predict(),
+                },
             }
         ).encode("utf-8")
 
@@ -370,7 +435,7 @@ Content:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=get_triple_timeout_sec()) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 return data.get("response", "")
         except urllib.error.URLError as exc:
