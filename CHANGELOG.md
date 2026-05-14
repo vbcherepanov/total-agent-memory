@@ -4,6 +4,90 @@ All notable changes to total-agent-memory are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and versions use [Semantic Versioning](https://semver.org/).
 
+## [11.1.0] — 2026-05-14 — Graph dedup + proactive save nudges
+
+Two production bug-fixes from a client report (2026-05-14): "graph
+accumulates orphan nodes & duplicates" and "Claude ~never calls
+`memory_save` on its own (~1 of 30 sessions)". Both fixed end-to-end.
+
+### Fixed — orphan + duplicate `graph_nodes` (bug #1)
+
+Root causes (4): no UNIQUE on `(name, type)`, case-sensitive lookup in
+`add_node`, different extractors classifying the same entity under
+different types (e.g. `vue/concept` vs `vue/technology` → two rows),
+non-atomic `add_node`+`add_edge` (failed edge left orphan nodes).
+
+- **Migration `026_graph_nodes_dedup.sql`** — adds `name_norm`
+  (case-folded), backfill, triggers that keep it in sync, non-UNIQUE
+  indexes (UNIQUE installed only post-cleanup).
+- **`src/graph/store.py`** — `add_node` rewritten as case-insensitive
+  UPSERT with type-collision detection (existing node of any type for
+  the same `name_norm` is reused instead of forking). Race-safe via
+  IntegrityError catch + re-select.
+- **`GraphStore.link_pair(src_name, src_type, dst_name, dst_type, rel)`**
+  — atomic create-or-reuse two nodes + edge. On edge failure deletes
+  only the nodes this call freshly created. Eliminates the orphan
+  pattern at the source.
+- **`src/tools/merge_duplicate_nodes.py`** — one-shot cleanup tool.
+  `--dry-run` default, `--apply` to mutate, `--case-only` to skip
+  cross-type merges, `--add-unique` installs the final
+  `UNIQUE(name_norm, type)` constraint. Repoints edges and
+  knowledge_node links, dedupes collisions, drops self-loops.
+- **Test coverage**: +24 tests across `test_graph.py` and the new
+  `test_merge_duplicate_nodes.py`. Run on a real 8304-node production
+  DB: merged 102 duplicates + 1472 stale edges, DB 118.5 → 108.8 MB.
+
+### Fixed — model never calls `memory_save` on its own (bug #2)
+
+Smaller models (Sonnet, Haiku) skip the priority-10 "save what matters"
+rule unless reminded mid-session. The SessionStart hint fades long
+before meaningful work happens. v11.1 adds in-session nudges that
+Claude sees as system context on the next turn.
+
+- **`hooks/lib/memory-nudge.sh`** — per-session counter in
+  `~/.claude-memory/state/nudge-<session>.json` tracking
+  `writes / edits / bashes / memory_saves`.
+- **`hooks/post-tool-use.sh`** — was opt-in capture only; now always
+  emits a stdout nudge when significant-writes-without-saves crosses a
+  threshold. Soft nudge at 3 edits, hard at 7. Throttled to avoid spam;
+  hard escalation bypasses throttle once. A `memory_save` releases
+  pressure for the next 2×STEP edits.
+- **`hooks/on-stop.sh`** — final `MEMORY_FINAL_WARNING` when the
+  session is about to close with 0 saves but ≥3 edits.
+- **`hooks/post-tool-use.ps1` + `on-stop.ps1`** — feature-parity on
+  Windows.
+- **New priority-10 behavioural rule**: "`MEMORY_NUDGE` in stdout is
+  an immediate action signal, not information — call `memory_save`
+  before the next significant edit". Installed via
+  `self_rules(add_manual=...)`.
+- **Tunables**: `MEMORY_NUDGE_DISABLE=1` to silence;
+  `MEMORY_NUDGE_SOFT` / `_HARD` / `_STEP` to retune.
+- **Test coverage**: 12 new tests (`test_memory_nudge_hook.py`)
+  covering counters, threshold transitions, save-silences-pressure,
+  hard escalation, summary emission.
+
+### Operational notes
+
+- Migration 026 is applied automatically by `_apply_sql_migrations()`
+  on first MCP-server boot after upgrade — no manual SQL needed.
+- `merge_duplicate_nodes.py` refuses to install the UNIQUE index if
+  any duplicate row still exists — safe-by-default ordering.
+- Nudge state directory is auto-pruned by `on-stop` (files >7 days).
+- Hooks remain non-blocking; the inline Python reads only the cached
+  temp file (no DB, no network, <50 ms typical).
+
+### Migration
+
+No manual steps required for users on v11.0:
+
+```bash
+git pull && pip install -e .   # or your usual upgrade path
+# Next MCP-server start applies migration 026 automatically.
+# (optional) clean up duplicates accumulated before the upgrade:
+.venv/bin/python src/tools/merge_duplicate_nodes.py --dry-run
+.venv/bin/python src/tools/merge_duplicate_nodes.py --apply --add-unique
+```
+
 ## [11.0.0] — 2026-04-28 — Production Memory Engine + LoCoMo SOTA
 
 **Headline:** LoCoMo benchmark **0.705 overall** (1986 QA, gpt-4o gen + gpt-4o-mini judge). Position **#5** on the public leaderboard — above Mem0 (0.669) and v9-ensemble3 internal best (0.696). Temporal **0.654** (+39pp vs v9 paper-method baseline). R@5 (no-adv) **0.673**. See `docs/v11/RELEASE-FINAL-2026-04-28.md` for full breakdown.

@@ -27,6 +27,24 @@ def _new_id() -> str:
     return uuid.uuid4().hex
 
 
+def _canonical_name(name: str) -> str:
+    """Canonical form for case-insensitive node lookup."""
+    return (name or "").strip().lower()
+
+
+def _has_name_norm(db: sqlite3.Connection) -> bool:
+    """Detect whether migration 026 has been applied. Older databases
+    don't have the column yet and add_node falls back to the legacy
+    case-sensitive path."""
+    try:
+        row = db.execute("SELECT name_norm FROM graph_nodes LIMIT 1").fetchone()
+        return True
+    except sqlite3.OperationalError:
+        return False
+    except sqlite3.DatabaseError:
+        return False
+
+
 def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     """Convert a sqlite3.Row to a plain dict, parsing JSON fields."""
     if row is None:
@@ -45,6 +63,13 @@ class GraphStore:
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self.db = db
+        self._has_name_norm: bool | None = None
+
+    def _name_norm_available(self) -> bool:
+        """Cache the migration-026 capability check on first call."""
+        if self._has_name_norm is None:
+            self._has_name_norm = _has_name_norm(self.db)
+        return self._has_name_norm
 
     # ──────────────────────────────────────────────
     # Node CRUD
@@ -58,16 +83,28 @@ class GraphStore:
         properties: dict | None = None,
         source: str = "auto",
     ) -> str:
-        """Create or update a node. If a node with the same name+type exists, update it.
+        """Create or reuse a node, idempotently.
+
+        Lookup is case-insensitive against `name_norm` once migration 026
+        is in place. Two-stage resolution:
+
+        1. Exact (name_norm, type) match → reinforce that node.
+        2. Same name_norm but a different `type` → reinforce the existing
+           node instead of forking a near-duplicate with a different
+           classification (this is the root cause of "1274 orphan + 100+
+           case-/type-variant duplicates" reported in production).
+
+        If no match: INSERT inside the same transaction. On UNIQUE-race
+        (concurrent worker hit between SELECT and INSERT) — re-select.
 
         Returns the node_id (existing or newly created).
         """
-        existing = self.get_node_by_name(name, type)
+        canon = _canonical_name(name)
+        existing = self._find_existing_for_upsert(canon, type)
+
         if existing:
             node_id = existing["id"]
-            updates: dict[str, Any] = {
-                "last_seen_at": _now(),
-            }
+            updates: dict[str, Any] = {"last_seen_at": _now()}
             if content is not None:
                 updates["content"] = content
             if properties is not None:
@@ -75,43 +112,95 @@ class GraphStore:
             if source != "auto":
                 updates["source"] = source
 
-            # Increment mention_count
             self.db.execute(
                 "UPDATE graph_nodes SET mention_count = mention_count + 1 WHERE id = ?",
                 (node_id,),
             )
-
             if updates:
                 set_clause = ", ".join(f"{k} = ?" for k in updates)
                 values = list(updates.values()) + [node_id]
                 self.db.execute(
                     f"UPDATE graph_nodes SET {set_clause} WHERE id = ?", values
                 )
-
             self.db.commit()
-            LOG(f"Node updated: {name} ({type}) -> {node_id}")
+
+            if existing["type"] != type:
+                LOG(
+                    f"Node reused across types: {name!r} requested as {type!r}, "
+                    f"existing as {existing['type']!r} -> {node_id}"
+                )
+            else:
+                LOG(f"Node reinforced: {name} ({type}) -> {node_id}")
             return node_id
 
         node_id = _new_id()
         now = _now()
-        self.db.execute(
-            """INSERT INTO graph_nodes
-               (id, type, name, content, properties, source, first_seen_at, last_seen_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                node_id,
-                type,
-                name,
-                content,
-                json.dumps(properties) if properties else None,
-                source,
-                now,
-                now,
-            ),
-        )
-        self.db.commit()
-        LOG(f"Node created: {name} ({type}) -> {node_id}")
-        return node_id
+        cols = ["id", "type", "name", "content", "properties", "source",
+                "first_seen_at", "last_seen_at"]
+        vals: list[Any] = [
+            node_id, type, name, content,
+            json.dumps(properties) if properties else None,
+            source, now, now,
+        ]
+        if self._name_norm_available():
+            cols.append("name_norm")
+            vals.append(canon)
+
+        placeholders = ", ".join("?" * len(cols))
+        try:
+            self.db.execute(
+                f"INSERT INTO graph_nodes ({', '.join(cols)}) VALUES ({placeholders})",
+                vals,
+            )
+            self.db.commit()
+            LOG(f"Node created: {name} ({type}) -> {node_id}")
+            return node_id
+        except sqlite3.IntegrityError:
+            # UNIQUE-index race: another writer inserted the same
+            # (name_norm[, type]) tuple. Re-resolve and return its id.
+            self.db.rollback()
+            retry = self._find_existing_for_upsert(canon, type)
+            if retry:
+                LOG(f"Node race resolved: {name} ({type}) -> {retry['id']}")
+                return retry["id"]
+            raise
+
+    def _find_existing_for_upsert(
+        self, canon: str, type: str
+    ) -> dict[str, Any] | None:
+        """Locate a reusable node for `add_node`.
+
+        Order of preference:
+          a) exact (name_norm, type) — same entity, same classification.
+          b) same name_norm, any type — entity exists, classifier
+             disagreement (fixes the "vue/concept vs vue/technology"
+             duplication pattern). Prefers highest mention_count, then
+             oldest, for stable winner selection.
+
+        Falls back to case-sensitive (legacy) lookup when migration 026
+        has not yet been applied.
+        """
+        if not canon:
+            return None
+
+        if not self._name_norm_available():
+            return self.get_node_by_name(canon, type)
+
+        row = self.db.execute(
+            "SELECT * FROM graph_nodes WHERE name_norm = ? AND type = ? LIMIT 1",
+            (canon, type),
+        ).fetchone()
+        if row is not None:
+            return _row_to_dict(row)
+
+        row = self.db.execute(
+            """SELECT * FROM graph_nodes
+               WHERE name_norm = ?
+               ORDER BY mention_count DESC, first_seen_at ASC
+               LIMIT 1""",
+            (canon,),
+        ).fetchone()
+        return _row_to_dict(row)
 
     def get_node(self, node_id: str) -> dict[str, Any] | None:
         """Get a node by its ID."""
@@ -121,16 +210,35 @@ class GraphStore:
         return _row_to_dict(row)
 
     def get_node_by_name(self, name: str, type: str | None = None) -> dict[str, Any] | None:
-        """Get a node by name, optionally filtered by type."""
-        if type is not None:
-            row = self.db.execute(
-                "SELECT * FROM graph_nodes WHERE name = ? AND type = ?",
-                (name, type),
-            ).fetchone()
+        """Get a node by name, optionally filtered by type.
+
+        Case-insensitive lookup against name_norm when migration 026 has
+        applied; falls back to case-sensitive on older databases so the
+        function works during upgrade.
+        """
+        canon = _canonical_name(name)
+        if self._name_norm_available():
+            if type is not None:
+                row = self.db.execute(
+                    "SELECT * FROM graph_nodes WHERE name_norm = ? AND type = ?",
+                    (canon, type),
+                ).fetchone()
+            else:
+                row = self.db.execute(
+                    """SELECT * FROM graph_nodes WHERE name_norm = ?
+                       ORDER BY mention_count DESC, first_seen_at ASC LIMIT 1""",
+                    (canon,),
+                ).fetchone()
         else:
-            row = self.db.execute(
-                "SELECT * FROM graph_nodes WHERE name = ?", (name,)
-            ).fetchone()
+            if type is not None:
+                row = self.db.execute(
+                    "SELECT * FROM graph_nodes WHERE name = ? AND type = ?",
+                    (name, type),
+                ).fetchone()
+            else:
+                row = self.db.execute(
+                    "SELECT * FROM graph_nodes WHERE name = ?", (name,)
+                ).fetchone()
         return _row_to_dict(row)
 
     def get_or_create(self, name: str, type: str, **kwargs: Any) -> str:
@@ -342,6 +450,77 @@ class GraphStore:
         cursor = self.db.execute("DELETE FROM graph_edges WHERE id = ?", (edge_id,))
         self.db.commit()
         return cursor.rowcount > 0
+
+    def link_pair(
+        self,
+        source_name: str,
+        source_type: str,
+        target_name: str,
+        target_type: str,
+        relation_type: str,
+        weight: float = 1.0,
+        context: str | None = None,
+    ) -> tuple[str, str, str] | None:
+        """Atomically create (or reuse) two nodes and the edge between them.
+
+        This is the canonical entry point for extractors and the
+        reflection worker. Using add_node()+add_node()+add_edge() in
+        separate transactions is the root cause of the "orphan nodes"
+        pattern reported in production: when add_edge fails (self-loop,
+        unique-race, invalid relation), the two nodes have already been
+        committed and stay forever.
+
+        link_pair tracks which nodes it freshly created. On failure the
+        freshly-created nodes are deleted; nodes that pre-existed are
+        left intact. add_node already commits per call, so we can't use
+        a single SAVEPOINT — we compensate manually instead.
+
+        Returns (source_id, target_id, edge_id) on success, or None when
+        the relationship is intentionally skipped (self-loop after
+        case-insensitive canonicalization collapsed both names onto the
+        same node) or rolled back on failure.
+        """
+        src_canon = _canonical_name(source_name)
+        dst_canon = _canonical_name(target_name)
+        if not src_canon or not dst_canon:
+            return None
+
+        src_pre = self._find_existing_for_upsert(src_canon, source_type)
+        dst_pre = self._find_existing_for_upsert(dst_canon, target_type)
+        src_pre_id = src_pre["id"] if src_pre else None
+        dst_pre_id = dst_pre["id"] if dst_pre else None
+
+        src_id: str | None = None
+        dst_id: str | None = None
+        try:
+            src_id = self.add_node(source_type, source_name)
+            dst_id = self.add_node(target_type, target_name)
+
+            if src_id == dst_id:
+                return None
+
+            edge_id = self.add_edge(
+                src_id, dst_id, relation_type, weight=weight, context=context,
+            )
+            return (src_id, dst_id, edge_id)
+        except Exception as exc:
+            # Compensate: delete nodes we created in this call.
+            freshly = []
+            if src_id is not None and src_id != src_pre_id:
+                freshly.append(src_id)
+            if dst_id is not None and dst_id != dst_pre_id and dst_id not in freshly:
+                freshly.append(dst_id)
+            for nid in freshly:
+                try:
+                    self.delete_node(nid)
+                except Exception as cleanup_exc:
+                    LOG(f"link_pair cleanup failed for {nid}: {cleanup_exc}")
+            LOG(
+                f"link_pair rolled back ({len(freshly)} node(s)): "
+                f"{source_name}({source_type})-[{relation_type}]->"
+                f"{target_name}({target_type}): {exc}"
+            )
+            return None
 
     # ──────────────────────────────────────────────
     # Knowledge <-> Node linking

@@ -4,7 +4,7 @@
 > Persistent, local memory for AI coding agents: Claude Code, Codex CLI, Cursor, any MCP client.
 > Temporal knowledge graph · procedural memory · AST codebase ingest · cross-project analogy · 3D WebGL visualization.
 
-[![Version](https://img.shields.io/badge/version-11.0.0-8ad.svg)]()
+[![Version](https://img.shields.io/badge/version-11.1.0-8ad.svg)]()
 [![Tests](https://img.shields.io/badge/tests-1200%2B%20passing-4a9.svg)]()
 [![IDEs](https://img.shields.io/badge/IDEs-9%20supported-4a9.svg)]()
 [![LongMemEval R@5](https://img.shields.io/badge/LongMemEval%20R@5-96.2%25-4a9.svg)](evals/longmemeval-2026-04-17.json)
@@ -18,6 +18,46 @@
 [![Donate](https://img.shields.io/badge/PayPal-Donate-00457C.svg?logo=paypal&logoColor=white)](https://PayPal.Me/vbcherepanov)
 
 **Why this, not mem0 / Letta / Zep / Supermemory / Cognee?** → [docs/vs-competitors.md](docs/vs-competitors.md)
+
+---
+
+## v11.1 — graph dedup + proactive save nudges
+
+Two client-reported bugs fixed (2026-05-14):
+
+**Bug #1 — orphan + duplicate `graph_nodes`.** The graph accumulated
+case-variant duplicates (`Vue` / `vue` / `VUE`) and type-collision
+duplicates (`vue/concept` vs `vue/technology` created by different
+extractors), plus orphan nodes when an edge insert failed after both
+nodes were already committed. Fixed by migration `026_graph_nodes_dedup`
+(`name_norm` column, triggers, indexes), a case-insensitive UPSERT
+rewrite of `add_node` with type-collision detection, a new atomic
+`GraphStore.link_pair()` helper, and a one-shot cleanup tool
+`src/tools/merge_duplicate_nodes.py` (dry-run by default).
+
+```bash
+# After upgrade migration 026 applies automatically. Then optionally:
+.venv/bin/python src/tools/merge_duplicate_nodes.py --dry-run
+.venv/bin/python src/tools/merge_duplicate_nodes.py --apply --add-unique
+```
+
+Verified on a real production DB (8304 nodes): 102 duplicates merged,
+1472 stale edges cleaned, UNIQUE constraint installed.
+
+**Bug #2 — model never calls `memory_save` on its own.** Sonnet/Haiku
+skip the priority-10 save rule when SessionStart context fades. v11.1
+adds in-session **nudges**: a counter in `~/.claude-memory/state/`
+tracks writes-vs-saves per session, and `hooks/post-tool-use.{sh,ps1}`
+emits a stdout line that Claude reads as system context on the next
+turn. Soft nudge at 3 edits with 0 saves, hard at 7, and a
+`MEMORY_FINAL_WARNING` on session stop. A new priority-10 rule
+instructs the model to treat `MEMORY_NUDGE` as an immediate command.
+
+Tunables: `MEMORY_NUDGE_DISABLE=1` to silence; `MEMORY_NUDGE_SOFT` /
+`_HARD` / `_STEP` to retune (defaults `3 / 7 / 3`).
+
+Test coverage: +24 graph tests, +12 nudge tests. Full details in
+[`CHANGELOG.md`](CHANGELOG.md#1110--2026-05-14--graph-dedup--proactive-save-nudges).
 
 ---
 
@@ -102,6 +142,7 @@ Old chunks stay searchable in their space; new chunks pick up the swapped model.
 
 ## Table of contents
 
+- [v11.1 — graph dedup + proactive save nudges](#v111--graph-dedup--proactive-save-nudges)
 - [v11.0 — production memory engine](#v110--production-memory-engine)
 - [The problem it solves](#the-problem-it-solves)
 - [60-second demo](#60-second-demo)

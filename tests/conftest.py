@@ -72,6 +72,13 @@ def db():
     migration = Path(__file__).parent.parent / "migrations" / "001_v5_schema.sql"
     conn.executescript(migration.read_text())
 
+    # Migration 026 — case-insensitive name normalization for graph_nodes.
+    # Tests that touch graph_store rely on name_norm being present so
+    # add_node can do its UPSERT lookup.
+    m026 = Path(__file__).parent.parent / "migrations" / "026_graph_nodes_dedup.sql"
+    if m026.exists():
+        conn.executescript(m026.read_text())
+
     # Add base tables (from main server, not in v5 migration)
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS sessions (

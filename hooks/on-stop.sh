@@ -13,6 +13,7 @@
 # ===========================================
 
 source "$(dirname "$0")/lib/common.sh"
+source "$(dirname "$0")/lib/memory-nudge.sh"
 
 STOP_ACTIVE=$(hook_get 'stop_hook_active')
 [ "$STOP_ACTIVE" = "true" ] && exit 0
@@ -23,6 +24,8 @@ CTX=$(hook_context)
 CWD=$(hook_get 'cwd')
 [ -z "$CWD" ] && CWD="$PWD"
 PROJECT=$(basename "$CWD")
+SESSION_ID=$(hook_get 'session_id')
+[ -z "$SESSION_ID" ] && SESSION_ID="${CLAUDE_SESSION_ID:-unknown}"
 
 # Recovery directory
 mkdir -p "$HOOK_RECOVERY_DIR"
@@ -77,9 +80,23 @@ hook_log "STOPPED: $CTX - recovery saved to $RECOVERY_FILE"
 echo "Session stopped at $TIMESTAMP"
 echo "Recovery context saved to: $RECOVERY_FILE"
 echo ""
+
+# Emit nudge summary based on this session's write/save counters.
+# Suppressed when nothing relevant happened (writes==0 and saves==0).
+if [ "${MEMORY_NUDGE_DISABLE:-0}" != "1" ]; then
+    SUMMARY_LINE=$(nudge_summary "$SESSION_ID" "$PROJECT")
+    if [ -n "$SUMMARY_LINE" ]; then
+        echo "$SUMMARY_LINE"
+        echo ""
+    fi
+fi
+
 echo "MEMORY_WARNING: Session ending. Before closing:"
 echo "  1. Save important knowledge with memory_save(project=\"${PROJECT}\")"
 echo "  2. Record a reflection: self_reflect(reflection=\"...\", task_summary=\"...\", project=\"${PROJECT}\")"
 echo ""
 echo "IMPORTANT: Session context was auto-saved for recovery."
 echo "On next session, pending knowledge will be restored."
+
+# Prune nudge state files older than 7 days to keep the dir small.
+find "$NUDGE_STATE_DIR" -name "nudge-*.json" -mtime +7 -delete 2>/dev/null
