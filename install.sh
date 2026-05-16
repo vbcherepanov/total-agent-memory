@@ -268,6 +268,23 @@ fi
 
 echo "  Python $PY_VERSION found"
 
+# Pre-flight: many Debian/Ubuntu/WSL images split out the `venv` module into
+# a separate `python3-venv` package. Without it `python3 -m venv` errors on
+# ensurepip with a cryptic message that does not mention the actual fix.
+# Detect and surface a clear, actionable hint before failing.
+if [ "$TEST_MODE" != "1" ] && ! [ -d "$VENV_DIR" ]; then
+    if ! python3 -c "import ensurepip" >/dev/null 2>&1; then
+        echo "  ERROR: python3 venv module is missing (ensurepip unavailable)."
+        echo "  Install it first, then re-run this script:"
+        echo "    Debian/Ubuntu/WSL:  sudo apt install python${PY_VERSION}-venv"
+        echo "    Fedora/RHEL:        sudo dnf install python3-virtualenv"
+        echo "    Arch:               (already bundled with the python package)"
+        echo "    Alpine:             apk add python3 py3-virtualenv"
+        echo "    macOS (Homebrew):   brew install python@${PY_VERSION}"
+        exit 1
+    fi
+fi
+
 if [ "$TEST_MODE" = "1" ]; then
     echo "  SKIP (test mode): venv creation and pip install"
     PY_PATH="$(command -v python3)"
