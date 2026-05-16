@@ -10,6 +10,7 @@ existing `embeddings` table is left untouched.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import struct
 from datetime import datetime, timezone
@@ -23,6 +24,15 @@ VALID_REPRESENTATIONS: frozenset[str] = frozenset(
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def content_hash(content: str | None) -> str:
+    """Stable sha256 hex digest of parent content. Used for drift detection
+    so recall can dampen hits via representations whose parent record has
+    since been edited."""
+    if content is None:
+        content = ""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def _float32_blob(vec: Iterable[float]) -> bytes:
@@ -52,7 +62,16 @@ class MultiReprStore:
         content: str,
         embedding: list[float],
         model: str,
+        parent_content_hash: str | None = None,
     ) -> None:
+        """Insert or replace a single (knowledge_id, representation) row.
+
+        ``parent_content_hash`` is the sha256 of the *parent* knowledge.content
+        at the moment this view was generated. Recall compares it against the
+        current parent hash to detect drift (parent edited but view stale).
+        Backward compatible: callers that don't supply it leave the column
+        NULL and drift checks become a no-op for that row.
+        """
         if representation not in VALID_REPRESENTATIONS:
             raise ValueError(
                 f"representation must be one of {sorted(VALID_REPRESENTATIONS)}, "
@@ -61,30 +80,74 @@ class MultiReprStore:
         if not embedding:
             raise ValueError("embedding cannot be empty")
 
-        self.db.execute(
-            """INSERT INTO knowledge_representations
-                 (knowledge_id, representation, content, binary_vector,
-                  float32_vector, embed_model, embed_dim, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(knowledge_id, representation) DO UPDATE SET
-                 content        = excluded.content,
-                 binary_vector  = excluded.binary_vector,
-                 float32_vector = excluded.float32_vector,
-                 embed_model    = excluded.embed_model,
-                 embed_dim      = excluded.embed_dim,
-                 created_at     = excluded.created_at""",
-            (
-                knowledge_id,
-                representation,
-                content,
-                _binary_blob(embedding),
-                _float32_blob(embedding),
-                model,
-                len(embedding),
-                _now(),
-            ),
-        )
+        # Schema-detect: column may be missing on legacy DBs that haven't
+        # applied migration 027 yet. Fall back to the legacy INSERT shape.
+        has_hash_col = self._has_hash_column()
+        now = _now()
+
+        if has_hash_col:
+            self.db.execute(
+                """INSERT INTO knowledge_representations
+                     (knowledge_id, representation, content, binary_vector,
+                      float32_vector, embed_model, embed_dim, created_at,
+                      parent_content_hash, last_confirmed)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(knowledge_id, representation) DO UPDATE SET
+                     content             = excluded.content,
+                     binary_vector       = excluded.binary_vector,
+                     float32_vector      = excluded.float32_vector,
+                     embed_model         = excluded.embed_model,
+                     embed_dim           = excluded.embed_dim,
+                     created_at          = excluded.created_at,
+                     parent_content_hash = excluded.parent_content_hash,
+                     last_confirmed      = excluded.last_confirmed""",
+                (
+                    knowledge_id,
+                    representation,
+                    content,
+                    _binary_blob(embedding),
+                    _float32_blob(embedding),
+                    model,
+                    len(embedding),
+                    now,
+                    parent_content_hash,
+                    now,
+                ),
+            )
+        else:
+            self.db.execute(
+                """INSERT INTO knowledge_representations
+                     (knowledge_id, representation, content, binary_vector,
+                      float32_vector, embed_model, embed_dim, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(knowledge_id, representation) DO UPDATE SET
+                     content        = excluded.content,
+                     binary_vector  = excluded.binary_vector,
+                     float32_vector = excluded.float32_vector,
+                     embed_model    = excluded.embed_model,
+                     embed_dim      = excluded.embed_dim,
+                     created_at     = excluded.created_at""",
+                (
+                    knowledge_id,
+                    representation,
+                    content,
+                    _binary_blob(embedding),
+                    _float32_blob(embedding),
+                    model,
+                    len(embedding),
+                    now,
+                ),
+            )
         self.db.commit()
+
+    def _has_hash_column(self) -> bool:
+        try:
+            rows = self.db.execute(
+                "PRAGMA table_info(knowledge_representations)"
+            ).fetchall()
+            return any(r[1] == "parent_content_hash" for r in rows)
+        except sqlite3.Error:
+            return False
 
     def get_all_for(self, knowledge_id: int) -> list[dict]:
         rows = self.db.execute(

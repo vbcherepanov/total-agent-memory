@@ -253,8 +253,31 @@ def search(
     processed concurrently; otherwise falls back to the v8 sequential path.
     The public return contract is identical in both modes.
     """
+    fused, _ = search_with_winners(
+        db, query_embedding, project, n_candidates, top_n
+    )
+    return fused
+
+
+def search_with_winners(
+    db: sqlite3.Connection,
+    query_embedding: list[float],
+    project: str | None = None,
+    n_candidates: int = 100,
+    top_n: int = 20,
+) -> tuple[list[tuple[int, float]], dict[int, str]]:
+    """Same as ``search`` but also returns ``winners``.
+
+    ``winners[knowledge_id] = best_repr_name`` — the representation type
+    (summary / keywords / questions / compressed) that produced the highest
+    cosine similarity for that record. Callers can use this to apply a
+    per-representation staleness decay: a hit via ``summary`` ages faster
+    than a hit via ``raw`` because LLM-generated views encode dated context.
+
+    Empty winners dict when no representations matched.
+    """
     if not query_embedding:
-        return []
+        return [], {}
 
     if _config.is_v9_parallel_retrieval_enabled():
         per_repr = _run_coroutine(
@@ -268,10 +291,19 @@ def search(
         )
 
     if not per_repr:
-        return []
+        return [], {}
 
     fused = rrf_fuse(per_repr, k=60, top_n=top_n)
-    return fused
+
+    # Resolve winner per knowledge_id: the repr that scored it highest (cosine).
+    winners: dict[int, tuple[str, float]] = {}
+    for repr_name, scored in per_repr.items():
+        for kid, sim in scored:
+            current = winners.get(kid)
+            if current is None or sim > current[1]:
+                winners[kid] = (repr_name, sim)
+
+    return fused, {kid: name for kid, (name, _) in winners.items()}
 
 
 def _fetch(

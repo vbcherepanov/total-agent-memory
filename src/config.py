@@ -117,6 +117,90 @@ def get_triple_max_predict() -> int:
 
 
 # ──────────────────────────────────────────────
+# Decay half-lives per representation type
+# ──────────────────────────────────────────────
+# LLM-generated views age faster than raw content because they encode the
+# model's understanding of the world at generation time. A summary written
+# 3 months ago may misrepresent today's record; the raw text itself does not.
+#
+# These knobs are consumed by ``Store._decay_factor`` in ``server.py`` to
+# pick a per-tier half-life. Override via env, e.g.
+#   MEMORY_DECAY_SUMMARY_DAYS=14   # aggressive summary decay
+#   MEMORY_DECAY_RAW_DAYS=365      # slow decay for raw
+
+_REPR_HALF_LIFE_DEFAULTS: dict[str, int] = {
+    "raw":        180,
+    "keywords":   90,
+    "compressed": 60,
+    "questions":  45,
+    "summary":    30,
+}
+
+
+def get_repr_half_life_days(repr_type: str | None) -> int:
+    """Half-life (days) for decay scoring when a record matched via this view.
+
+    ``repr_type`` is one of raw/summary/keywords/questions/compressed (case-
+    insensitive). Unknown / empty types fall back to the parent half-life.
+    Env override pattern: MEMORY_DECAY_<TYPE>_DAYS.
+    """
+    if not repr_type:
+        return get_parent_half_life_days()
+    rt = repr_type.lower()
+    default = _REPR_HALF_LIFE_DEFAULTS.get(rt)
+    if default is None:
+        return get_parent_half_life_days()
+    return _get_int_env(f"MEMORY_DECAY_{rt.upper()}_DAYS", default)
+
+
+def get_parent_half_life_days() -> int:
+    """Half-life for records matched through non-representation tiers
+    (fts, fuzzy, graph, episode). Default 90d preserves legacy behavior."""
+    return _get_int_env("MEMORY_DECAY_PARENT_DAYS", 90)
+
+
+def get_edge_half_life_days() -> int:
+    """Half-life (days) for KG edge freshness in context expansion.
+
+    Used by ``context_expander`` to damp contributions from stale edges so
+    that fresh 1-hop links can lift older nodes more effectively than long-
+    dormant ones. ``last_reinforced_at`` (falling back to ``created_at``)
+    drives the curve.
+    """
+    return _get_int_env("MEMORY_EDGE_HALF_LIFE_DAYS", 60)
+
+
+# ──────────────────────────────────────────────
+# Recall noise filters
+# ──────────────────────────────────────────────
+# Records tagged with operational/internal markers (e.g. recovery snapshots
+# from session-end, auto-extract harvests from raw transcripts) inflate top-K
+# without adding signal. By default they are excluded from ``memory_recall``
+# unless the caller explicitly asks for one of these tags. Override via env:
+#   MEMORY_RECALL_EXCLUDED_TAGS=recovery,auto-extract,debug,test-data
+#   MEMORY_RECALL_EXCLUDE=0   # disable the filter entirely
+
+_RECALL_EXCLUDED_TAGS_DEFAULT = ("recovery", "auto-extract")
+
+
+def get_recall_excluded_tags() -> tuple[str, ...]:
+    """Tag names that are filtered out of recall results by default.
+
+    Comma-separated env override at MEMORY_RECALL_EXCLUDED_TAGS.
+    Empty / disabled (``MEMORY_RECALL_EXCLUDE=0``) → no filter applied.
+    """
+    if os.environ.get("MEMORY_RECALL_EXCLUDE", "1").strip().lower() in (
+        "0", "false", "no", "off"
+    ):
+        return tuple()
+    raw = os.environ.get("MEMORY_RECALL_EXCLUDED_TAGS")
+    if raw is None:
+        return _RECALL_EXCLUDED_TAGS_DEFAULT
+    parts = tuple(p.strip() for p in raw.split(",") if p.strip())
+    return parts
+
+
+# ──────────────────────────────────────────────
 # Probe cache
 # ──────────────────────────────────────────────
 

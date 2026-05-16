@@ -16,18 +16,50 @@ agent sees the full picture.
 
 from __future__ import annotations
 
+import math
 import sqlite3
 import sys
 from collections import defaultdict
+from datetime import datetime, timezone
+
+try:
+    from config import get_edge_half_life_days
+except ImportError:  # pragma: no cover — fallback when imported as package
+    def get_edge_half_life_days() -> int:  # type: ignore[no-redef]
+        return 60
 
 LOG = lambda msg: sys.stderr.write(f"[context-expander] {msg}\n")
+
+
+def _edge_freshness(ts_str: str | None, half_life_days: int) -> float:
+    """Exponential decay on edge age. Falls back to 0.5 when ts is missing.
+
+    Newly created / recently reinforced edges keep contribution near 1.0;
+    edges older than ``half_life_days`` carry less than half their nominal
+    weight. Clamped to [0.05, 1.0] so a very old edge still nudges (we don't
+    want it dominating, but it's not zero-evidence either).
+    """
+    if not ts_str:
+        return 0.5
+    try:
+        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc) if ts.tzinfo else datetime.utcnow()
+        days = max(0.0, (now - ts).total_seconds() / 86400.0)
+        return max(0.05, min(1.0, math.exp(-days * math.log(2) / max(1, half_life_days))))
+    except Exception:
+        return 0.5
 
 
 class ContextExpander:
     """Expand a set of seed knowledge_ids via 1-hop KG traversal."""
 
-    def __init__(self, db: sqlite3.Connection) -> None:
+    def __init__(self, db: sqlite3.Connection, edge_half_life_days: int | None = None) -> None:
         self.db = db
+        self._edge_half_life = (
+            edge_half_life_days
+            if edge_half_life_days is not None
+            else get_edge_half_life_days()
+        )
 
     def expand(
         self,
@@ -39,9 +71,10 @@ class ContextExpander:
         """Return up to `budget` knowledge_ids related to seeds.
 
         Ranking: for each candidate, a score accumulates from every seed-linked
-        node it shares (direct or 1-hop neighbor), weighted by edge weight
-        and link strength. Candidates are returned sorted by score descending.
-        Seeds themselves are never included.
+        node it shares (direct or 1-hop neighbor), weighted by edge weight,
+        link strength, and **edge freshness**. Stale 1-hop edges contribute
+        less than recently reinforced ones, so fresh evidence can rescue
+        otherwise dormant nodes. Seeds themselves are never included.
         """
         if not seed_ids:
             return []
@@ -53,12 +86,13 @@ class ContextExpander:
         if not seed_nodes:
             return []
 
-        # Step 2: 1-hop neighbors via graph_edges (edge weight as multiplier).
+        # Step 2: 1-hop neighbors via graph_edges
+        # (weight × freshness as multiplier).
         expanded_nodes: dict[str, float] = dict(seed_nodes)
         if depth >= 1:
             for node_id, seed_strength in seed_nodes.items():
-                for neighbor_id, edge_weight in self._one_hop(node_id):
-                    contribution = seed_strength * edge_weight
+                for neighbor_id, edge_weight, freshness in self._one_hop(node_id):
+                    contribution = seed_strength * edge_weight * freshness
                     expanded_nodes[neighbor_id] = max(
                         expanded_nodes.get(neighbor_id, 0.0), contribution
                     )
@@ -116,19 +150,30 @@ class ContextExpander:
             if (r["s"] or 0.0) >= min_strength
         }
 
-    def _one_hop(self, node_id: str) -> list[tuple[str, float]]:
-        """Return [(neighbor_id, edge_weight), ...] for 1-hop neighbors (both directions)."""
+    def _one_hop(self, node_id: str) -> list[tuple[str, float, float]]:
+        """Return [(neighbor_id, edge_weight, freshness), ...] for 1-hop neighbors.
+
+        ``freshness`` is exponential decay on ``last_reinforced_at`` (falling
+        back to ``created_at`` when never reinforced). Half-life is set on
+        the expander instance (env: ``MEMORY_EDGE_HALF_LIFE_DAYS``).
+        """
         rows = self.db.execute(
-            """SELECT source_id, target_id, weight
+            """SELECT source_id, target_id, weight,
+                      last_reinforced_at, created_at
                  FROM graph_edges
                 WHERE source_id = ? OR target_id = ?""",
             (node_id, node_id),
         ).fetchall()
-        out: list[tuple[str, float]] = []
+        out: list[tuple[str, float, float]] = []
+        hl = self._edge_half_life
         for r in rows:
             w = float(r["weight"] or 1.0)
             neighbor = r["target_id"] if r["source_id"] == node_id else r["source_id"]
-            if neighbor and neighbor != node_id:
-                # Normalize weight to [0, 1] — v5 edges store weights up to 10.0
-                out.append((neighbor, min(w / 10.0, 1.0) if w > 1.0 else w))
+            if not neighbor or neighbor == node_id:
+                continue
+            # Normalize weight to [0, 1] — v5 edges store weights up to 10.0
+            norm_w = min(w / 10.0, 1.0) if w > 1.0 else w
+            ts = r["last_reinforced_at"] or r["created_at"]
+            freshness = _edge_freshness(ts, hl)
+            out.append((neighbor, norm_w, freshness))
         return out

@@ -17,10 +17,10 @@ from datetime import datetime, timezone
 from typing import Callable
 
 try:
-    from multi_repr_store import MultiReprStore, VALID_REPRESENTATIONS
+    from multi_repr_store import MultiReprStore, VALID_REPRESENTATIONS, content_hash
     from validator import ContentValidator
 except ImportError:  # package import fallback
-    from .multi_repr_store import MultiReprStore, VALID_REPRESENTATIONS  # type: ignore[no-redef]
+    from .multi_repr_store import MultiReprStore, VALID_REPRESENTATIONS, content_hash  # type: ignore[no-redef]
     from .validator import ContentValidator  # type: ignore[no-redef]
 
 LOG = lambda msg: sys.stderr.write(f"[repr-queue] {msg}\n")
@@ -144,12 +144,16 @@ class RepresentationsQueue:
                 continue
 
             raw_content = content_row["content"] or ""
+            # Hash the parent content once per drain — recall uses it to
+            # detect drift between the saved view and the current parent.
+            parent_hash = content_hash(raw_content)
             try:
                 # Raw embedding — always generated; serves as fallback
                 raw_emb = embedder(raw_content)
                 if raw_emb:
                     self.store.upsert(
-                        kid, "raw", raw_content, raw_emb, model_name
+                        kid, "raw", raw_content, raw_emb, model_name,
+                        parent_content_hash=parent_hash,
                     )
 
                 # LLM views (summary/keywords/questions/compressed)
@@ -172,7 +176,10 @@ class RepresentationsQueue:
                             continue
                     emb = embedder(text)
                     if emb:
-                        self.store.upsert(kid, name, text, emb, model_name)
+                        self.store.upsert(
+                            kid, name, text, emb, model_name,
+                            parent_content_hash=parent_hash,
+                        )
 
                 self.mark_done(item["id"])
                 stats["processed"] += 1

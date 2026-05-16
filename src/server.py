@@ -2537,13 +2537,16 @@ class Recall:
     }
 
     @staticmethod
-    def _rrf_fuse(tier_rankings, weights, k=60):
+    def _rrf_fuse(tier_rankings, weights, k=60, *, score_weight=None):
         """Reciprocal Rank Fusion across multiple ranked lists.
 
         Args:
             tier_rankings: dict mapping tier name to list of doc IDs (ordered by tier score desc).
             weights: dict mapping tier name to weight multiplier.
             k: RRF smoothing constant (default 60).
+            score_weight: optional callable ``(doc_id, tier_name) -> float`` that
+                returns a *per-tier* multiplier (e.g. staleness decay scoped to
+                that tier). Defaults to 1.0 — identical to legacy behavior.
 
         Returns:
             dict mapping doc_id to fused RRF score.
@@ -2552,7 +2555,15 @@ class Recall:
         for source, ranked_ids in tier_rankings.items():
             w = weights.get(source, 1.0)
             for rank, doc_id in enumerate(ranked_ids):
-                scores[doc_id] = scores.get(doc_id, 0.0) + w * (1.0 / (k + rank + 1))
+                mult = 1.0
+                if score_weight is not None:
+                    try:
+                        mult = float(score_weight(doc_id, source))
+                    except Exception:
+                        mult = 1.0
+                scores[doc_id] = scores.get(doc_id, 0.0) + (
+                    w * mult * (1.0 / (k + rank + 1))
+                )
         return scores
 
     def _should_use_advanced_rag(self):
@@ -2846,7 +2857,7 @@ class Recall:
         # ── Tier 2c: Multi-representation search (summary/keywords/questions) ──
         # Safe no-op when knowledge_representations is empty or no embedder.
         try:
-            from multi_repr_search import has_representations, search as _repr_search
+            from multi_repr_search import has_representations, search_with_winners
 
             if can_embed and has_representations(self.s.db):
                 # Reuse query embedding if already computed above; else compute now
@@ -2856,18 +2867,23 @@ class Recall:
                     q_emb_list = self.s.embed([query])
                     q_emb = q_emb_list[0] if q_emb_list else None
                 if q_emb:
-                    repr_hits = _repr_search(
+                    repr_hits, repr_winners = search_with_winners(
                         self.s.db, q_emb, project=project, n_candidates=100, top_n=limit * 3
                     )
                     if repr_hits:
                         repr_tier: list[tuple[int, float]] = []
                         for kid, score in repr_hits:
                             repr_tier.append((kid, score))
+                            winner = repr_winners.get(kid)
                             if kid in results:
                                 # RRF scores are small (~0.016) — scale to align with cosine tiers
                                 results[kid]["score"] += score * 20.0
                                 if "multi_repr" not in results[kid]["via"]:
                                     results[kid]["via"].append("multi_repr")
+                                # Remember the freshest repr-type winner across passes
+                                prev = results[kid].get("matched_repr")
+                                if winner and not prev:
+                                    results[kid]["matched_repr"] = winner
                             else:
                                 rec = self.s.q1("SELECT * FROM knowledge WHERE id=?", (kid,))
                                 if rec:
@@ -2875,6 +2891,7 @@ class Recall:
                                         "r": rec,
                                         "score": score * 20.0,
                                         "via": ["multi_repr"],
+                                        "matched_repr": winner,
                                     }
                         repr_tier.sort(key=lambda x: x[1], reverse=True)
                         tier_rankings["multi_repr"] = [doc_id for doc_id, _ in repr_tier]
@@ -3003,10 +3020,116 @@ class Recall:
             except Exception as e:
                 LOG(f"episode tier error: {e}")
 
+        # ── Noise filter: drop records carrying excluded tags ──
+        # Operational tags like ``recovery`` or ``auto-extract`` mark records
+        # that hold value for forensics but inflate recall noise. They remain
+        # accessible via the dedicated ``memory_search_by_tag`` path.
+        try:
+            from config import get_recall_excluded_tags
+            _ex = get_recall_excluded_tags()
+        except Exception:
+            _ex = tuple()
+        if _ex:
+            def _has_excluded(rec_tags) -> bool:
+                if not rec_tags:
+                    return False
+                if isinstance(rec_tags, str):
+                    raw = rec_tags
+                else:
+                    try:
+                        raw = json.dumps(rec_tags)
+                    except Exception:
+                        raw = str(rec_tags)
+                low = raw.lower()
+                return any(t.lower() in low for t in _ex)
+
+            dropped: set[int] = set()
+            for kid, item in list(results.items()):
+                if _has_excluded(item["r"].get("tags", "")):
+                    dropped.add(kid)
+                    results.pop(kid, None)
+            if dropped:
+                for tier_name, ranked_ids in list(tier_rankings.items()):
+                    tier_rankings[tier_name] = [
+                        d for d in ranked_ids if d not in dropped
+                    ]
+
+        # ── Drift detection (Wave B — B1) ──
+        # When a hit came through the multi_repr tier, the matched view
+        # (summary/keywords/questions/compressed) may have been generated
+        # against an older version of the parent content. We compare the
+        # stored ``parent_content_hash`` with sha256 of the *current* parent
+        # content; mismatch → score penalty AND re-enqueue for regeneration.
+        # Records that fall through this check are surfaced with a clean
+        # ``"drift"`` flag in the result so the dashboard can warn.
+        try:
+            from multi_repr_store import content_hash as _content_hash
+            drift_candidates = [
+                (kid, item)
+                for kid, item in results.items()
+                if "multi_repr" in (item.get("via") or [])
+                and item.get("matched_repr")
+            ]
+            if drift_candidates:
+                kids = [c[0] for c in drift_candidates]
+                ph = ",".join("?" * len(kids))
+                rows = self.s.db.execute(
+                    f"SELECT knowledge_id, representation, parent_content_hash "
+                    f"FROM knowledge_representations "
+                    f"WHERE knowledge_id IN ({ph})",
+                    kids,
+                ).fetchall()
+                stored_hash = {
+                    (r["knowledge_id"], r["representation"]): r["parent_content_hash"]
+                    for r in rows
+                }
+                drifted: list[int] = []
+                for kid, item in drift_candidates:
+                    rep = item["matched_repr"]
+                    stored = stored_hash.get((kid, rep))
+                    if not stored:
+                        # Legacy view (no hash yet) — leave alone.
+                        continue
+                    actual = _content_hash(item["r"].get("content", "") or "")
+                    if stored != actual:
+                        item["drift"] = True
+                        item["score"] *= 0.3
+                        drifted.append(kid)
+                if drifted:
+                    # Asynchronously re-enqueue for regeneration so the next
+                    # recall sees a fresh summary. Best-effort: silent on
+                    # error (queue table may not exist on legacy DB).
+                    try:
+                        from representations_queue import RepresentationsQueue
+                        rq = RepresentationsQueue(self.s.db)
+                        for kid in drifted:
+                            rq.enqueue(kid)
+                    except Exception as _e:
+                        LOG(f"drift re-enqueue failed: {_e}")
+        except Exception as e:
+            LOG(f"drift detection skipped: {e}")
+
         # ── Apply decay scoring ──
+        # Per-tier half-life: hits via multi_repr decay according to the
+        # specific view (summary/keywords/questions/compressed) that won
+        # cosine; other tiers (fts/semantic/fuzzy/graph/episode) use the
+        # parent half-life. LLM-generated summaries age fastest.
+        try:
+            from config import get_repr_half_life_days, get_parent_half_life_days
+        except Exception:
+            get_repr_half_life_days = lambda _t: DECAY_HALF_LIFE  # type: ignore[assignment]
+            get_parent_half_life_days = lambda: DECAY_HALF_LIFE   # type: ignore[assignment]
+
         for item in results.values():
             lc = item["r"].get("last_confirmed", "")
-            decay = Store._decay_factor(lc, DECAY_HALF_LIFE)
+            via = item.get("via") or []
+            if "multi_repr" in via and item.get("matched_repr"):
+                hl = get_repr_half_life_days(item["matched_repr"])
+                item["half_life_days"] = hl
+            else:
+                hl = get_parent_half_life_days()
+                item["half_life_days"] = hl
+            decay = Store._decay_factor(lc, hl)
             recall_boost = min(0.3, (item["r"].get("recall_count", 0) or 0) * 0.05)
             item["decay_factor"] = decay + recall_boost
             # v10 — importance boost (defaults to neutral 1.0 for legacy rows
@@ -3014,18 +3137,42 @@ class Recall:
             imp = (item["r"].get("importance") or "medium").lower()
             item["importance_boost"] = _IMPORTANCE_BOOST.get(imp, 1.0)
 
+        # B2 — per-tier decay closure for RRF.
+        # For each (doc, tier) contribution we apply the half-life appropriate
+        # to that tier: multi_repr uses the per-view half-life (summary fastest,
+        # raw slowest), every other tier uses the parent half-life. Recall_count
+        # boost still applies. Importance is *outside* the closure — multiplied
+        # against the final fused score so it scales the document as a whole.
+        def _tier_score_weight(doc_id, tier_name):
+            item = results.get(doc_id)
+            if not item:
+                return 1.0
+            lc = item["r"].get("last_confirmed", "")
+            if tier_name == "multi_repr" and item.get("matched_repr"):
+                hl = get_repr_half_life_days(item["matched_repr"])
+            else:
+                hl = get_parent_half_life_days()
+            decay = Store._decay_factor(lc, hl)
+            recall_boost = min(0.3, (item["r"].get("recall_count", 0) or 0) * 0.05)
+            return decay + recall_boost
+
         # ── Score fusion: RRF or legacy ──
         if use_rrf and tier_rankings:
-            # Compute RRF scores across all tiers
-            rrf_scores = self._rrf_fuse(tier_rankings, self.RRF_WEIGHTS, self.RRF_K)
+            # Compute RRF scores with per-tier decay folded in
+            rrf_scores = self._rrf_fuse(
+                tier_rankings, self.RRF_WEIGHTS, self.RRF_K,
+                score_weight=_tier_score_weight,
+            )
 
-            # Apply decay + importance to RRF scores and store both scores
+            # Apply importance boost on the fused score (per-tier decay is
+            # already inside rrf_scores). Drift penalty already lowered
+            # `item["score"]` upstream — keep it in sync for additive paths.
             for doc_id, rrf_sc in rrf_scores.items():
                 if doc_id in results:
                     item = results[doc_id]
-                    multiplier = item["decay_factor"] * item["importance_boost"]
-                    item["rrf_score"] = rrf_sc * multiplier
-                    item["score"] *= multiplier
+                    boost = item["importance_boost"]
+                    item["rrf_score"] = rrf_sc * boost
+                    item["score"] *= item["decay_factor"] * boost
 
             # Documents not in any tier ranking (shouldn't happen, but safety net)
             for doc_id, item in results.items():
@@ -5197,6 +5344,16 @@ async def _do(name, a):
             (new_id, old["id"]))
         store._delete_embedding(old["id"])
         store.db.commit()
+        # B1 — content changed, so any cached representations on the OLD
+        # record are now drift-stale; the NEW record gets its own views
+        # generated by the async repr queue. Without this enqueue the new
+        # record relies on the raw-only path and recall loses the summary/
+        # keywords/questions boost until the next batch sweep picks it up.
+        try:
+            from representations_queue import RepresentationsQueue
+            RepresentationsQueue(store.db).enqueue(new_id)
+        except Exception as _e:
+            LOG(f"memory_update: repr-queue enqueue failed for new_id={new_id}: {_e}")
         if store.chroma and not store._check_binary_search():
             try:
                 store.chroma.delete(ids=[str(old["id"])])
