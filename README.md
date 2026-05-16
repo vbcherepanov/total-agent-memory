@@ -4,8 +4,8 @@
 > Persistent, local memory for AI coding agents: Claude Code, Codex CLI, Cursor, any MCP client.
 > Temporal knowledge graph · procedural memory · AST codebase ingest · cross-project analogy · 3D WebGL visualization.
 
-[![Version](https://img.shields.io/badge/version-11.1.0-8ad.svg)]()
-[![Tests](https://img.shields.io/badge/tests-1200%2B%20passing-4a9.svg)]()
+[![Version](https://img.shields.io/badge/version-12.0.0-8ad.svg)](https://pypi.org/project/total-agent-memory/)
+[![Tests](https://img.shields.io/badge/tests-1769%20passing-4a9.svg)]()
 [![IDEs](https://img.shields.io/badge/IDEs-9%20supported-4a9.svg)]()
 [![LongMemEval R@5](https://img.shields.io/badge/LongMemEval%20R@5-96.2%25-4a9.svg)](evals/longmemeval-2026-04-17.json)
 [![LoCoMo Acc](https://img.shields.io/badge/LoCoMo%20Acc-0.596-4a9.svg)](benchmarks/results/)
@@ -14,10 +14,58 @@
 [![Local-First](https://img.shields.io/badge/100%25-local-4a9.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-fa4.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/protocol-MCP-blue.svg)](https://modelcontextprotocol.io)
-[![npm](https://img.shields.io/badge/npm-%40vbch%2Ftotal--agent--memory--client-cb3837.svg)](https://www.npmjs.com/package/@vbch/total-agent-memory-client)
+[![npm](https://img.shields.io/badge/npm-total--agent--memory-cb3837.svg)](https://www.npmjs.com/package/total-agent-memory)
+[![PyPI](https://img.shields.io/badge/PyPI-total--agent--memory-3776AB.svg)](https://pypi.org/project/total-agent-memory/)
+[![Docker GHCR](https://img.shields.io/badge/docker-ghcr.io-2496ED.svg)](https://github.com/vbcherepanov/total-agent-memory/pkgs/container/total-agent-memory)
+[![Homebrew](https://img.shields.io/badge/brew-vbcherepanov%2Ftap-FBB040.svg)](https://github.com/vbcherepanov/homebrew-tap)
 [![Donate](https://img.shields.io/badge/PayPal-Donate-00457C.svg?logo=paypal&logoColor=white)](https://PayPal.Me/vbcherepanov)
 
 **Why this, not mem0 / Letta / Zep / Supermemory / Cognee?** → [docs/vs-competitors.md](docs/vs-competitors.md)
+
+---
+
+## v12.0.0 — rebrand to `total-agent-memory` (2026-05-16)
+
+The project was renamed from `claude-total-memory` to **`total-agent-memory`** to
+reflect that it works with **every MCP client**, not just Claude Code (Cursor,
+Codex CLI, Cline, Continue, Aider, Windsurf, Gemini CLI, OpenCode — all
+covered).
+
+**Nothing breaks.** The old PyPI package (`claude-total-memory==11.3.0`) is now a
+deprecation shim that auto-resolves to `total-agent-memory>=12.0.0`. Legacy
+imports, CLI binaries, env vars, and the `~/.claude-memory/` directory keep
+working through automatic migration:
+
+| Old | New | Backward-compat |
+|---|---|---|
+| `pip install claude-total-memory` | `pip install total-agent-memory` | old name still works (shim + warning) |
+| `from claude_total_memory import …` | `from total_agent_memory import …` | old import still works (sys.modules alias + warning) |
+| `claude-total-memory` CLI | `total-agent-memory` (alias `tam`) | old CLI still ships in v12 wheel |
+| `CLAUDE_MEMORY_DIR` env | `TAM_MEMORY_DIR` env | old env still respected (deprecation warning) |
+| `~/.claude-memory/` dir | `~/.tam/` dir | auto-migrated on first run; `~/.claude-memory` becomes a symlink to `~/.tam/` so pinned scripts keep working |
+
+Six install paths — pick one:
+
+```bash
+npx -y total-agent-memory connect claude-code            # Node, zero-install
+uvx total-agent-memory                                    # Python via uv (fast)
+pipx install total-agent-memory                           # Python via pipx (isolated)
+brew install vbcherepanov/tap/total-memory                # Homebrew (macOS / Linuxbrew)
+docker run -p 37737:37737 -v ~/.tam:/data \
+  ghcr.io/vbcherepanov/total-agent-memory:12.0.0          # Docker (multi-arch amd64+arm64)
+git clone https://github.com/vbcherepanov/total-agent-memory \
+  ~/total-agent-memory && cd ~/total-agent-memory && ./install.sh   # manual
+```
+
+The `npx` path also wires the MCP entry into the IDE you pass to `connect <ide>`:
+`claude-code`, `codex`, `cursor`, `cline`, `continue`, `aider`, `windsurf`,
+`gemini-cli`, `opencode`.
+
+**Project URLs:** [totalmemory.dev](https://totalmemory.dev) · [PyPI](https://pypi.org/project/total-agent-memory/) · [npm](https://www.npmjs.com/package/total-agent-memory) · [Docker GHCR](https://ghcr.io/vbcherepanov/total-agent-memory) · [GitHub Release](https://github.com/vbcherepanov/total-agent-memory/releases/tag/v12.0.0)
+
+Full migration notes (Docker volume names kept for backward-compat, brew formula
+changes, etc.) live in [`CHANGELOG.md`](CHANGELOG.md). The historical sections
+below (v11.1, v11.0, …) are preserved for reference.
 
 ---
 
@@ -422,7 +470,30 @@ Full side-by-side with pricing, latency, accuracy, "when to pick each" → [docs
 
 ## Install
 
-Two paths. Same 60+ tools, same dashboard, different deployment shapes.
+### Quickstart — pick one (v12.0.0)
+
+| Channel | Command | What it does |
+|---|---|---|
+| **npx** (Node) | `npx -y total-agent-memory connect claude-code` | Zero-install. Bootstraps a Python venv in `~/.tam/.venv` via uv (or python3 fallback), pulls the PyPI server, wires the MCP entry into your IDE. Replace `claude-code` with `codex` / `cursor` / `cline` / `continue` / `aider` / `windsurf` / `gemini-cli` / `opencode`. |
+| **uvx** (Python via uv) | `uvx total-agent-memory` | One-off run with no install. Best for trying without commitment. |
+| **pipx** (Python isolated) | `pipx install total-agent-memory` | Installs the `total-agent-memory`, `tam`, `tam-lookup`, `lookup-memory` binaries on PATH in an isolated venv. |
+| **brew** (macOS / Linuxbrew) | `brew install vbcherepanov/tap/total-memory` | Bottle-style install with `tam` and legacy `claude-total-memory` symlinks. |
+| **Docker** (multi-arch) | `docker run -p 37737:37737 -v ~/.tam:/data ghcr.io/vbcherepanov/total-agent-memory:12.0.0` | Containerized (linux/amd64 + linux/arm64). Dashboard on `:37737`. |
+| **Manual clone** | `git clone https://github.com/vbcherepanov/total-agent-memory ~/total-agent-memory && cd ~/total-agent-memory && ./install.sh --ide claude-code` | Full control. Lets you hack on the server, run benchmarks, and pick which background services to enable. Detailed walkthrough below. |
+
+All six channels land at the same MCP server. The `npx` and `./install.sh` paths
+additionally configure IDE-specific MCP entries and hooks. Other channels start
+the server bare — you wire the IDE afterwards (see [`docs/installation.md`](docs/installation.md)).
+
+**Upgrade from v11.x?** Whatever channel you pick will auto-migrate
+`~/.claude-memory/` → `~/.tam/` on first run and keep a symlink for backward
+compat. No manual data move required.
+
+---
+
+### Detailed paths (manual / Docker / per-IDE)
+
+Two manual paths. Same 60+ tools, same dashboard, different deployment shapes.
 
 ### IDE matrix (v10.5)
 
