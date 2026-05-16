@@ -10,7 +10,7 @@ Usage:
 
 Environment:
     DASHBOARD_PORT      — HTTP port (default: 37737)
-    CLAUDE_MEMORY_DIR   — Path to memory storage (default: ~/.claude-memory)
+    TAM_MEMORY_DIR        — Path to memory storage (default: ~/.tam). Legacy CLAUDE_MEMORY_DIR still supported with deprecation warning.
 """
 
 import json
@@ -26,8 +26,11 @@ from socketserver import ThreadingMixIn
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import memory_dir
+
 DASHBOARD_PORT = int(os.environ.get("DASHBOARD_PORT", "37737"))
-MEMORY_DIR = Path(os.environ.get("CLAUDE_MEMORY_DIR", os.path.expanduser("~/.claude-memory")))
+MEMORY_DIR = memory_dir()
 DB_PATH = MEMORY_DIR / "memory.db"
 
 

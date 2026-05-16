@@ -57,6 +57,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from paths import memory_dir
+
 try:
     # Prefer the central config helpers so env semantics stay consistent.
     from config import (
@@ -280,9 +282,7 @@ class L2EmbeddingCache:
           writer never breaks the recall path).
     """
 
-    _DEFAULT_DB_PATH = Path(
-        os.environ.get("CLAUDE_MEMORY_DIR", os.path.expanduser("~/.claude-memory"))
-    ) / "memory.db"
+    _DEFAULT_DB_PATH = memory_dir() / "memory.db"
 
     def __init__(
         self,

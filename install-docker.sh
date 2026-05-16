@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Claude Total Memory — Docker Installer
+# total-agent-memory — Docker Installer
 #
 # Registers the Dockerized MCP server in Claude Code's settings and
 # wires up hooks in Docker-exec mode.
@@ -18,7 +18,7 @@ set -e
 
 echo ""
 echo "======================================================="
-echo "  Claude Total Memory v6.0 — Docker Installer"
+echo "  total-agent-memory v12.0 — Docker Installer"
 echo "======================================================="
 echo ""
 
@@ -110,8 +110,10 @@ HOOK_STOP="$INSTALL_DIR/hooks/on-stop.sh"
 HOOK_BASH="$INSTALL_DIR/hooks/memory-trigger.sh"
 HOOK_WRITE="$INSTALL_DIR/hooks/auto-capture.sh"
 
-# Hooks read CLAUDE_MEMORY_DOCKER=1 at runtime and switch to `docker exec`.
+# Hooks read TAM_DOCKER=1 at runtime and switch to `docker exec`.
 # We wrap each via a small launcher that exports the env var.
+# Legacy CLAUDE_MEMORY_DOCKER / CLAUDE_MEMORY_CONTAINER also exported for
+# hooks that haven't been updated yet (see hooks/lib/common.sh).
 LAUNCHER_DIR="$INSTALL_DIR/hooks/_docker-launchers"
 mkdir -p "$LAUNCHER_DIR"
 for src in "$HOOK_SESSION" "$HOOK_SESSION_END" "$HOOK_STOP" "$HOOK_BASH" "$HOOK_WRITE"; do
@@ -119,8 +121,11 @@ for src in "$HOOK_SESSION" "$HOOK_SESSION_END" "$HOOK_STOP" "$HOOK_BASH" "$HOOK_
     dest="$LAUNCHER_DIR/$name"
     cat > "$dest" <<LAUNCHER
 #!/usr/bin/env bash
-export CLAUDE_MEMORY_DOCKER=1
-export CLAUDE_MEMORY_CONTAINER="\${CLAUDE_MEMORY_CONTAINER:-claude-memory-mcp}"
+export TAM_DOCKER=1
+export TAM_CONTAINER="\${TAM_CONTAINER:-tam-mcp}"
+# Legacy aliases (kept until all hook scripts switch over)
+export CLAUDE_MEMORY_DOCKER="\${CLAUDE_MEMORY_DOCKER:-\$TAM_DOCKER}"
+export CLAUDE_MEMORY_CONTAINER="\${CLAUDE_MEMORY_CONTAINER:-\$TAM_CONTAINER}"
 exec "$src" "\$@"
 LAUNCHER
     chmod +x "$dest"

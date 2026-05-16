@@ -7,14 +7,18 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from paths import memory_dir
+
 # Paths
-MEMORY_DIR = Path.home() / ".claude-memory"
+MEMORY_DIR = memory_dir()
 DB_PATH = MEMORY_DIR / "memory.db"
 LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 CONFIG_DIR = MEMORY_DIR

@@ -23,10 +23,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from memory_systems.episode_store import EpisodeStore
 from memory_systems.self_model import SelfModel
 from memory_systems.signals import SignalExtractor
+from paths import memory_dir
 
-MEMORY_DIR = Path(
-    os.environ.get("CLAUDE_MEMORY_DIR", os.path.expanduser("~/.claude-memory"))
-)
+MEMORY_DIR = memory_dir()
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 LOG = lambda msg: sys.stderr.write(f"[auto-episode] {msg}\n")
 

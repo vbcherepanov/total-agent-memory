@@ -9,8 +9,8 @@ Two-level auto-save:
 Usage:
     python3 extract_transcript.py --transcript /path/to/transcript.jsonl \
                                   --session-id <uuid> \
-                                  --output-dir ~/.claude-memory/extract-queue \
-                                  --db ~/.claude-memory/memory.db
+                                  --output-dir ~/.tam/extract-queue \
+                                  --db ~/.tam/memory.db
 """
 
 import argparse
@@ -21,6 +21,9 @@ import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import memory_dir
 
 MAX_OUTPUT_KB = 200
 MAX_USER_TEXT = 2000
@@ -375,7 +378,7 @@ def main():
     parser.add_argument("--transcript", required=True, help="Path to JSONL transcript file")
     parser.add_argument("--session-id", required=True, help="Session UUID")
     parser.add_argument("--output-dir", required=True, help="Output directory for extraction archive")
-    parser.add_argument("--db", default=os.path.expanduser("~/.claude-memory/memory.db"),
+    parser.add_argument("--db", default=str(memory_dir() / "memory.db"),
                         help="Path to memory.db for auto-save")
     args = parser.parse_args()
 

@@ -16,7 +16,10 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-MEMORY_DIR = os.environ.get("CLAUDE_MEMORY_DIR", os.path.expanduser("~/.claude-memory"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import memory_dir
+
+MEMORY_DIR = str(memory_dir())
 DB_PATH = os.path.join(MEMORY_DIR, "memory.db")
 
 

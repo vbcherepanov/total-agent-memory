@@ -36,6 +36,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from paths import memory_dir
+
 LOG = lambda msg: sys.stderr.write(f"[enrich-worker] {msg}\n")
 
 
@@ -382,9 +384,7 @@ def _run_wiki_refresh(db, task: EnrichmentTask, store=None) -> None:
     except Exception as e:
         LOG(f"project_wiki import failed: {e}")
         return
-    output_dir = os.environ.get(
-        "CLAUDE_MEMORY_DIR", os.path.expanduser("~/.claude-memory")
-    )
+    output_dir = str(memory_dir())
     _pw.maybe_auto_refresh(
         db, project=task.project, save_count=task.knowledge_id,
         output_dir=os.path.join(output_dir, "wikis"),

@@ -19,6 +19,8 @@ HERE = Path(__file__).resolve().parent
 SRC = HERE.parent
 sys.path.insert(0, str(SRC))
 
+from paths import memory_dir as _resolve_memory_dir
+
 
 def backfill(db: sqlite3.Connection, project: str | None = None) -> dict[str, int]:
     """Enqueue every active knowledge record into all v6 queues."""
@@ -53,7 +55,7 @@ def backfill(db: sqlite3.Connection, project: str | None = None) -> dict[str, in
 
 
 def main() -> None:
-    memory_dir = Path(os.environ.get("MEMORY_DIR", Path.home() / ".claude-memory"))
+    memory_dir = _resolve_memory_dir()
     db_path = memory_dir / "memory.db"
     if not db_path.exists():
         sys.exit(f"memory.db not found at {db_path}")

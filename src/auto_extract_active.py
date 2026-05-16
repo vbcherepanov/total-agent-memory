@@ -20,12 +20,14 @@ from pathlib import Path
 # Import from extract_transcript.py (same directory)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from extract_transcript import extract, auto_save_knowledge, sanitize
+from paths import memory_dir
 
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
-MEMORY_DB = Path.home() / ".claude-memory" / "memory.db"
-MARKER_DIR = Path.home() / ".claude-memory" / "extract-markers"
-EXTRACT_QUEUE = Path.home() / ".claude-memory" / "extract-queue"
-LOG_FILE = Path.home() / ".claude-memory" / "auto-extract.log"
+_MEM_DIR = memory_dir()
+MEMORY_DB = _MEM_DIR / "memory.db"
+MARKER_DIR = _MEM_DIR / "extract-markers"
+EXTRACT_QUEUE = _MEM_DIR / "extract-queue"
+LOG_FILE = _MEM_DIR / "auto-extract.log"
 
 # Only process transcripts modified in the last 10 minutes
 MAX_AGE_SECONDS = 600

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Multi-stage build for Claude Total Memory
+# Multi-stage build for total-agent-memory
 # Produces a single image used for both MCP server (stdio) and Dashboard (HTTP)
 
 FROM python:3.12-slim AS builder
@@ -23,7 +23,7 @@ FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    CLAUDE_MEMORY_DIR=/data \
+    TAM_MEMORY_DIR=/data \
     EMBEDDING_MODEL=all-MiniLM-L6-v2 \
     DASHBOARD_PORT=37737 \
     DASHBOARD_BIND=0.0.0.0 \

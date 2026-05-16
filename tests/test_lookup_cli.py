@@ -66,7 +66,7 @@ def _make_db(tmp_path: Path, *, with_fts: bool = True) -> Path:
 
 
 def test_db_path_resolution_uses_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("CLAUDE_MEMORY_DIR", str(tmp_path))
+    monkeypatch.setenv("TAM_MEMORY_DIR", str(tmp_path))
     p = lookup._resolve_db_path()
     assert p == tmp_path / "memory.db"
 

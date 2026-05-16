@@ -1,4 +1,4 @@
-# Claude Total Memory — Full Docker Stack
+# total-agent-memory — Full Docker Stack
 #
 # Services:
 #   ollama       — local LLM runtime (qwen2.5-coder:7b + nomic-embed-text)
@@ -15,9 +15,13 @@
 #   docker compose down -v        # wipe everything
 #
 # After `up -d`: run `bash install-docker.sh` once to register the MCP in Claude Code.
+#
+# Volume names below are pinned to ``claude-memory-data`` / ``claude-memory-ollama-models``
+# for backward-compat — renaming would orphan existing user data. Will rename
+# in v13 after a migration release with a built-in `docker volume rename` step.
 
 x-memory-env: &memory-env
-  CLAUDE_MEMORY_DIR: /data
+  TAM_MEMORY_DIR: /data
   EMBEDDING_MODEL: all-MiniLM-L6-v2
   OLLAMA_URL: http://ollama:11434
   MEMORY_LLM_MODEL: ${MEMORY_LLM_MODEL:-qwen2.5-coder:7b}
@@ -31,7 +35,7 @@ services:
   # ─────────────────────────────────────────────
   ollama:
     image: ollama/ollama:latest
-    container_name: claude-memory-ollama
+    container_name: tam-ollama
     restart: unless-stopped
     volumes:
       - ollama-models:/root/.ollama
@@ -58,7 +62,7 @@ services:
   # ─────────────────────────────────────────────
   model-init:
     image: ollama/ollama:latest
-    container_name: claude-memory-model-init
+    container_name: tam-model-init
     depends_on:
       ollama:
         condition: service_healthy
@@ -81,8 +85,8 @@ services:
   # ─────────────────────────────────────────────
   mcp:
     build: .
-    image: claude-total-memory:latest
-    container_name: claude-memory-mcp
+    image: total-agent-memory:latest
+    container_name: tam-mcp
     restart: unless-stopped
     depends_on:
       ollama:
@@ -116,8 +120,8 @@ services:
   # Dashboard
   # ─────────────────────────────────────────────
   dashboard:
-    image: claude-total-memory:latest
-    container_name: claude-memory-dashboard
+    image: total-agent-memory:latest
+    container_name: tam-dashboard
     restart: unless-stopped
     depends_on:
       mcp:
@@ -143,8 +147,8 @@ services:
   # Watches /data/.reflect-pending and drains reflection queues
   # ─────────────────────────────────────────────
   reflection:
-    image: claude-total-memory:latest
-    container_name: claude-memory-reflection
+    image: total-agent-memory:latest
+    container_name: tam-reflection
     restart: unless-stopped
     depends_on:
       mcp:
@@ -163,7 +167,7 @@ services:
   # ─────────────────────────────────────────────
   scheduler:
     image: mcuadros/ofelia:latest
-    container_name: claude-memory-scheduler
+    container_name: tam-scheduler
     restart: unless-stopped
     depends_on:
       mcp:

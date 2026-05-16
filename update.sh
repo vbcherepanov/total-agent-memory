@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Auto-update for claude-total-memory.
+# Auto-update for total-agent-memory.
 #
 # Stages (skip-friendly — every stage tolerates absence of prerequisites):
 #   1. Pre-flight  — verify dirs, disk space, snapshot DB
@@ -29,8 +29,21 @@ set -euo pipefail
 ROOT="${ROOT:-$(cd "$(dirname "$0")" && pwd)}"
 PY="${PY:-$ROOT/.venv/bin/python}"
 PIP="$ROOT/.venv/bin/pip"
-DB="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}/memory.db"
-BACKUP_DIR="$HOME/.claude-memory/backups"
+# Resolution: TAM_MEMORY_DIR > legacy CLAUDE_MEMORY_DIR > ~/.tam > legacy ~/.claude-memory > fresh ~/.tam
+if [ -n "${TAM_MEMORY_DIR:-}" ]; then
+  MEMORY_DIR="$TAM_MEMORY_DIR"
+elif [ -n "${CLAUDE_MEMORY_DIR:-}" ]; then
+  MEMORY_DIR="$CLAUDE_MEMORY_DIR"
+  echo "  WARN: CLAUDE_MEMORY_DIR is deprecated, please switch to TAM_MEMORY_DIR" >&2
+elif [ -d "$HOME/.tam" ]; then
+  MEMORY_DIR="$HOME/.tam"
+elif [ -d "$HOME/.claude-memory" ]; then
+  MEMORY_DIR="$HOME/.claude-memory"
+else
+  MEMORY_DIR="$HOME/.tam"
+fi
+DB="$MEMORY_DIR/memory.db"
+BACKUP_DIR="$MEMORY_DIR/backups"
 LOG="/tmp/claude-memory-update.log"
 DRY_RUN=false
 SKIP_TESTS=false
@@ -151,7 +164,7 @@ elif [[ -n "${UPDATE_URL:-}" ]]; then
     inner=$(ls -d "$tmpdir"/*/ 2>/dev/null | head -1)
     [[ -z "$inner" ]] && { rm -rf "$tmpdir"; fail "no top-level dir in tarball"; }
     say "  rsync into $ROOT (preserving .venv)"
-    /usr/bin/rsync -a --exclude '.venv/' --exclude '.claude-memory/' \
+    /usr/bin/rsync -a --exclude '.venv/' --exclude '.claude-memory/' --exclude '.tam/' \
       --exclude '__pycache__/' --exclude '.git/' \
       "$inner" "$ROOT/"
     rm -rf "$tmpdir"
@@ -191,11 +204,12 @@ if [[ -f "${req_files[0]}" ]]; then
   fi
 
   # v9 — always re-run editable install so [project.scripts] entry-points
-  # (ctm-lookup, lookup-memory, claude-total-memory) stay on PATH after src
-  # changes. `pip install -e .` is idempotent and fast (just rewrites the
+  # (tam, tam-lookup, lookup-memory, total-agent-memory, plus legacy
+  # claude-total-memory/ctm-lookup) stay on PATH after src changes.
+  # `pip install -e .` is idempotent and fast (just rewrites the
   # console_scripts shims when pyproject.toml is unchanged).
   if $DRY_RUN; then
-    say "  would refresh editable install (ctm-lookup / lookup-memory entry-points)"
+    say "  would refresh editable install (tam / tam-lookup / lookup-memory entry-points)"
   else
     "$PIP" install -q -e "$ROOT" 2>&1 | tail -1 || say "  WARN: editable install failed; CLI entry-points may be stale"
   fi
@@ -285,7 +299,7 @@ if [[ -n "$old_sha$new_sha" || "$NEW_VERSION" != "$CURRENT_VERSION" ]]; then
   echo "  In Claude Code:  /mcp  → memory → Reconnect"
   echo "════════════════════════════════════════════════════════════════"
   # macOS notification
-  /usr/bin/osascript -e 'display notification "MCP needs /mcp reconnect" with title "claude-total-memory updated" sound name "Glass"' 2>/dev/null || true
+  /usr/bin/osascript -e 'display notification "MCP needs /mcp reconnect" with title "total-agent-memory updated" sound name "Glass"' 2>/dev/null || true
 else
   say "  no source changes — MCP restart not needed"
 fi

@@ -464,14 +464,14 @@ flows: **[docs/installation.md](docs/installation.md)**.
 ### Path A — native (macOS / Linux / WSL2)
 
 ```bash
-git clone https://github.com/vbcherepanov/claude-total-memory.git ~/claude-memory-server
-cd ~/claude-memory-server
+git clone https://github.com/vbcherepanov/total-agent-memory.git ~/total-agent-memory
+cd ~/total-agent-memory
 bash install.sh --ide claude-code   # or: cursor | gemini-cli | opencode | codex
 ```
 
 The installer:
 
-1. Clones + creates `~/claude-memory-server/.venv/`
+1. Clones + creates `~/total-agent-memory/.venv/`
 2. Installs deps from `requirements.txt` and `requirements-dev.txt`
 3. Pre-downloads the FastEmbed multilingual MiniLM model
 4. Registers the MCP server via `claude mcp add-json memory ...` (stored in `~/.claude.json`, the canonical store Claude Code actually reads)
@@ -488,8 +488,8 @@ Restart Claude Code → `/mcp` → `memory` should show **Connected** with 60+ t
 ### Path A — native (Windows 10/11)
 
 ```powershell
-git clone https://github.com/vbcherepanov/claude-total-memory.git $HOME\claude-memory-server
-cd $HOME\claude-memory-server
+git clone https://github.com/vbcherepanov/total-agent-memory.git $HOME\total-agent-memory
+cd $HOME\total-agent-memory
 powershell -ExecutionPolicy Bypass -File install.ps1 -Ide claude-code
 ```
 
@@ -501,11 +501,11 @@ Same 9 steps as Unix, but:
   - `total-agent-memory-reflection` — every 5 min (no native FileSystemWatcher equivalent)
   - `total-agent-memory-orphan-backfill` — daily 00:00 + 6h repetition
   - `total-agent-memory-check-updates` — weekly Mon 09:00
-  - `ClaudeTotalMemoryDashboard` — AtLogon
+  - `TotalAgentMemoryDashboard` — AtLogon
 
 ### Uninstall
 
-All installers preserve `~/.claude-memory/memory.db` and your config files; only services + hook registrations are removed.
+All installers preserve `~/.tam/memory.db` (legacy installs: `~/.claude-memory/memory.db`) and your config files; only services + hook registrations are removed.
 
 ```bash
 ./install.sh --uninstall          # macOS/Linux/WSL2 — removes LaunchAgents OR systemd units
@@ -526,8 +526,8 @@ Exit code 0 = all green, 1 = something broken.
 ### Path B — Docker (everything containerized, cross-platform)
 
 ```bash
-git clone https://github.com/vbcherepanov/claude-total-memory.git
-cd claude-total-memory
+git clone https://github.com/vbcherepanov/total-agent-memory.git
+cd total-agent-memory
 bash install-docker.sh --with-compose
 ```
 
@@ -621,14 +621,15 @@ Two equivalent commands ship with the package (registered as `[project.scripts]`
 
 ```bash
 lookup-memory "Caroline researched"          # human-readable bullets
-ctm-lookup "Caroline researched"             # alias
+tam-lookup "Caroline researched"             # short canonical alias
+ctm-lookup "Caroline researched"             # legacy alias (v11.x and earlier)
 
 lookup-memory --project myproj --limit 5 "auth flow"
 lookup-memory --type solution --tag reusable "fix bug"
 lookup-memory --json "claude code hooks"     # structured stdout for piping
 ```
 
-**How it works:** opens the same `$CLAUDE_MEMORY_DIR/memory.db` the running MCP server uses → BM25 ranking via FTS5 → falls back to LIKE on older DBs. **Zero deps beyond the package.** No Ollama, no rag_chat.py, no ChromaDB required for the CLI path. Works on macOS, Linux, Windows.
+**How it works:** opens the same `$TAM_MEMORY_DIR/memory.db` (legacy: `$CLAUDE_MEMORY_DIR/memory.db`) the running MCP server uses → BM25 ranking via FTS5 → falls back to LIKE on older DBs. **Zero deps beyond the package.** No Ollama, no rag_chat.py, no ChromaDB required for the CLI path. Works on macOS, Linux, Windows.
 
 ```text
 $ lookup-memory --project locomo_0 --limit 2 "adoption"
@@ -636,9 +637,9 @@ $ lookup-memory --project locomo_0 --limit 2 "adoption"
 2. [synthesized_fact|locomo_0] Melanie congratulates Caroline on her adoption.
 ```
 
-**Why two names?** `lookup-memory` matches the legacy bash script that older docs and sub-agent prompts reference (`~/claude-memory-server/ollama/lookup_memory.sh`). `ctm-lookup` is the project-prefixed canonical form. Both call into `claude_total_memory.lookup:main`.
+**Why three names?** `lookup-memory` matches the legacy bash script that older docs and sub-agent prompts reference (`~/claude-memory-server/ollama/lookup_memory.sh`, legacy install path). `tam-lookup` is the new project-prefixed canonical form (v12+). `ctm-lookup` is the v11.x prefixed name, kept as a legacy alias. All three call into `total_agent_memory.lookup:main` (v11.x and earlier: `claude_total_memory.lookup:main`, still importable via deprecation shim).
 
-**Migration note:** v7/v8 docs that pointed at `~/claude-memory-server/ollama/lookup_memory.sh` should be updated — the bash version still works for users with a manual install, but `./install.sh` / `./update.sh` clients on v9+ now get `lookup-memory` on PATH directly via the package's `[project.scripts]` entry.
+**Migration note:** v7/v8 docs that pointed at `~/claude-memory-server/ollama/lookup_memory.sh` should be updated — the bash version still works for users with a manual install, but `./install.sh` / `./update.sh` clients on v9+ now get `lookup-memory` (and `tam-lookup`) on PATH directly via the package's `[project.scripts]` entry.
 
 ---
 
@@ -733,7 +734,7 @@ When you only know the topic but not which records matter, use progressive discl
 
 </details>
 
-Full JSON schemas: `python -m claude_total_memory.cli tools --json` or open the dashboard at `localhost:37737/tools`.
+Full JSON schemas: `python -m total_agent_memory.cli tools --json` or open the dashboard at `localhost:37737/tools`.
 
 ---
 
@@ -788,7 +789,7 @@ Screenshots → [docs/screenshots/](docs/screenshots/) (coming)
 ## Update
 
 ```bash
-cd ~/claude-memory-server
+cd ~/total-agent-memory   # legacy clones: ~/claude-memory-server
 ./update.sh
 ```
 
@@ -805,7 +806,7 @@ cd ~/claude-memory-server
 Manual equivalent:
 
 ```bash
-cd ~/claude-memory-server
+cd ~/total-agent-memory   # legacy clones: ~/claude-memory-server
 git pull
 .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
 .venv/bin/python src/tools/version_status.py
@@ -822,8 +823,8 @@ v9 is **backward compatible**. Existing v8 calls and DB schema work unchanged �
 ### One-command upgrade
 
 ```bash
-cd ~/claude-memory-server && ./update.sh
-# pulls v9 src, installs new entry-points (ctm-lookup / lookup-memory),
+cd ~/total-agent-memory && ./update.sh   # legacy clones: ~/claude-memory-server
+# pulls v9 src, installs new entry-points (tam, tam-lookup, lookup-memory; legacy: ctm-lookup),
 # keeps existing memory.db untouched.
 ```
 
@@ -835,7 +836,7 @@ lookup-memory --limit 1 "any-query-from-your-history"
 
 ### What's new (no action required)
 
-- **`lookup-memory` / `ctm-lookup`** CLI now installed alongside `claude-total-memory` MCP server (registered as `[project.scripts]` so `./install.sh` and `./update.sh` put them on PATH automatically). Sub-agent prompts that reference the legacy `~/claude-memory-server/ollama/lookup_memory.sh` script keep working; new prompts should prefer the package-installed name.
+- **`lookup-memory` / `tam-lookup` / `ctm-lookup` (legacy)** CLI now installed alongside `total-agent-memory` MCP server (registered as `[project.scripts]` so `./install.sh` and `./update.sh` put them on PATH automatically). Sub-agent prompts that reference the legacy `~/claude-memory-server/ollama/lookup_memory.sh` script keep working; new prompts should prefer the package-installed name.
 - **Embedding backends** stay on `fastembed` by default. Switch via `V9_EMBED_BACKEND=openai-3-large` (set `MEMORY_EMBED_API_KEY`) — costs ~$0.10/5k rows for re-embed, expected R@5 lift on conversational data.
 - **Reranker backend** stays on `ce-marco` by default. `V9_RERANKER_BACKEND=bge-v2-m3` (or `off`) switches at runtime.
 - **Subject-aware retrieval** is opt-in via `--subject-aware` in `benchmarks/locomo_bench_llm.py`. Future: surface as MCP tool flag.
@@ -862,7 +863,7 @@ v8.0 is **backward compatible** — your existing v7 installation keeps working 
 ### One-command upgrade
 
 ```bash
-cd ~/claude-memory-server && ./update.sh
+cd ~/total-agent-memory && ./update.sh   # legacy clones: ~/claude-memory-server
 # Applies migrations 011-013 idempotently, restarts LaunchAgents, updates dependencies
 ```
 
@@ -1040,7 +1041,7 @@ Environment variables (all optional):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MEMORY_DB` | `~/.claude-memory/memory.db` | SQLite location |
+| `MEMORY_DB` | `~/.tam/memory.db` (legacy installs: `~/.claude-memory/memory.db`) | SQLite location |
 | `MEMORY_LLM_ENABLED` | `auto` | `auto\|true\|false\|force` — LLM enrichment toggle |
 | `MEMORY_LLM_MODEL` | `qwen2.5-coder:7b` | Ollama model for enrichment |
 | `MEMORY_LLM_PROBE_TTL_SEC` | `60` | Cache TTL for Ollama availability probe |
@@ -1061,7 +1062,7 @@ Environment variables (all optional):
 
 > CPU-only / WSL hosts: if Ollama keeps timing out, lower `MEMORY_TRIPLE_MAX_PREDICT` before raising timeouts. `install-codex.sh` writes conservative defaults automatically. **For 30-40s save latency on WSL2 → set `MEMORY_ASYNC_ENRICHMENT=true`** — see below.
 
-Full config: see `claude_total_memory/config.py`.
+Full config: see `total_agent_memory/config.py`.
 
 ---
 
@@ -1170,7 +1171,7 @@ Rows stuck in `processing` longer than `MEMORY_ENRICH_STALE_AFTER_SEC` (default 
 - ✅ Tests: 971 → 1124 (+153).
 
 ### Shipped in v9.0 (2026-04-25)
-- ✅ **`lookup-memory` / `ctm-lookup` CLI** — bash entry-point for sub-agents, registered as `[project.scripts]` and installed by `./install.sh` / `./update.sh` (replaces manual `~/claude-memory-server/ollama/lookup_memory.sh`)
+- ✅ **`lookup-memory` / `tam-lookup` / `ctm-lookup` (legacy) CLI** — bash entry-point for sub-agents, registered as `[project.scripts]` and installed by `./install.sh` / `./update.sh` (replaces manual `~/claude-memory-server/ollama/lookup_memory.sh`)
 - ✅ **Pluggable embedding backends**: `openai-3-small`, `openai-3-large` (3072d), `bge-m3`, `e5-large`, `locomo-tuned-minilm` (fine-tuned on user data)
 - ✅ **Pluggable reranker backends**: `ce-marco`, `bge-v2-m3`, `bge-large`, `off` (env `V9_RERANKER_BACKEND`, hot-swap)
 - ✅ **Subject-aware retrieval** — LLM extracts (subject, action) from question → SQL graph lookup → DIRECT FACTS prepended to context (LoCoMo cat 1/2 lift)

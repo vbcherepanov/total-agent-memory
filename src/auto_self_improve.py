@@ -20,7 +20,10 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-DB_PATH = Path.home() / ".claude-memory" / "memory.db"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import memory_dir
+
+DB_PATH = memory_dir() / "memory.db"
 SESSION_ID = f"hook-{datetime.now(tz=UTC).strftime('%Y%m%d-%H%M%S')}"
 
 

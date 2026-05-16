@@ -147,8 +147,8 @@ def test_ide_codex_writes_codex_toml_with_env_overrides(sandbox_home: Path):
     assert 'MEMORY_REPR_TIMEOUT_SEC = "120"' in content
     assert 'MEMORY_TRIPLE_MAX_PREDICT = "512"' in content
     # Fence markers for idempotent replace
-    assert "# --- Claude Total Memory MCP Server ---" in content
-    assert "# --- End Claude Total Memory ---" in content
+    assert "# --- total-agent-memory MCP Server ---" in content
+    assert "# --- End total-agent-memory ---" in content
 
 
 def test_install_codex_shim_still_works(sandbox_home: Path):
@@ -231,6 +231,6 @@ def test_codex_install_is_idempotent(sandbox_home: Path):
     assert result2.returncode == 0, result2.stderr
     content2 = cfg.read_text()
     assert content2.count("[mcp_servers.memory]") == 1
-    assert content2.count("# --- Claude Total Memory MCP Server ---") == 1
+    assert content2.count("# --- total-agent-memory MCP Server ---") == 1
     # Other section still there
     assert "[other_section]" in content2

@@ -29,9 +29,10 @@ from pathlib import Path
 
 import numpy as np
 
-MEMORY_DIR = Path(
-    os.environ.get("CLAUDE_MEMORY_DIR", os.path.expanduser("~/.claude-memory"))
-)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import memory_dir
+
+MEMORY_DIR = memory_dir()
 DB_PATH = MEMORY_DIR / "memory.db"
 CHROMA_PATH = MEMORY_DIR / "chroma"
 

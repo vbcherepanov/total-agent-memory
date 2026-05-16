@@ -31,7 +31,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-MEMORY_DIR = Path(os.environ.get("CLAUDE_MEMORY_DIR", os.path.expanduser("~/.claude-memory")))
+from paths import memory_dir
+
+MEMORY_DIR = memory_dir()
 INBOX_DIR = Path(os.environ.get("MEMORY_INBOX", os.path.expanduser("~/MemoryInbox")))
 POLL_INTERVAL = 5  # seconds (for fallback polling)
 

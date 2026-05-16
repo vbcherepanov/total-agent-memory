@@ -9,7 +9,7 @@ decisions, active solutions, conventions, and recent changes.
 
 The wiki is **regenerated on demand** (cheap deterministic SQL — no
 LLM calls) and lives at
-`~/.claude-memory/wikis/<project>.md`. A small MCP tool
+`<memory-dir>/wikis/<project>.md`. A small MCP tool
 `memory_wiki_generate(project)` lets the agent or a hook trigger a
 refresh; the same function is used by the auto-refresh path that fires
 every Nth save (gated on `MEMORY_WIKI_AUTO_REFRESH_EVERY_N`).
@@ -46,6 +46,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from paths import memory_dir
+
 LOG = lambda msg: sys.stderr.write(f"[project-wiki] {msg}\n")
 
 _TITLE_MAX = 110
@@ -70,13 +72,7 @@ def _output_dir() -> Path:
     override = os.environ.get("MEMORY_WIKI_DIR")
     if override:
         return Path(override).expanduser()
-    base = os.environ.get("CLAUDE_MEMORY_DIR")
-    if base:
-        return Path(base).expanduser() / "wikis"
-    # Fallback to the canonical install path. The MCP server already
-    # resolves MEMORY_DIR via its own logic; passing it in keeps this
-    # module side-effect free for tests.
-    return Path.home() / ".claude-memory" / "wikis"
+    return memory_dir() / "wikis"
 
 
 def _recent_days() -> int:

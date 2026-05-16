@@ -1,9 +1,21 @@
 """Shared fixtures for Claude Super Memory v5.0 test suite."""
 
+import os
 import pytest
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
+
+# CRITICAL: set TAM_MEMORY_DIR at top-level (before any test module is
+# collected/imported) so that modules computing ``MEMORY_DIR = memory_dir()``
+# at import time never trigger the ~/.claude-memory -> ~/.tam migration
+# against the developer's real home directory. An autouse fixture is too
+# late — fixtures run before each test, but module imports happen during
+# pytest collection, which is earlier.
+if "TAM_MEMORY_DIR" not in os.environ and "CLAUDE_MEMORY_DIR" not in os.environ:
+    _safe_tam_root = tempfile.mkdtemp(prefix="tam-test-root-")
+    os.environ["TAM_MEMORY_DIR"] = _safe_tam_root
 
 # Ensure src/ is importable
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))

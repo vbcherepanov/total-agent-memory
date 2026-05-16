@@ -1,5 +1,5 @@
 [Unit]
-Description=Claude Total Memory Dashboard (v8.0)
+Description=total-agent-memory Dashboard (v12.0)
 Documentation=https://github.com/vbcherepanov/total-agent-memory
 After=default.target
 
@@ -9,7 +9,7 @@ WorkingDirectory=@INSTALL_DIR@
 ExecStart=@INSTALL_DIR@/.venv/bin/python @INSTALL_DIR@/src/dashboard.py
 Restart=on-failure
 RestartSec=5
-Environment=CLAUDE_MEMORY_DIR=@MEMORY_DIR@
+Environment=TAM_MEMORY_DIR=@MEMORY_DIR@
 Environment=DASHBOARD_PORT=37737
 StandardOutput=append:@MEMORY_DIR@/logs/dashboard.log
 StandardError=append:@MEMORY_DIR@/logs/dashboard.err

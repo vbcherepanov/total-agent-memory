@@ -26,6 +26,8 @@ HERE = Path(__file__).resolve().parent
 SRC = HERE.parent
 sys.path.insert(0, str(SRC))
 
+from paths import memory_dir as _resolve_memory_dir
+
 
 def _log(msg: str) -> None:
     sys.stderr.write(f"[reflection-runner] {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {msg}\n")
@@ -123,7 +125,7 @@ def main() -> int:
         elif arg.startswith("--debounce="):
             debounce_seconds = float(arg.split("=", 1)[1])
 
-    memory_dir = Path(os.environ.get("CLAUDE_MEMORY_DIR", Path.home() / ".claude-memory"))
+    memory_dir = _resolve_memory_dir()
     db_path = memory_dir / "memory.db"
     if not db_path.exists():
         _log(f"db not found at {db_path}")

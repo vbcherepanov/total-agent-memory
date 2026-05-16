@@ -109,7 +109,8 @@ try:
 except ImportError:
     HAS_CACHE = False
 
-MEMORY_DIR = Path(os.environ.get("CLAUDE_MEMORY_DIR", os.path.expanduser("~/.claude-memory")))
+from paths import memory_dir as _resolve_memory_dir  # noqa: E402
+MEMORY_DIR = _resolve_memory_dir()
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 FASTEMBED_MODEL = os.environ.get("FASTEMBED_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
@@ -3892,7 +3893,7 @@ async def list_tools():
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Export only this project (optional)"},
-                    "save_to_file": {"type": "boolean", "description": "Save to ~/.claude-memory/backups/ (default true)", "default": True},
+                    "save_to_file": {"type": "boolean", "description": "Save to <memory-dir>/backups/ (default true)", "default": True},
                 },
             },
         ),

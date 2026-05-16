@@ -33,7 +33,8 @@ def _run_install(
     env["HOME"] = str(home)
     env["INSTALL_TEST_MODE"] = "1"
     env["FAKE_UNAME"] = fake_uname
-    env["CLAUDE_MEMORY_DIR"] = str(home / ".claude-memory")
+    env["TAM_MEMORY_DIR"] = str(home / ".tam")
+    env.pop("CLAUDE_MEMORY_DIR", None)
     env["XDG_CONFIG_HOME"] = str(home / ".config")
 
     if fake_systemctl is not None:
@@ -150,7 +151,7 @@ def test_linux_templates_are_substituted(sandbox_home: Path, tmp_path: Path):
     assert "@INSTALL_DIR@" not in dashboard, "placeholder leaked into installed unit"
     assert "@MEMORY_DIR@" not in dashboard
     assert str(ROOT) in dashboard, "INSTALL_DIR must be substituted with repo path"
-    assert str(sandbox_home / ".claude-memory") in dashboard, "MEMORY_DIR must be substituted"
+    assert str(sandbox_home / ".tam") in dashboard, "MEMORY_DIR must be substituted to ~/.tam"
 
 
 def test_linux_enables_units_when_bus_available(sandbox_home: Path, tmp_path: Path):

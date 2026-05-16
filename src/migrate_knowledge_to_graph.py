@@ -10,7 +10,7 @@ Usage:
     python src/migrate_knowledge_to_graph.py [--db PATH] [--batch SIZE] [--deep] [--dry-run]
 
 Options:
-    --db PATH      Database path (default: ~/.claude-memory/memory.db)
+    --db PATH      Database path (default: <memory-dir>/memory.db)
     --batch SIZE   Process N records at a time (default: 50)
     --deep         Use Ollama for deep extraction (slow but better, default: fast local)
     --dry-run      Don't write to DB, just show what would happen
@@ -27,6 +27,8 @@ from pathlib import Path
 
 # Allow imports from the src directory
 sys.path.insert(0, str(Path(__file__).parent))
+
+from paths import memory_dir
 
 from graph.store import GraphStore
 from ingestion.extractor import ConceptExtractor
@@ -311,8 +313,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--db",
-        default=str(Path.home() / ".claude-memory" / "memory.db"),
-        help="Path to SQLite database (default: ~/.claude-memory/memory.db)",
+        default=str(memory_dir() / "memory.db"),
+        help="Path to SQLite database (default: <memory-dir>/memory.db)",
     )
     parser.add_argument(
         "--batch",

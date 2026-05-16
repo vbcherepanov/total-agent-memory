@@ -3,16 +3,16 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "claude-total-memory"
-version = "11.2.2"
-description = "total-agent-memory — persistent memory MCP server for Claude Code & Codex CLI: 46 tools — knowledge graph, temporal facts, procedural memory, episodic memory, AST ingest, pre-edit guard, auto-consolidating error capture"
+name = "total-agent-memory"
+version = "12.0.0"
+description = "Persistent memory MCP server for Claude Code, Codex CLI, Cursor and any MCP client: 46 tools — knowledge graph, temporal facts, procedural memory, episodic memory, AST ingest, pre-edit guard, auto-consolidating error capture"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
-    {name = "Vitalii", email = "vitalii@example.com"},
+    {name = "Vitalii Cherepanov", email = "vbcherepanov@gmail.com"},
 ]
-keywords = ["claude", "mcp", "memory", "ai", "llm", "claude-code"]
+keywords = ["mcp", "memory", "ai", "llm", "claude-code", "codex", "cursor", "agent-memory"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -37,23 +37,30 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/vitaliimacpro/claude-total-memory"
-Repository = "https://github.com/vitaliimacpro/claude-total-memory"
-Issues = "https://github.com/vitaliimacpro/claude-total-memory/issues"
+Homepage = "https://github.com/vbcherepanov/total-agent-memory"
+Repository = "https://github.com/vbcherepanov/total-agent-memory"
+Issues = "https://github.com/vbcherepanov/total-agent-memory/issues"
 
 [project.scripts]
+total-agent-memory = "total_agent_memory.server:main_sync"
+tam = "total_agent_memory.server:main_sync"
+tam-lookup = "total_agent_memory.lookup:main"
+lookup-memory = "total_agent_memory.lookup:main"
+# Backward-compat aliases (v11.x users keep working; pip prints a
+# DeprecationWarning on first `from claude_total_memory import ...`).
 claude-total-memory = "claude_total_memory.server:main_sync"
 ctm-lookup = "claude_total_memory.lookup:main"
-lookup-memory = "claude_total_memory.lookup:main"
 
-# Pack BOTH the user-facing `claude_total_memory` thin wrapper AND the
-# heavy `src/` runtime that it loads at startup. Without `src*` in
-# includes, `claude-total-memory` falls over with `Error: server.py not
-# found` (the wrapper resolves `../src/server.py` relative to itself,
-# which only exists in a git checkout).
+# Pack the new ``total_agent_memory`` wrapper, the legacy
+# ``claude_total_memory`` shim (kept so existing imports keep working with
+# a DeprecationWarning) and the heavy ``src/`` runtime. Without ``src*``
+# the wrapper falls over with ``Error: server.py not found`` because it
+# resolves ``../src/server.py`` relative to itself, which only exists in a
+# git checkout — that bug bit v11.2.1 in production.
 [tool.setuptools.packages.find]
 where = ["."]
 include = [
+    "total_agent_memory*",
     "claude_total_memory*",
     "src*",
 ]

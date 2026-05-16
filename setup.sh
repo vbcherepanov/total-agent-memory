@@ -1,15 +1,28 @@
 #!/usr/bin/env bash
 #
-# Claude Total Memory — Manual Setup
+# total-agent-memory — Manual Setup
 # For users who prefer step-by-step control.
 #
 set -e
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-MEM="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
+
+# Resolution: TAM_MEMORY_DIR > legacy CLAUDE_MEMORY_DIR > ~/.tam > legacy ~/.claude-memory > fresh ~/.tam
+if [ -n "${TAM_MEMORY_DIR:-}" ]; then
+    MEM="$TAM_MEMORY_DIR"
+elif [ -n "${CLAUDE_MEMORY_DIR:-}" ]; then
+    MEM="$CLAUDE_MEMORY_DIR"
+    echo "  WARN: CLAUDE_MEMORY_DIR is deprecated, please switch to TAM_MEMORY_DIR" >&2
+elif [ -d "$HOME/.tam" ]; then
+    MEM="$HOME/.tam"
+elif [ -d "$HOME/.claude-memory" ]; then
+    MEM="$HOME/.claude-memory"
+else
+    MEM="$HOME/.tam"
+fi
 
 echo "╔═════════════════════════════════════════════════════╗"
-echo "║  Claude Total Memory v2.0 — Manual Setup            ║"
+echo "║  total-agent-memory v12.0 — Manual Setup            ║"
 echo "╚═════════════════════════════════════════════════════╝"
 echo ""
 
@@ -51,7 +64,7 @@ echo '    "memory": {'
 echo "      \"command\": \"$PY\","
 echo "      \"args\": [\"$SRV\"],"
 echo '      "env": {'
-echo "        \"CLAUDE_MEMORY_DIR\": \"$MEM\","
+echo "        \"TAM_MEMORY_DIR\": \"$MEM\","
 echo '        "EMBEDDING_MODEL": "all-MiniLM-L6-v2"'
 echo '      }'
 echo '    }'

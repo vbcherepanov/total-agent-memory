@@ -18,7 +18,8 @@
 # Env:
 #   INSTALL_TEST_MODE=1   skip pip install, model pre-download, dashboard
 #                         service, LaunchAgents (for test harness)
-#   CLAUDE_MEMORY_DIR=... override memory directory (default: ~/.claude-memory)
+#   TAM_MEMORY_DIR=... override memory directory (default: ~/.tam).
+#                         Legacy CLAUDE_MEMORY_DIR still respected.
 #   OLLAMA_URL=...        override Ollama probe URL
 #   MEMORY_LLM_MODEL=...  override expected model name
 #   FAKE_UNAME=Linux      override uname() for tests (Linux|Darwin)
@@ -49,7 +50,7 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         -h|--help)
-            sed -n '2,16p' "$0"
+            sed -n '2,17p' "$0"
             exit 0
             ;;
         *)
@@ -77,7 +78,23 @@ echo ""
 
 # -- Config --
 INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
-MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
+# Resolution: TAM_MEMORY_DIR > legacy CLAUDE_MEMORY_DIR > ~/.tam > migrate ~/.claude-memory > fresh ~/.tam
+if [ -n "$TAM_MEMORY_DIR" ]; then
+    MEMORY_DIR="$TAM_MEMORY_DIR"
+elif [ -n "$CLAUDE_MEMORY_DIR" ]; then
+    MEMORY_DIR="$CLAUDE_MEMORY_DIR"
+    echo "  ⚠ CLAUDE_MEMORY_DIR is deprecated, please switch to TAM_MEMORY_DIR" >&2
+elif [ -d "$HOME/.tam" ]; then
+    MEMORY_DIR="$HOME/.tam"
+elif [ -d "$HOME/.claude-memory" ] && [ ! -L "$HOME/.claude-memory" ]; then
+    # Legacy install detected — migrate to ~/.tam + leave symlink
+    echo "  → Migrating ~/.claude-memory → ~/.tam (symlink kept for backward-compat)"
+    mv "$HOME/.claude-memory" "$HOME/.tam"
+    ln -s "$HOME/.tam" "$HOME/.claude-memory"
+    MEMORY_DIR="$HOME/.tam"
+else
+    MEMORY_DIR="$HOME/.tam"
+fi
 VENV_DIR="$INSTALL_DIR/.venv"
 DASHBOARD_SERVICE="$INSTALL_DIR/scripts/dashboard-service.sh"
 
@@ -303,8 +320,9 @@ else
         pip install -q -r "$INSTALL_DIR/requirements.txt" -r "$INSTALL_DIR/requirements-dev.txt" 2>&1 | tail -1
     fi
     # v9 — editable install registers `[project.scripts]` entry-points
-    # (claude-total-memory, ctm-lookup, lookup-memory) on PATH inside the venv.
-    echo "  Installing claude-total-memory package (registers ctm-lookup / lookup-memory)..."
+    # (total-agent-memory, tam, tam-lookup, lookup-memory + legacy:
+    # claude-total-memory, ctm-lookup) on PATH inside the venv.
+    echo "  Installing total-agent-memory package (registers tam / tam-lookup / lookup-memory + legacy claude-total-memory / ctm-lookup)..."
     pip install -q -e "$INSTALL_DIR" 2>&1 | tail -1 || echo "  WARN: editable install failed; CLI entry-points may be missing."
     echo "  OK: Dependencies installed"
     PY_PATH="$VENV_DIR/bin/python"
@@ -347,7 +365,7 @@ server_entry = {
     'command': os.environ['PY_PATH'],
     'args': [os.environ['SRV_PATH']],
     'env': {
-        'CLAUDE_MEMORY_DIR': os.environ['MEMORY_DIR'],
+        'TAM_MEMORY_DIR': os.environ['MEMORY_DIR'],
         'EMBEDDING_MODEL': 'all-MiniLM-L6-v2',
     },
 }
@@ -456,7 +474,7 @@ print(json.dumps({
     'command': os.environ['PY_PATH'],
     'args': [os.environ['SRV_PATH']],
     'env': {
-        'CLAUDE_MEMORY_DIR': os.environ['MEMORY_DIR'],
+        'TAM_MEMORY_DIR': os.environ['MEMORY_DIR'],
         'EMBEDDING_MODEL': 'all-MiniLM-L6-v2',
     },
 }))
@@ -536,7 +554,7 @@ def _ensure_entry(key, matcher, cmd):
         {'matcher': matcher, 'hooks': [{'type': 'command', 'command': cmd}]}
     )
 
-# Primary claude-total-memory hooks — always registered.
+# Primary total-agent-memory hooks — always registered.
 _set_single('SessionStart', '',           os.environ['HOOK_SESSION'])
 _set_single('SessionEnd',   '',           os.environ['HOOK_SESSION_END'])
 _set_single('Stop',         '',           os.environ['HOOK_STOP'])
@@ -654,6 +672,7 @@ register_mcp_aider() {
         echo "  OK: Appended skill reference to $aider_conf"
     fi
     echo "  Note: Aider has no MCP yet. Use bash bridges:"
+    echo "        (modern: use 'lookup-memory \"<query>\"' or 'tam-lookup \"<query>\"' directly)"
     echo "        ~/claude-memory-server/ollama/lookup_memory.sh \"<query>\""
 }
 
@@ -693,7 +712,7 @@ node.setdefault(parts[-1], {})
 node[parts[-1]]['memory'] = {
     "command": os.environ['PY_PATH'],
     "args": [os.environ['SRV_PATH']],
-    "env": {"CLAUDE_MEMORY_DIR": os.environ['MEMORY_DIR']},
+    "env": {"TAM_MEMORY_DIR": os.environ['MEMORY_DIR']},
 }
 with open(cfg_path, 'w') as f:
     json.dump(s, f, indent=2)
@@ -722,7 +741,7 @@ srv_path = toml_escape(os.environ['SRV_PATH'])
 memory_dir = toml_escape(os.environ['MEMORY_DIR'])
 
 toml_block = f'''
-# --- Claude Total Memory MCP Server ---
+# --- total-agent-memory MCP Server ---
 [mcp_servers.memory]
 command = "{py_path}"
 args = ["{srv_path}"]
@@ -731,13 +750,13 @@ startup_timeout_sec = 15.0
 tool_timeout_sec = 120.0
 
 [mcp_servers.memory.env]
-CLAUDE_MEMORY_DIR = "{memory_dir}"
+TAM_MEMORY_DIR = "{memory_dir}"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 MEMORY_TRIPLE_TIMEOUT_SEC = "120"
 MEMORY_ENRICH_TIMEOUT_SEC = "90"
 MEMORY_REPR_TIMEOUT_SEC = "120"
 MEMORY_TRIPLE_MAX_PREDICT = "512"
-# --- End Claude Total Memory ---
+# --- End total-agent-memory ---
 '''
 
 content = ''
@@ -746,7 +765,7 @@ if os.path.exists(config_path):
         content = f.read()
 
 if '[mcp_servers.memory]' in content:
-    pattern = r'# --- Claude Total Memory MCP Server ---.*?# --- End Claude Total Memory ---'
+    pattern = r'# --- (Claude Total Memory|total-agent-memory) MCP Server ---.*?# --- End (Claude Total Memory|total-agent-memory) ---'
     if re.search(pattern, content, re.DOTALL):
         content = re.sub(pattern, toml_block.strip(), content, flags=re.DOTALL)
     else:
@@ -1048,6 +1067,7 @@ case "$IDE" in
     aider)
         echo "  Aider now reads the memory-protocol skill at startup."
         echo "  No MCP — use bash bridges:"
+        echo "    (modern: use 'lookup-memory \"<query>\"' or 'tam-lookup \"<query>\"' directly)"
         echo "    ~/claude-memory-server/ollama/lookup_memory.sh \"<query>\""
         echo "    ~/claude-memory-server/ollama/save_memory.sh --type ... --content ..."
         ;;
@@ -1059,7 +1079,7 @@ case "$IDE" in
 esac
 echo ""
 echo "  MCP command:"
-echo "    $PY_PATH -m claude_total_memory.server"
+echo "    $PY_PATH -m total_agent_memory.server"
 echo "    (or: $PY_PATH $SRV_PATH)"
 echo ""
 echo "  Web dashboard:"

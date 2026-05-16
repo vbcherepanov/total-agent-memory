@@ -28,9 +28,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from paths import memory_dir
+
 LOG = lambda msg: sys.stderr.write(f"[graph-enrichment] {msg}\n")
 
-DEFAULT_DB = str(Path.home() / ".claude-memory" / "memory.db")
+DEFAULT_DB = str(memory_dir() / "memory.db")
 
 
 def _now() -> str:

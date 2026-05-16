@@ -5,7 +5,7 @@ candidate knowledge_ids discovered via:
   1) knowledge_nodes junction -> graph_edges (weight-filtered) -> knowledge_nodes
   2) relations table (direct knowledge-to-knowledge links, used as `associations`)
 
-The actual schema in ~/.claude-memory/memory.db:
+The actual schema in <memory-dir>/memory.db:
   graph_nodes(id TEXT PK, type, name, content, ...)
   graph_edges(id, source_id TEXT, target_id TEXT, relation_type, weight REAL, ...)
   knowledge_nodes(knowledge_id INT, node_id TEXT, role, strength REAL)
@@ -18,6 +18,8 @@ import logging
 import os
 import sqlite3
 from typing import Iterable
+
+from paths import memory_dir
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +344,7 @@ if __name__ == "__main__":
     import random
     import time
 
-    db_path = os.path.expanduser("~/.claude-memory/memory.db")
+    db_path = str(memory_dir() / "memory.db")
     print(f"[smoke] db: {db_path}")
     print(f"[smoke] is_enabled(): {is_enabled()}  (MEMORY_GRAPH_EXPAND={os.environ.get('MEMORY_GRAPH_EXPAND')!r})")
 
