@@ -1,10 +1,16 @@
 """Tests for src/error_capture.py — v7.0 Phase D."""
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 
 from error_capture import ErrorCapture
+from memory_core.schema_migration import Migration, MigrationRunner
+
+MIGRATION_RESOLVE_LEARNED_ERRORS = next(
+    (Path(__file__).resolve().parent.parent / "migrations").glob("*_resolve_learned_errors.sql")
+)
 
 
 @pytest.fixture
@@ -36,6 +42,11 @@ def ec_db():
             fire_count INTEGER DEFAULT 0, success_count INTEGER DEFAULT 0,
             fail_count INTEGER DEFAULT 0, success_rate REAL DEFAULT 0.0,
             last_fired TEXT, created_at TEXT, updated_at TEXT
+        );
+        CREATE TABLE migrations (
+            version TEXT PRIMARY KEY,
+            description TEXT NOT NULL,
+            applied_at TEXT NOT NULL
         );
     """)
     yield conn
@@ -75,12 +86,13 @@ def test_learn_error_creates_row(ec, ec_db):
     assert "pattern:sqlite-locked-during-ddl" in row["tags"]
 
 
-def test_learn_error_rejects_missing_fields(ec):
+def test_learn_error_rejects_missing_fields(ec, ec_db):
     for missing in ["file", "error", "root_cause", "fix", "pattern"]:
         s = _sample()
         s[missing] = ""
         with pytest.raises(ValueError):
             ec.learn_error(**s)
+    assert ec_db.execute("SELECT COUNT(*) FROM errors").fetchone()[0] == 0
 
 
 def test_learn_error_stores_severity_and_category(ec, ec_db):
@@ -88,6 +100,16 @@ def test_learn_error_stores_severity_and_category(ec, ec_db):
     row = ec_db.execute("SELECT severity, category FROM errors").fetchone()
     assert row["severity"] == "high"
     assert row["category"] == "security"
+
+
+def test_learn_error_with_a_fix_is_resolved_and_stamped(ec, ec_db):
+    result = ec.learn_error(**_sample())
+    row = ec_db.execute(
+        "SELECT status, resolved_at, created_at FROM errors WHERE id=?",
+        (result["error_id"],),
+    ).fetchone()
+    assert row["status"] == "resolved"
+    assert row["resolved_at"] == row["created_at"]
 
 
 # ──────────────────────────────────────────────
@@ -188,14 +210,35 @@ def test_rules_for_pattern(ec):
     assert rules[0]["priority"] == 7
 
 
+def _insert_learned_error_row(
+    db,
+    *,
+    status="open",
+    fix="commit before ALTER TABLE",
+    context="root_cause: DDL during active transaction | pattern: sqlite-locked-during-ddl",
+    created_at="2026-08-01T00:00:00Z",
+    resolved_at=None,
+):
+    """Simulate a row the pre-fix `learn_error` would have written."""
+    return db.execute(
+        """INSERT INTO errors
+           (session_id, category, severity, description, context, fix,
+            project, tags, status, resolved_at, created_at)
+           VALUES ('learn_error', 'bug', 'medium', 'boom', ?, ?, 'general',
+                   '[]', ?, ?, ?)""",
+        (context, fix, status, resolved_at, created_at),
+    ).lastrowid
+
+
 def test_resolve_marks_error_resolved(ec, ec_db):
-    r = ec.learn_error(**_sample())
-    assert ec.resolve(r["error_id"], note="fixed") is True
+    # learn_error no longer leaves a row open; insert one as it used to.
+    error_id = _insert_learned_error_row(ec_db)
+    assert ec.resolve(error_id, note="fixed") is True
     row = ec_db.execute("SELECT status, resolved_at FROM errors").fetchone()
     assert row["status"] == "resolved"
     assert row["resolved_at"] is not None
     # Second call no-op
-    assert ec.resolve(r["error_id"]) is False
+    assert ec.resolve(error_id) is False
 
 
 def test_custom_threshold(ec_db):
@@ -203,3 +246,67 @@ def test_custom_threshold(ec_db):
     for _ in range(2):
         r = low.learn_error(**_sample(pattern="quick"))
     assert r["consolidated"] is True
+
+
+# ──────────────────────────────────────────────
+# resolve_learned_errors migration
+# ──────────────────────────────────────────────
+
+def _apply_resolve_learned_errors(db):
+    """Apply through `MigrationRunner`, the path production takes for
+    versions >= TRANSACTIONAL_SCHEMA_VERSION."""
+    path = MIGRATION_RESOLVE_LEARNED_ERRORS
+    version = path.stem.split("_", 1)[0]
+    description = path.stem[len(version) + 1 :].replace("_", " ")
+    MigrationRunner(db).apply(Migration(version, description, path.read_text()))
+
+
+def test_resolve_learned_errors_closes_a_learned_error_that_has_a_fix(ec_db):
+    _insert_learned_error_row(ec_db)
+    ec_db.commit()
+
+    _apply_resolve_learned_errors(ec_db)
+
+    row = ec_db.execute("SELECT status, resolved_at FROM errors").fetchone()
+    assert row["status"] == "resolved"
+    assert row["resolved_at"] == "2026-08-01T00:00:00Z"
+
+
+@pytest.mark.parametrize(
+    "row, status, resolved_at",
+    [
+        ({"fix": ""}, "open", None),
+        ({"fix": None}, "open", None),
+        ({"context": "written by another tool"}, "open", None),
+        (
+            {"status": "resolved", "resolved_at": "2026-08-05T00:00:00Z"},
+            "resolved",
+            "2026-08-05T00:00:00Z",
+        ),
+    ],
+    ids=["empty-fix", "null-fix", "other-writer", "already-resolved"],
+)
+def test_resolve_learned_errors_leaves_the_row_alone(ec_db, row, status, resolved_at):
+    _insert_learned_error_row(ec_db, **row)
+    ec_db.commit()
+
+    _apply_resolve_learned_errors(ec_db)
+
+    after = ec_db.execute("SELECT status, resolved_at FROM errors").fetchone()
+    assert after["status"] == status
+    assert after["resolved_at"] == resolved_at
+
+
+def test_resolve_learned_errors_is_idempotent(ec_db):
+    """A reset tracker (e.g. a restored backup) is the only way it replays."""
+    _insert_learned_error_row(ec_db)
+    ec_db.commit()
+
+    _apply_resolve_learned_errors(ec_db)
+    first = dict(ec_db.execute("SELECT * FROM errors").fetchone())
+    ec_db.execute("DELETE FROM migrations")
+    ec_db.commit()
+    _apply_resolve_learned_errors(ec_db)
+    second = dict(ec_db.execute("SELECT * FROM errors").fetchone())
+
+    assert first == second

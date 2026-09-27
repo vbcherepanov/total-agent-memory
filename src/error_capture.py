@@ -87,10 +87,10 @@ class ErrorCapture:
         cur.execute(
             """INSERT INTO errors
                (session_id, category, severity, description, context, fix,
-                project, tags, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)""",
+                project, tags, status, resolved_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'resolved', ?, ?)""",
             (session_id, category, severity, description, context, fix,
-             project, json.dumps(tags), now),
+             project, json.dumps(tags), now, now),
         )
         error_id = cur.lastrowid
         self.db.commit()
