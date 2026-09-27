@@ -147,6 +147,20 @@ DECAY_HALF_LIFE = int(os.environ.get("DECAY_HALF_LIFE", "90"))  # days
 ARCHIVE_AFTER_DAYS = int(os.environ.get("ARCHIVE_AFTER_DAYS", "180"))
 PURGE_AFTER_DAYS = int(os.environ.get("PURGE_AFTER_DAYS", "365"))
 OBSERVATION_RETENTION_DAYS = int(os.environ.get("OBSERVATION_RETENTION_DAYS", "30"))
+# Bounds SQLite WAL file growth: without a limit, checkpoints reuse space in
+# place but never shrink the file back down, so it sits at its high-water
+# mark indefinitely under sustained write load (measured: a 334MB WAL next
+# to a 171MB db). 48MB keeps the file well under the db size while staying
+# large enough that ordinary checkpoints don't thrash.
+DB_JOURNAL_SIZE_LIMIT_BYTES = 48 * 1024 * 1024
+# 8-10 concurrent MCP sessions plus the dashboard service contend for the
+# single writer lock; 5000ms was too tight and surfaced as "database is
+# locked" from memory_save. 15000ms absorbs realistic contention without
+# reading as a hang to the caller, so do not raise further.
+DB_BUSY_TIMEOUT_MS = 15000
+# Short timeout for the opportunistic startup checkpoint attempt only: fail
+# fast if another reader holds a snapshot rather than stalling startup.
+DB_STARTUP_CHECKPOINT_TIMEOUT_MS = 200
 
 # v10 — importance multipliers applied to the final recall score so a
 # `critical` decision outranks ten `medium` observations at the same RRF
@@ -266,10 +280,33 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=NORMAL")
         # Avoid SQLITE_BUSY when reflection runner / dashboard hold reader locks.
-        self.db.execute("PRAGMA busy_timeout=5000")
+        self.db.execute(f"PRAGMA busy_timeout={DB_BUSY_TIMEOUT_MS}")
         # Larger negative value = larger page cache (SQLite uses kibibytes when
         # negative). 20MB cache cuts disk I/O for repeat reads in hot path.
         self.db.execute("PRAGMA cache_size=-20000")
+        self.db.execute(f"PRAGMA journal_size_limit={DB_JOURNAL_SIZE_LIMIT_BYTES}")
+
+        # Opportunistic WAL reclaim: a full TRUNCATE checkpoint only succeeds
+        # with zero other readers holding a snapshot, which realistically
+        # only happens when the first session of the day opens the db. Use a
+        # short timeout so a busy result (the common case) fails fast instead
+        # of stalling startup.
+        # A successful TRUNCATE reports (0, 0, 0), so the size to log is read
+        # from the file before the checkpoint.
+        wal_path = self.db_path.with_name(self.db_path.name + "-wal")
+        wal_bytes = wal_path.stat().st_size if wal_path.exists() else 0
+        try:
+            self.db.execute(f"PRAGMA busy_timeout={DB_STARTUP_CHECKPOINT_TIMEOUT_MS}")
+            row = self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if row and row[0] != 0:
+                LOG(f"WAL checkpoint busy: {row[1]} log frames, {row[2]} checkpointed")
+            elif wal_bytes:
+                LOG(f"WAL checkpoint: truncated {wal_bytes} bytes")
+        except sqlite3.OperationalError as exc:
+            LOG(f"WAL checkpoint skipped: {exc}")
+        finally:
+            self.db.execute(f"PRAGMA busy_timeout={DB_BUSY_TIMEOUT_MS}")
+
         self._schema()
         self._migrate()
         self._apply_sql_migrations()
