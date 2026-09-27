@@ -111,8 +111,7 @@ def test_absolute_path_lost_fails():
     orig = "Edit /Users/x/project/src/server.py"
     trans = "Edit the server file."
     r = v.validate(orig, trans)
-    assert not r.ok
-    assert any("path" in e.lower() for e in r.errors)
+    assert r.errors == ["path lost: /Users/x/project/src/server.py"]
 
 
 def test_tilde_path_preserved():
@@ -121,6 +120,101 @@ def test_tilde_path_preserved():
     trans = "From ~/claude-memory-server/."
     r = v.validate(orig, trans)
     assert r.ok
+
+
+@pytest.mark.parametrize(
+    "orig, lost",
+    [
+        pytest.param("See /Users/alice/project/src/api/v1/chat.py here.", "/Users/alice/project/src/api/v1/chat.py", id="deep"),
+        pytest.param("See /etc/hosts here.", "/etc/hosts", id="two-segments"),
+        pytest.param("See /README.md here.", "/README.md", id="single-segment-ext"),
+        pytest.param("See /tmp/cache/ here.", "/tmp/cache/", id="trailing-slash"),
+        pytest.param("See ~/.tam/memory.db here.", "~/.tam/memory.db", id="tilde"),
+        pytest.param("See ~/.claude here.", "~/.claude", id="tilde-dotdir"),
+        pytest.param("See ~/.bashrc here.", "~/.bashrc", id="tilde-dotfile"),
+        pytest.param("See ~/foo here.", "~/foo", id="tilde-one-segment"),
+        pytest.param("cat ~/.zshrc now", "~/.zshrc", id="tilde-mid-sentence"),
+        pytest.param("Intro.\n/etc/hosts is it.\nEnd.", "/etc/hosts", id="line-start"),
+        pytest.param('See "/etc/hosts" here.', "/etc/hosts", id="quoted"),
+        pytest.param("See (/etc/hosts) here.", "/etc/hosts", id="parenthesised"),
+        pytest.param("set db=/var/lib/app.db here", "/var/lib/app.db", id="equals"),
+        pytest.param("set key:/etc/hosts here", "/etc/hosts", id="colon"),
+        pytest.param("set a,/etc/hosts here", "/etc/hosts", id="comma"),
+        pytest.param("| file |/etc/hosts| x |", "/etc/hosts", id="table-cell"),
+        pytest.param("See </etc/hosts> here.", "/etc/hosts", id="autolink"),
+        pytest.param("set a;/etc/hosts here", "/etc/hosts", id="semicolon"),
+    ],
+)
+def test_path_detected_when_lost(orig, lost):
+    v = ContentValidator()
+    r = v.validate(orig, "See the relevant file.")
+    assert r.errors == [f"path lost: {lost}"]
+
+
+@pytest.mark.parametrize(
+    "orig, trans, errors",
+    [
+        pytest.param("see (`/etc/hosts`) x", "see x", ["path lost: /etc/hosts", "inline code lost: `/etc/hosts`"], id="backtick-in-parens"),
+        pytest.param("path:`/etc/hosts`", "path", ["path lost: /etc/hosts", "inline code lost: `/etc/hosts`"], id="backtick-after-colon"),
+        pytest.param("Edit **/Users/alice/src/server.py** now", "Edit the file now", ["path lost: /Users/alice/src/server.py"], id="bold"),
+    ],
+)
+def test_wrapped_path_detected_when_lost(orig, trans, errors):
+    v = ContentValidator()
+    r = v.validate(orig, trans)
+    assert r.errors == errors
+
+
+@pytest.mark.parametrize(
+    "orig, trans",
+    [
+        pytest.param("Edit /Users/alice/src/server.py now", "Edit `/Users/alice/src/server.py` now", id="backtick-added"),
+        pytest.param("Edit /Users/alice/src/server.py now", "Edit **/Users/alice/src/server.py** now", id="bold-added"),
+        pytest.param("see /etc/hosts, now", "see **/etc/hosts**, now", id="bold-before-comma"),
+        pytest.param("See /tmp/cache/ here.", "See /tmp/cache here.", id="trailing-slash-dropped"),
+        pytest.param("see /etc/hosts now", "see _/etc/hosts_ now", id="italic-added"),
+        pytest.param("see /etc/hosts now", "see /etc/hosts/ now", id="trailing-slash-added"),
+    ],
+)
+def test_path_survives_markdown_wrapping(orig, trans):
+    v = ContentValidator()
+    r = v.validate(orig, trans)
+    assert r.errors == []
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "EU/Russia",
+        "1/6",
+        "activity/nutrition/sleep",
+        "SQLAlchemy/Postgres",
+        "closes/rolls",
+        "/compact",
+        "/jira-task",
+        "/loop",
+        "/babysit-prs",
+        "/memory",
+        "python/3.12",
+        "requests/2.31",
+        "uvicorn/0.30.1",
+        "1/6.5",
+        "3.5/4.0",
+        "27.07/28.07",
+        "v1.2/2.0",
+        "input/output/errors",
+        "and/or/but",
+        "python/3.12/site",
+        "27.07/28.07/29.07",
+        "EU/Russia/China",
+    ],
+)
+def test_path_check_ignores_prose_slashes(phrase):
+    v = ContentValidator()
+    orig = f"Discussion of {phrase} came up."
+    trans = "Discussion came up."
+    r = v.validate(orig, trans)
+    assert r.errors == []
 
 
 # ──────────────────────────────────────────────

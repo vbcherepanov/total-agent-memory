@@ -118,12 +118,18 @@ def test_queue_stores_valid_compressed(cmp_db):
     assert "https://example.com/api" in kinds["compressed"]
 
 
-def test_queue_rejects_compressed_that_loses_url(cmp_db):
-    """Compressed output missing URLs is silently dropped (raw still stored)."""
+@pytest.mark.parametrize(
+    "original",
+    [
+        pytest.param("Docs at https://critical.example/doc — do not lose this URL. " * 30, id="url"),
+        pytest.param("Edit /Users/alice/project/src/server.py - do not lose this path. " * 30, id="path"),
+    ],
+)
+def test_queue_rejects_compressed_that_loses_url(cmp_db, original):
+    """Compressed output missing URLs or paths is silently dropped (raw still stored)."""
     from representations_queue import RepresentationsQueue
 
     q = RepresentationsQueue(cmp_db)
-    original = "Docs at https://critical.example/doc — do not lose this URL. " * 30
     kid = _add(cmp_db, original)
     q.enqueue(kid)
 
