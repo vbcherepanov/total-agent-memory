@@ -25,6 +25,10 @@ snowballstemmer>=2.2
 # Team dashboard: provider API keys are stored Fernet-encrypted at rest.
 cryptography>=42
 
+# Image OCR on macOS through Apple Vision (src/ingestion/ocr.py). Declared in
+# pyproject.toml too. No dependencies of its own.
+pymacos>=1.19; sys_platform == 'darwin'
+
 # Optional (guarded import with a working fallback: apscheduler -> manual
 # drain, watchdog -> polling)
 apscheduler
