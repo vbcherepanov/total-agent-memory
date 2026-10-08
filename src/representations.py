@@ -41,12 +41,14 @@ _provider_cache: dict[str, Any] = {}
 
 def _get_phase_provider(phase: str):
     """Resolve LLMProvider for the representations phase, caching on first use."""
-    cached = _provider_cache.get(phase)
+    from llm_provider import make_provider
+    name = config.get_phase_provider(phase)
+    cache_key = f"{phase}:{name}"  # the chain may resolve to another provider later
+    cached = _provider_cache.get(cache_key)
     if cached is not None:
         return cached
-    from llm_provider import make_provider
-    provider = make_provider(config.get_phase_provider(phase))
-    _provider_cache[phase] = provider
+    provider = make_provider(name)
+    _provider_cache[cache_key] = provider
     return provider
 
 

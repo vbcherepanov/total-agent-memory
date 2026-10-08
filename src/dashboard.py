@@ -966,12 +966,20 @@ def api_system_status() -> dict:
         )
     disk["total_mb"] = round(sum(disk.values()), 2)
 
+    # LLM provider chain (14.8.0): which provider each enrichment phase can use right now.
+    try:
+        import config as _config
+        llm = _config.llm_health()
+    except (ValueError, OSError) as exc:
+        llm = {"error": str(exc)}
+
     return {
         "status": "running",
         "port": DASHBOARD_PORT,
         "launch_agents": agents,
         "memory": stats,
         "disk": disk,
+        "llm": llm,
         "uptime_info": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
