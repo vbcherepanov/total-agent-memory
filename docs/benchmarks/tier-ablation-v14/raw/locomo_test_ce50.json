@@ -1,0 +1,90 @@
+{
+ "bench": "locomo",
+ "split": "test",
+ "limit": 0,
+ "cross_rerank": "on",
+ "units": 7,
+ "questions": 1153,
+ "defaults": {
+  "fts": 1.0,
+  "semantic": 1.2,
+  "hyde": 1.0,
+  "multi_repr": 1.0,
+  "fuzzy": 0.5,
+  "graph": 0.3,
+  "episode": 0.9,
+  "atomic_facts": 1.0,
+  "directives": 1.0,
+  "multi_query": 0.0
+ },
+ "configs": {
+  "full": {
+   "fts": 1.0,
+   "semantic": 1.2,
+   "hyde": 1.0,
+   "multi_repr": 1.0,
+   "fuzzy": 0.5,
+   "graph": 0.3,
+   "episode": 0.9,
+   "atomic_facts": 1.0,
+   "directives": 1.0,
+   "multi_query": 0.0
+  }
+ },
+ "results": {
+  "full": {
+   "all": {
+    "n": 1153,
+    "R@1": 0.4579,
+    "R@5": 0.7389,
+    "R@10": 0.8144,
+    "MRR": 0.5787
+   },
+   "multi-hop": {
+    "n": 208,
+    "R@1": 0.3365,
+    "R@5": 0.6442,
+    "R@10": 0.7212,
+    "MRR": 0.4694
+   },
+   "open-domain": {
+    "n": 73,
+    "R@1": 0.2192,
+    "R@5": 0.4932,
+    "R@10": 0.5753,
+    "MRR": 0.3301
+   },
+   "single-hop": {
+    "n": 641,
+    "R@1": 0.5055,
+    "R@5": 0.7956,
+    "R@10": 0.8783,
+    "MRR": 0.6305
+   },
+   "temporal": {
+    "n": 231,
+    "R@1": 0.5108,
+    "R@5": 0.7446,
+    "R@10": 0.7965,
+    "MRR": 0.612
+   },
+   "tier_fired": {
+    "fts": 1.0,
+    "semantic": 1.0,
+    "hyde": 0.0,
+    "multi_repr": 0.0,
+    "fuzzy": 0.0,
+    "graph": 0.0,
+    "episode": 0.0,
+    "atomic_facts": 0.0,
+    "directives": 0.0,
+    "multi_query": 0.0
+   },
+   "latency_ms": {
+    "p50": 1014.4,
+    "p95": 1396.5
+   }
+  }
+ },
+ "seconds": 1213.2
+}

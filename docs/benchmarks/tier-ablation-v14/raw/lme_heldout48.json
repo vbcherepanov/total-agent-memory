@@ -1,0 +1,499 @@
+{
+ "bench": "lme",
+ "split": "heldout",
+ "limit": 48,
+ "cross_rerank": "off",
+ "units": 48,
+ "questions": 48,
+ "defaults": {
+  "fts": 1.0,
+  "semantic": 1.2,
+  "hyde": 1.0,
+  "multi_repr": 1.0,
+  "fuzzy": 0.5,
+  "graph": 0.3,
+  "episode": 0.9,
+  "atomic_facts": 1.0,
+  "directives": 1.0,
+  "multi_query": 0.8
+ },
+ "configs": {
+  "full": {
+   "fts": 1.0,
+   "semantic": 1.2,
+   "hyde": 1.0,
+   "multi_repr": 1.0,
+   "fuzzy": 0.5,
+   "graph": 0.3,
+   "episode": 0.9,
+   "atomic_facts": 1.0,
+   "directives": 1.0,
+   "multi_query": 0.8
+  },
+  "no_fts": {
+   "fts": 0.0,
+   "semantic": 1.2,
+   "hyde": 1.0,
+   "multi_repr": 1.0,
+   "fuzzy": 0.5,
+   "graph": 0.3,
+   "episode": 0.9,
+   "atomic_facts": 1.0,
+   "directives": 1.0,
+   "multi_query": 0.8
+  },
+  "no_semantic": {
+   "fts": 1.0,
+   "semantic": 0.0,
+   "hyde": 1.0,
+   "multi_repr": 1.0,
+   "fuzzy": 0.5,
+   "graph": 0.3,
+   "episode": 0.9,
+   "atomic_facts": 1.0,
+   "directives": 1.0,
+   "multi_query": 0.8
+  },
+  "no_multi_query": {
+   "fts": 1.0,
+   "semantic": 1.2,
+   "hyde": 1.0,
+   "multi_repr": 1.0,
+   "fuzzy": 0.5,
+   "graph": 0.3,
+   "episode": 0.9,
+   "atomic_facts": 1.0,
+   "directives": 1.0,
+   "multi_query": 0.0
+  },
+  "no_directives": {
+   "fts": 1.0,
+   "semantic": 1.2,
+   "hyde": 1.0,
+   "multi_repr": 1.0,
+   "fuzzy": 0.5,
+   "graph": 0.3,
+   "episode": 0.9,
+   "atomic_facts": 1.0,
+   "directives": 0.0,
+   "multi_query": 0.8
+  },
+  "tuned": {
+   "fts": 2.0,
+   "semantic": 2.0,
+   "hyde": 1.0,
+   "multi_repr": 1.0,
+   "fuzzy": 0.5,
+   "graph": 0.3,
+   "episode": 0.9,
+   "atomic_facts": 1.0,
+   "directives": 1.0,
+   "multi_query": 0.0
+  }
+ },
+ "results": {
+  "full": {
+   "all": {
+    "n": 48,
+    "R@1": 0.5208,
+    "R@5": 0.75,
+    "R@10": 0.875,
+    "MRR": 0.6342
+   },
+   "knowledge-update": {
+    "n": 5,
+    "R@1": 1.0,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 1.0
+   },
+   "multi-session": {
+    "n": 9,
+    "R@1": 0.4444,
+    "R@5": 0.5556,
+    "R@10": 0.8889,
+    "MRR": 0.5238
+   },
+   "single-session-assistant": {
+    "n": 9,
+    "R@1": 0.5556,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 0.7593
+   },
+   "single-session-preference": {
+    "n": 1,
+    "R@1": 0.0,
+    "R@5": 0.0,
+    "R@10": 1.0,
+    "MRR": 0.125
+   },
+   "single-session-user": {
+    "n": 7,
+    "R@1": 0.5714,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 0.6833
+   },
+   "temporal-reasoning": {
+    "n": 17,
+    "R@1": 0.4118,
+    "R@5": 0.5882,
+    "R@10": 0.7059,
+    "MRR": 0.5285
+   },
+   "tier_fired": {
+    "fts": 1.0,
+    "semantic": 1.0,
+    "hyde": 0.0,
+    "multi_repr": 0.0,
+    "fuzzy": 0.0,
+    "graph": 0.0,
+    "episode": 0.0,
+    "atomic_facts": 0.0,
+    "directives": 0.0,
+    "multi_query": 0.229
+   },
+   "latency_ms": {
+    "p50": 54.1,
+    "p95": 98.6
+   }
+  },
+  "no_fts": {
+   "all": {
+    "n": 48,
+    "R@1": 0.3542,
+    "R@5": 0.7292,
+    "R@10": 0.7708,
+    "MRR": 0.5196
+   },
+   "knowledge-update": {
+    "n": 5,
+    "R@1": 0.8,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 0.9
+   },
+   "multi-session": {
+    "n": 9,
+    "R@1": 0.2222,
+    "R@5": 0.6667,
+    "R@10": 0.8889,
+    "MRR": 0.4103
+   },
+   "single-session-assistant": {
+    "n": 9,
+    "R@1": 0.4444,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 0.6481
+   },
+   "single-session-preference": {
+    "n": 1,
+    "R@1": 0.0,
+    "R@5": 0.0,
+    "R@10": 0.0,
+    "MRR": 0.0476
+   },
+   "single-session-user": {
+    "n": 7,
+    "R@1": 0.2857,
+    "R@5": 0.7143,
+    "R@10": 0.7143,
+    "MRR": 0.4863
+   },
+   "temporal-reasoning": {
+    "n": 17,
+    "R@1": 0.2941,
+    "R@5": 0.5882,
+    "R@10": 0.5882,
+    "MRR": 0.4391
+   },
+   "tier_fired": {
+    "fts": 0.0,
+    "semantic": 1.0,
+    "hyde": 0.0,
+    "multi_repr": 0.0,
+    "fuzzy": 0.0,
+    "graph": 0.0,
+    "episode": 0.0,
+    "atomic_facts": 0.0,
+    "directives": 0.0,
+    "multi_query": 0.229
+   },
+   "latency_ms": {
+    "p50": 30.4,
+    "p95": 60.6
+   }
+  },
+  "no_semantic": {
+   "all": {
+    "n": 48,
+    "R@1": 0.4792,
+    "R@5": 0.75,
+    "R@10": 0.8333,
+    "MRR": 0.6056
+   },
+   "knowledge-update": {
+    "n": 5,
+    "R@1": 0.8,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 0.9
+   },
+   "multi-session": {
+    "n": 9,
+    "R@1": 0.4444,
+    "R@5": 0.5556,
+    "R@10": 0.5556,
+    "MRR": 0.4981
+   },
+   "single-session-assistant": {
+    "n": 9,
+    "R@1": 0.7778,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 0.8704
+   },
+   "single-session-preference": {
+    "n": 1,
+    "R@1": 0.0,
+    "R@5": 0.0,
+    "R@10": 1.0,
+    "MRR": 0.125
+   },
+   "single-session-user": {
+    "n": 7,
+    "R@1": 0.4286,
+    "R@5": 0.7143,
+    "R@10": 1.0,
+    "MRR": 0.5799
+   },
+   "temporal-reasoning": {
+    "n": 17,
+    "R@1": 0.2941,
+    "R@5": 0.7059,
+    "R@10": 0.7647,
+    "MRR": 0.4746
+   },
+   "tier_fired": {
+    "fts": 1.0,
+    "semantic": 0.0,
+    "hyde": 0.0,
+    "multi_repr": 0.0,
+    "fuzzy": 0.0,
+    "graph": 0.0,
+    "episode": 0.0,
+    "atomic_facts": 0.0,
+    "directives": 0.0,
+    "multi_query": 0.229
+   },
+   "latency_ms": {
+    "p50": 20.9,
+    "p95": 48.5
+   }
+  },
+  "no_multi_query": {
+   "all": {
+    "n": 48,
+    "R@1": 0.5208,
+    "R@5": 0.7708,
+    "R@10": 0.875,
+    "MRR": 0.6354
+   },
+   "knowledge-update": {
+    "n": 5,
+    "R@1": 1.0,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 1.0
+   },
+   "multi-session": {
+    "n": 9,
+    "R@1": 0.4444,
+    "R@5": 0.6667,
+    "R@10": 0.8889,
+    "MRR": 0.5301
+   },
+   "single-session-assistant": {
+    "n": 9,
+    "R@1": 0.5556,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 0.7593
+   },
+   "single-session-preference": {
+    "n": 1,
+    "R@1": 0.0,
+    "R@5": 0.0,
+    "R@10": 1.0,
+    "MRR": 0.125
+   },
+   "single-session-user": {
+    "n": 7,
+    "R@1": 0.5714,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 0.6833
+   },
+   "temporal-reasoning": {
+    "n": 17,
+    "R@1": 0.4118,
+    "R@5": 0.5882,
+    "R@10": 0.7059,
+    "MRR": 0.5285
+   },
+   "tier_fired": {
+    "fts": 1.0,
+    "semantic": 1.0,
+    "hyde": 0.0,
+    "multi_repr": 0.0,
+    "fuzzy": 0.0,
+    "graph": 0.0,
+    "episode": 0.0,
+    "atomic_facts": 0.0,
+    "directives": 0.0,
+    "multi_query": 0.0
+   },
+   "latency_ms": {
+    "p50": 32.9,
+    "p95": 58.3
+   }
+  },
+  "no_directives": {
+   "all": {
+    "n": 48,
+    "R@1": 0.5208,
+    "R@5": 0.75,
+    "R@10": 0.875,
+    "MRR": 0.6342
+   },
+   "knowledge-update": {
+    "n": 5,
+    "R@1": 1.0,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 1.0
+   },
+   "multi-session": {
+    "n": 9,
+    "R@1": 0.4444,
+    "R@5": 0.5556,
+    "R@10": 0.8889,
+    "MRR": 0.5238
+   },
+   "single-session-assistant": {
+    "n": 9,
+    "R@1": 0.5556,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 0.7593
+   },
+   "single-session-preference": {
+    "n": 1,
+    "R@1": 0.0,
+    "R@5": 0.0,
+    "R@10": 1.0,
+    "MRR": 0.125
+   },
+   "single-session-user": {
+    "n": 7,
+    "R@1": 0.5714,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 0.6833
+   },
+   "temporal-reasoning": {
+    "n": 17,
+    "R@1": 0.4118,
+    "R@5": 0.5882,
+    "R@10": 0.7059,
+    "MRR": 0.5285
+   },
+   "tier_fired": {
+    "fts": 1.0,
+    "semantic": 1.0,
+    "hyde": 0.0,
+    "multi_repr": 0.0,
+    "fuzzy": 0.0,
+    "graph": 0.0,
+    "episode": 0.0,
+    "atomic_facts": 0.0,
+    "directives": 0.0,
+    "multi_query": 0.229
+   },
+   "latency_ms": {
+    "p50": 35.0,
+    "p95": 61.3
+   }
+  },
+  "tuned": {
+   "all": {
+    "n": 48,
+    "R@1": 0.5625,
+    "R@5": 0.75,
+    "R@10": 0.8542,
+    "MRR": 0.6572
+   },
+   "knowledge-update": {
+    "n": 5,
+    "R@1": 1.0,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 1.0
+   },
+   "multi-session": {
+    "n": 9,
+    "R@1": 0.4444,
+    "R@5": 0.5556,
+    "R@10": 0.7778,
+    "MRR": 0.5299
+   },
+   "single-session-assistant": {
+    "n": 9,
+    "R@1": 0.6667,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 0.8148
+   },
+   "single-session-preference": {
+    "n": 1,
+    "R@1": 0.0,
+    "R@5": 0.0,
+    "R@10": 1.0,
+    "MRR": 0.1429
+   },
+   "single-session-user": {
+    "n": 7,
+    "R@1": 0.5714,
+    "R@5": 1.0,
+    "R@10": 1.0,
+    "MRR": 0.6833
+   },
+   "temporal-reasoning": {
+    "n": 17,
+    "R@1": 0.4706,
+    "R@5": 0.5882,
+    "R@10": 0.7059,
+    "MRR": 0.5597
+   },
+   "tier_fired": {
+    "fts": 1.0,
+    "semantic": 1.0,
+    "hyde": 0.0,
+    "multi_repr": 0.0,
+    "fuzzy": 0.0,
+    "graph": 0.0,
+    "episode": 0.0,
+    "atomic_facts": 0.0,
+    "directives": 0.0,
+    "multi_query": 0.0
+   },
+   "latency_ms": {
+    "p50": 32.6,
+    "p95": 59.5
+   }
+  }
+ },
+ "seconds": 50.2
+}
