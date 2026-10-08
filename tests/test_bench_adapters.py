@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import types
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -109,6 +110,47 @@ def test_worker_environment_strips_secrets_and_pins_memory_dir(tmp_path):
     assert env["TAM_MEMORY_DIR"] == env["CLAUDE_MEMORY_DIR"] == str(tmp_path)
     assert env["MEMORY_CROSS_RERANK"] == "off"
     assert env["PYTHONPATH"].split(os.pathsep) == [str(BENCH), str(ROOT / "src")]
+
+
+def test_worker_extra_env_is_applied_after_the_secret_scrub_and_must_stay_local(tmp_path):
+    local = {"MEMORY_EMBED_PROVIDER": "openai", "MEMORY_EMBED_API_BASE": "http://127.0.0.1:11434/v1",
+             "MEMORY_EMBED_API_KEY": "local-placeholder"}
+    settings = TamWorkerSettings(tam_src=str(ROOT / "src"), embed_provider="openai", extra_env=local).validate()
+    env = worker_environment({"MEMORY_EMBED_API_KEY": "real-secret", "OPENAI_API_KEY": "x"}, str(tmp_path), settings)
+    assert env["MEMORY_EMBED_API_KEY"] == "local-placeholder" and "OPENAI_API_KEY" not in env
+    assert env["MEMORY_EMBED_API_BASE"] == "http://127.0.0.1:11434/v1"
+    assert "MEMORY_EMBED_API_BASE" not in worker_environment({}, str(tmp_path), TamWorkerSettings(tam_src=str(ROOT / "src")))
+    with pytest.raises(ValueError, match="local endpoint"):
+        TamWorkerSettings(tam_src=str(ROOT / "src"),
+                          extra_env={"MEMORY_EMBED_API_BASE": "https://api.openai.com/v1"}).validate()
+
+
+def test_worker_hosted_embeddings_need_a_key_file_and_an_allowed_host(tmp_path):
+    key_file = tmp_path / "deepinfra.key"
+    key_file.write_text("hosted-secret\n", encoding="utf-8")
+    hosted = {"MEMORY_EMBED_PROVIDER": "openai", "MEMORY_EMBED_API_BASE": "https://api.deepinfra.com/v1/openai",
+              "MEMORY_EMBED_MODEL": "BAAI/bge-m3"}
+    settings = TamWorkerSettings(tam_src=str(ROOT / "src"), embed_provider="openai", extra_env=hosted,
+                                 embed_key_file=str(key_file)).validate()
+    env = worker_environment({"MEMORY_EMBED_API_KEY": "inherited", "OPENAI_API_KEY": "x"}, str(tmp_path), settings)
+    assert env["MEMORY_EMBED_API_KEY"] == "hosted-secret" and "OPENAI_API_KEY" not in env
+    assert "hosted-secret" not in json.dumps(asdict(settings))
+    with pytest.raises(ValueError, match="embed_key_file"):
+        TamWorkerSettings(tam_src=str(ROOT / "src"), extra_env=hosted).validate()
+    with pytest.raises(ValueError, match="local endpoint or one of"):
+        TamWorkerSettings(tam_src=str(ROOT / "src"), embed_key_file=str(key_file),
+                          extra_env={"MEMORY_EMBED_API_BASE": "https://api.openai.com/v1"}).validate()
+    with pytest.raises(ValueError, match="MEMORY_EMBED_API_KEY"):
+        TamWorkerSettings(tam_src=str(ROOT / "src"), embed_key_file=str(key_file),
+                          extra_env={**hosted, "MEMORY_EMBED_API_KEY": "inline"}).validate()
+    with pytest.raises(ValueError, match="does not exist"):
+        TamWorkerSettings(tam_src=str(ROOT / "src"), embed_key_file=str(tmp_path / "missing.key"),
+                          extra_env=hosted).validate()
+    empty = tmp_path / "empty.key"
+    empty.write_text("\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="empty"):
+        worker_environment({}, str(tmp_path), TamWorkerSettings(tam_src=str(ROOT / "src"), extra_env=hosted,
+                                                               embed_key_file=str(empty)))
 
 
 def test_worker_settings_validate(tmp_path):
@@ -493,6 +535,18 @@ def test_lme_fragments_cover_overview_and_every_state():
     assert "Action: (none: initial state)" in fragments[1]["index_text"]
 
 
+def test_lme_overview_embedding_input_is_capped_but_fts_keeps_every_step():
+    trajectory = _trajectory()
+    step = trajectory["states"][1]
+    trajectory["states"] = [trajectory["states"][0]] + [
+        {**step, "state_index": str(i), "thought": f"Step {i} " + "reasoning " * 40} for i in range(1, 200)]
+    overview = lme.trajectory_fragments(trajectory, lme.TamLmeSettings(tam_src="/unused"))[0]
+    assert overview["meta"]["kind"] == "overview"
+    assert len(overview["index_text"]) > lme.OVERVIEW_EMBED_CHARS
+    assert overview["embed_text"] == overview["index_text"][:lme.OVERVIEW_EMBED_CHARS]
+    assert "199. [" in overview["index_text"]
+
+
 def test_lme_best_window_prefers_lines_with_query_terms():
     lines = [f"filler {i}" for i in range(50)] + ["button 'Incident Mobile'"] + [f"tail {i}" for i in range(50)]
     start, end = lme.best_window(lines, lme.query_terms("Which filter shows Incident Mobile?"), 60)
@@ -545,6 +599,156 @@ def test_lme_assemble_items_shows_each_hit_with_its_neighbours_in_trajectory_ord
 def test_lme_fragments_carry_their_trajectory_as_session():
     fragments = lme.trajectory_fragments(_trajectory(), lme.TamLmeSettings(tam_src="/unused"))
     assert {fragment["session"] for fragment in fragments} == {"t1"}
+
+
+def test_lme_clean_tree_drops_ids_noise_flags_and_nameless_containers():
+    tree = ("RootWebArea 'Orders', focused\n\t[12] navigation '', visible\n\t\t[13] link 'Export', clickable, visible"
+            "\n\t\t[14] StaticText '\\uf054'\n\t\t[15] textbox 'Title *', required\n\t[16] generic ''")
+    assert lme.clean_tree(tree) == ["RootWebArea 'Orders', focused", "  link 'Export'", "  textbox 'Title *', required"]
+    assert lme.page_title(lme.clean_tree(tree)) == "Orders"
+
+
+def test_lme_clean_tree_v2_strips_frame_ids_and_keeps_icon_text():
+    tree = ("RootWebArea 'Task', focused\n\t[a1] note '', visible\n\t\tStaticText '\\uf1dd'"
+            "\n\t[a2] button 'Update', clickable, visible")
+    assert lme.clean_tree(tree) == ["RootWebArea 'Task', focused", " [a1] note ''", " [a2] button 'Update'"]
+    assert lme.clean_tree(tree, "v2") == ["RootWebArea 'Task', focused", "  StaticText '\\uf1dd'", " button 'Update'"]
+
+
+def test_lme_tree_clean_is_a_validated_index_parameter():
+    with pytest.raises(ValueError, match="tree_clean"):
+        lme.TamLmeSettings.from_params({"tam_src": "/unused", "tree_clean": "v3"})
+    saved = {"memory_type": "tam", "memory_params": {"tam_src": "/unused", "tree_clean": "v1"}}
+    requested = {"memory_type": "tam", "memory_params": {"tam_src": "/unused", "tree_clean": "v2"}}
+    with pytest.raises(RuntimeError, match="tree_clean"):
+        lme.TamMemory.reconcile_loaded_memory_config(saved, requested)
+    older = {"memory_type": "tam", "memory_params": {"tam_src": "/unused"}}
+    explicit_v1 = {"memory_type": "tam", "memory_params": {"tam_src": "/unused", "tree_clean": "v1"}}
+    assert lme.TamMemory.reconcile_loaded_memory_config(older, explicit_v1) == explicit_v1
+
+
+def test_lme_chunk_lines_keeps_whole_lines_within_the_limit():
+    lines = ["a" * 10, "b" * 10, "c" * 10, "d" * 40]
+    assert lme.chunk_lines(lines, 25) == [(0, 2), (2, 3), (3, 4)]
+    assert lme.chunk_lines([], 25) == []
+
+
+def test_lme_clean_query_drops_answer_format_sentences_only():
+    query = "I am using the admin site. Which tables lack Export? Wrap your final answer in \\boxed{}."
+    assert lme.clean_query_text(query) == "I am using the admin site. Which tables lack Export?"
+    assert lme.clean_query_text("Mark your final answer in \\boxed{}.") == "Mark your final answer in \\boxed{}."
+
+
+def test_lme_chunk_mode_indexes_repeated_chunks_once_and_ranks_states_by_their_hits():
+    memory = lme.TamMemory({"tam_src": "/unused", "index_mode": "chunk", "chunk_chars": 60,
+                            "max_context_chars": 5000})
+    added = []
+
+    class Store(_FakeStore):
+        def add(self, fragments):
+            added.extend(fragments)
+            return {"fragments": len(fragments)}
+
+    memory._store = Store([])
+    menu = "\n".join(f"\t[{i}] link 'Menu {i}', clickable" for i in range(3))
+    for tid, extra in (("t1", "button 'Ship'"), ("t2", "button 'Invoice'")):
+        memory.insert({"id": tid, "environment": "webarena", "outcome": "success", "goal": "g", "start_url": "u",
+                       "states": [{"state_index": 0, "url": "https://x/order?id=1", "action": None, "thought": "",
+                                   "accessibility_tree": "RootWebArea 'Order'\n" + menu + "\n\t[9] " + extra}]})
+    chunks = [fragment for fragment in added if fragment["meta"]["kind"] == "chunk"]
+    keys = [fragment["meta"]["key"] for fragment in chunks]
+    assert len(keys) == len(set(keys))
+    assert all(fragment["embed_text"] == fragment["index_text"][:600] for fragment in added
+               if fragment["meta"]["kind"] != "overview")
+    shared = [key for key, seen in memory._occurrences.items() if len(seen) == 2]
+    assert shared and all(key in keys for key in shared)
+    ship = next(f for f in chunks if "Ship" in f["index_text"])
+    memory._store.hits = [{"rank": 0, "meta": ship["meta"]},
+                          {"rank": 1, "meta": next(f for f in chunks if f["meta"]["key"] == shared[0])["meta"]}]
+    memory._fragment_count = len(added)
+    items = memory.query("which button ships?")
+    assert memory._store.calls == [{"limit": 200}]
+    assert [hit["trajectory_id"] for hit in memory._last_hits.value] == ["t1", "t2"]
+    assert items[0]["value"].startswith("[Memory 1]\nTrajectory t1") and "button 'Ship'" in items[0]["value"]
+    assert "[9]" not in items[0]["value"] and "Action that led to this page: (none: initial state)" in items[0]["value"]
+
+
+def test_lme_chunk_mode_caps_near_duplicate_pages():
+    memory = lme.TamMemory({"tam_src": "/unused", "index_mode": "chunk", "per_page_cap": 1})
+    memory._store = _FakeStore([{"rank": r, "meta": {"kind": "step", "trajectory_id": f"t{r}", "state_index": 0}}
+                                for r in range(3)])
+    memory._fragment_count = 3
+    for r in range(3):
+        memory._trajectories[f"t{r}"] = {"goal": "g", "outcome": "success", "environment": "webarena"}
+        memory._views[(f"t{r}", 0)] = lme.StateView(f"t{r}", 0, 1, "https://x/p?q=" + str(r), "Same page", "", "",
+                                                    "", ["RootWebArea 'Same page'"], [(0, 1)])
+    memory._views[("t2", 0)].url = "https://x/other"
+    memory._views[("t1", 0)].url = "https://x/p%3Fq%3D1"
+    memory.query("page")
+    assert [hit["trajectory_id"] for hit in memory._last_hits.value] == ["t0", "t2"]
+
+
+def test_lme_chunk_mode_attaches_screenshots_of_the_first_states_only(tmp_path):
+    (tmp_path / "screenshots" / "t0").mkdir(parents=True)
+    (tmp_path / "screenshots" / "t0" / "0.png").write_bytes(b"png")
+    memory = lme.TamMemory({"tam_src": "/unused", "index_mode": "chunk", "screenshots": 1,
+                            "screenshot_root": str(tmp_path)})
+    memory._store = _FakeStore([{"rank": r, "meta": {"kind": "step", "trajectory_id": f"t{r}", "state_index": 0}}
+                                for r in range(2)])
+    memory._fragment_count = 2
+    for r in range(2):
+        memory._trajectories[f"t{r}"] = {"goal": "g", "outcome": "success", "environment": "webarena"}
+        memory._views[(f"t{r}", 0)] = lme.StateView(f"t{r}", 0, 1, f"https://x/{r}", f"P{r}", "", "", "",
+                                                    ["RootWebArea 'P'"], [(0, 1)], f"screenshots/t{r}/0.png")
+    items = memory.query("page")
+    assert [item["type"] for item in items] == ["text", "image", "text"]
+    assert items[1]["value"] == str(tmp_path / "screenshots" / "t0" / "0.png")
+    with pytest.raises(ValueError, match="screenshot_root"):
+        lme.TamLmeSettings.from_params({"tam_src": "/x", "screenshots": 2})
+
+
+def test_lme_saved_chunk_index_reloads_with_other_query_settings_only(tmp_path):
+    params = {"tam_src": "/unused", "index_mode": "chunk", "chunk_chars": 60}
+    memory = lme.TamMemory(params)
+
+    class Store(_FakeStore):
+        def add(self, fragments):
+            return {"fragments": len(fragments)}
+
+        def snapshot(self, target):
+            Path(target).mkdir()
+            (Path(target) / "memory.db").write_text("db")
+
+    memory._store = Store([])
+    memory.insert({"id": "t1", "environment": "webarena", "outcome": "success", "goal": "g", "start_url": "u",
+                   "states": [{"state_index": 0, "url": "https://x", "action": None, "thought": "t",
+                               "accessibility_tree": "RootWebArea 'P'\n\t[1] button 'Ship'",
+                               "screenshot": "screenshots/t1/0.png"}]})
+    memory._save_backend(tmp_path)
+    loaded = lme.TamMemory({**params, "max_context_chars": 999})
+    loaded._ensure_store = lambda: None
+    loaded._load_backend(tmp_path)
+    assert loaded._views == memory._views and loaded._occurrences == memory._occurrences
+    assert loaded._fragment_count == memory._fragment_count and loaded._seed_dir == tmp_path / "tam_store"
+    saved = {"memory_type": "tam", "memory_params": params}
+    assert lme.TamMemory.reconcile_loaded_memory_config(
+        saved, {"memory_type": "tam", "memory_params": {**params, "max_context_chars": 999}}
+    )["memory_params"]["max_context_chars"] == 999
+    with pytest.raises(RuntimeError, match="chunk_chars"):
+        lme.TamMemory.reconcile_loaded_memory_config(
+            saved, {"memory_type": "tam", "memory_params": {**params, "chunk_chars": 61}})
+
+
+def test_lme_render_state_shows_matching_chunks_with_neighbours_when_the_page_is_long():
+    settings = lme.TamLmeSettings(tam_src="/unused", index_mode="chunk", chunk_chars=30, state_full_chars=50)
+    lines = [f"line {i:02d} " + "x" * 10 for i in range(20)]
+    view = lme.StateView("t1", 2, 5, "https://x", "T", "think", "click('1')", "click('2')", lines,
+                         lme.chunk_lines(lines, 30))
+    text = lme.render_state(view, {10}, "goal", "success", "webarena", settings, 10000)
+    assert "Next action taken on this page: click('2')" in text
+    assert "line 09" in text and "line 10" in text and "line 11" in text
+    assert "line 08" not in text and "line 12" not in text
+    assert "[...]" in text
 
 
 def test_lme_settings_reject_unknown_params():
@@ -643,3 +847,30 @@ def test_tam_store_process_neighbours_stay_in_their_session_and_fill_the_budget(
         assert len(filled) == 1 or sum(len(hit["content"]) for hit in filled) <= 60
     finally:
         store.close()
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(os.environ.get("RUN_BENCH_ADAPTER_SLOW") != "1",
+                    reason="set RUN_BENCH_ADAPTER_SLOW=1 to start a real TAM worker (loads the local embedder)")
+def test_tam_store_process_snapshot_seeds_an_identical_store(tmp_path):
+    settings = TamWorkerSettings(tam_src=str(ROOT / "src"), cross_rerank="off", work_root=str(tmp_path / "work"),
+                                 worker_timeout_s=600)
+    store = TamStoreProcess(settings)
+    try:
+        store.add([
+            {"index_text": "The kitchen has a red kettle on the stove.", "embed_text": "kitchen kettle",
+             "meta": {"n": 0}},
+            {"index_text": "The garage holds a blue bicycle and two tyres.", "meta": {"n": 1}},
+        ])
+        before = store.search("Where is the bicycle?", limit=2)
+        store.snapshot(tmp_path / "saved")
+    finally:
+        store.close()
+    reloaded = TamStoreProcess(settings, seed_dir=tmp_path / "saved")
+    try:
+        after = reloaded.search("Where is the bicycle?", limit=2)
+        assert [hit["meta"] for hit in after] == [hit["meta"] for hit in before]
+        assert after[0]["meta"] == {"n": 1}
+    finally:
+        reloaded.close()
+    assert (tmp_path / "saved").is_dir()

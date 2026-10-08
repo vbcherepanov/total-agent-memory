@@ -62,6 +62,28 @@ Outputs: `tam_{norerank,rerank}_{web,enterprise}_small/` (harness `per_question.
 
 Full small tier (240 web + 211 enterprise questions): `QUESTIONS_PER_DOMAIN=all`.
 
+## Hosted reader and embeddings
+
+The paper serves Qwen3.5-9B in bf16 with vLLM. A local Ollama build is quantized and takes
+minutes per question on a laptop; a hosted OpenAI-compatible endpoint serving the same
+weights in bf16 (DeepInfra `Qwen/Qwen3.5-9B`) runs a question in seconds. The packager
+lowercases the reader name before its `qwen3.5-9b` check, so `Qwen/Qwen3.5-9B` passes.
+
+```bash
+printf '%s\n' "$DEEPINFRA_KEY" > ~/.config/tam-bench/deepinfra.key; chmod 600 ~/.config/tam-bench/deepinfra.key
+READER_BASE_URL=https://api.deepinfra.com/v1/openai READER_MODEL=Qwen/Qwen3.5-9B \
+READER_KEY_FILE=~/.config/tam-bench/deepinfra.key LME_HARNESS_DIR=... LME_DATA_ROOT=... LME_PYTHON=... \
+  docs/benchmarks/longmemeval-v2/run_pilot.sh "$S/runs/lme-hosted"
+```
+
+TAM's embeddings can use the same endpoint through `--extra-memory-params` (or
+`TAM_EXTRA_MEMORY_PARAMS`): `embed_provider: "openai"`, `embed_env` with
+`MEMORY_EMBED_API_BASE` and `MEMORY_EMBED_MODEL`, and `embed_key_file`. The TAM worker reads the
+key from that file when it starts; the key is not in `memory_config.json` (which goes into a
+leaderboard package) and not in the harness's environment. A hosted base must be listed in
+`HOSTED_EMBED_BASES` (`tam_bench_common/tam_worker.py`) and needs `embed_key_file`; any other
+non-local base is refused.
+
 ## Dry run (no paid call)
 
 ```bash

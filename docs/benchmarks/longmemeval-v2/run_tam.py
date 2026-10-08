@@ -44,8 +44,29 @@ def parse_args() -> argparse.Namespace:
                         help="states before and after each hit (same trajectory) that come with it")
     parser.add_argument("--max-context-chars", type=int, default=48000)
     parser.add_argument("--per-hit-max-chars", type=int, default=8000)
+    parser.add_argument("--index-mode", default="state", choices=["state", "chunk"],
+                        help="state: one fragment per page state; chunk: cleaned page regions, deduplicated")
+    parser.add_argument("--chunk-chars", type=int, default=1200, help="chunk mode: page region size")
+    parser.add_argument("--chunk-pool", type=int, default=200, help="chunk mode: ranked fragments folded into states")
+    parser.add_argument("--state-full-chars", type=int, default=6000,
+                        help="chunk mode: pages up to this size are shown whole")
+    parser.add_argument("--state-max-chars", type=int, default=12000, help="chunk mode: cap per shown state")
+    parser.add_argument("--per-page-cap", type=int, default=2,
+                        help="chunk mode: states shown per (page title, URL path)")
+    parser.add_argument("--clean-query", action="store_true",
+                        help="drop the answer-format sentences from the question before searching")
+    parser.add_argument("--extra-memory-params", default=None,
+                        help="JSON object merged into memory_params (e.g. embed_provider/embed_env for a local "
+                             "embedding server)")
+    parser.add_argument("--save-memory", action="store_true",
+                        help="also save the built TAM index to OUTPUT_DIR/memory_state (harness --save-memory)")
+    parser.add_argument("--load-memory-dir", default=None,
+                        help="reuse a saved memory_state (same index parameters) instead of rebuilding")
     parser.add_argument("--reader-model", default="qwen3.5-9b")
     parser.add_argument("--reader-base-url", default="http://127.0.0.1:11434/v1")
+    parser.add_argument("--reader-key-file", default=None,
+                        help="file holding only the reader API key (a hosted reader); read by the harness, "
+                             "never placed in the environment")
     parser.add_argument("--reader-temperature", type=float, default=0.6)
     parser.add_argument("--reader-top-p", type=float, default=0.95)
     parser.add_argument("--reader-top-k", type=int, default=20)
@@ -57,10 +78,35 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--evaluator-reasoning-effort", default="medium", choices=["low", "medium", "high"])
     parser.add_argument("--evaluator-max-completion-tokens", type=int, default=4096)
     args = parser.parse_args()
+    if args.reader_key_file and not Path(args.reader_key_file).expanduser().is_file():
+        parser.error(f"--reader-key-file {args.reader_key_file!r} does not exist")
     if not args.evaluator_base_url:
         parser.error("--evaluator-base-url (or TAM_BENCH_PROXY_URL from run_guarded.py) is required: "
                      "the judge only runs behind the budget proxy")
     return args
+
+
+EMPTY_TEXT_ATTEMPTS = 3
+
+
+def _retry_empty_reader_text(harness, attempts: int) -> None:
+    """A reader that spends its whole completion budget on thinking returns empty text; the
+    harness then raises and loses every answer of the domain. Ask again (sampling is on, so a
+    retry can finish), and after the last attempt record an empty answer — the harness's own
+    outcome for a request the provider rejects (BadRequestError)."""
+    original = harness.call_reader_model_async
+
+    async def call_with_retry(client, args, messages):
+        for attempt in range(1, attempts + 1):
+            try:
+                return await original(client, args, messages)
+            except RuntimeError as exc:
+                if str(exc) != "Model returned empty text":
+                    raise
+                print(f"Reader returned empty text (attempt {attempt}/{attempts})", file=sys.stderr, flush=True)
+        return "", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    harness.call_reader_model_async = call_with_retry
 
 
 def main() -> None:
@@ -92,10 +138,22 @@ def main() -> None:
             "context_radius": args.context_radius,
             "max_context_chars": args.max_context_chars,
             "per_hit_max_chars": args.per_hit_max_chars,
+            "index_mode": args.index_mode,
+            "chunk_chars": args.chunk_chars,
+            "chunk_pool": args.chunk_pool,
+            "state_full_chars": args.state_full_chars,
+            "state_max_chars": args.state_max_chars,
+            "per_page_cap": args.per_page_cap,
+            "clean_query": args.clean_query,
             "cross_rerank": args.cross_rerank,
             "work_root": args.work_root,
         },
     }
+    if args.extra_memory_params:
+        extra = json.loads(args.extra_memory_params)
+        if not isinstance(extra, dict):
+            raise SystemExit("--extra-memory-params must be a JSON object")
+        memory_config["memory_params"].update(extra)
     write_json(runtime_dir / "memory_config.json", memory_config)
 
     harness_argv = [
@@ -122,11 +180,20 @@ def main() -> None:
         "--evaluator-reasoning-effort", args.evaluator_reasoning_effort,
         "--evaluator-max-completion-tokens", str(args.evaluator_max_completion_tokens),
     ]
+    if args.reader_key_file:
+        harness_argv.extend(["--api-key-file", str(Path(args.reader_key_file).expanduser().resolve())])
+    if args.save_memory:
+        harness_argv.append("--save-memory")
+    if args.load_memory_dir:
+        harness_argv.extend(["--load-memory-dir", str(Path(args.load_memory_dir).expanduser().resolve())])
     print(json.dumps({"event": "run_tam_start", "runtime_dir": str(runtime_dir), "domain": args.domain,
                       "questions": len(selected), "cross_rerank": args.cross_rerank}), flush=True)
     os.environ.pop(READER_KEY_ENV, None)
     sys.argv = harness_argv
+    import evaluation.harness as harness
     from evaluation.harness import main as harness_main
+
+    _retry_empty_reader_text(harness, attempts=EMPTY_TEXT_ATTEMPTS)
 
     harness_main()
 
