@@ -37,6 +37,7 @@ wiring into call-sites happens in a separate wave — these just expose env):
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 import urllib.error
@@ -487,11 +488,8 @@ def _auto_resolve_llm_provider() -> str:
     return "ollama"
 
 
-def get_llm_provider() -> str:
-    """Canonical LLM provider name.
-
-    `auto` resolves by probing well-known API-key env vars.
-    """
+def _configured_llm_provider() -> str:
+    """The provider MEMORY_LLM_PROVIDER names (`auto` resolved from API keys)."""
     raw = _normalize_provider(
         os.environ.get("MEMORY_LLM_PROVIDER", "ollama"),
         _SUPPORTED_LLM_PROVIDERS,
@@ -500,6 +498,16 @@ def get_llm_provider() -> str:
     if raw == "auto":
         return _auto_resolve_llm_provider()
     return raw
+
+
+def get_llm_provider() -> str:
+    """Canonical LLM provider name for the global phase.
+
+    `auto` resolves by probing well-known API-key env vars. When
+    MEMORY_LLM_FALLBACK_PROVIDERS is set, the first provider of the chain
+    that answers its availability probe is returned (see resolve_llm_provider).
+    """
+    return resolve_llm_provider(None)
 
 
 def get_llm_api_base(provider: str | None = None) -> str:
@@ -652,17 +660,23 @@ def _normalize_phase(phase: str) -> str:
     return p
 
 
-def get_phase_provider(phase: str) -> str:
-    """Per-phase provider override. Falls back to the global LLM provider."""
+def _configured_phase_provider(phase: str) -> str:
+    """Per-phase provider override (MEMORY_<PHASE>_PROVIDER), else the global one."""
     p = _normalize_phase(phase)
     env_name = f"MEMORY_{p.upper()}_PROVIDER"
     raw = os.environ.get(env_name)
     if not raw:
-        return get_llm_provider()
-    normalized = _normalize_provider(raw, _SUPPORTED_LLM_PROVIDERS, default=get_llm_provider())
+        return _configured_llm_provider()
+    normalized = _normalize_provider(raw, _SUPPORTED_LLM_PROVIDERS, default=_configured_llm_provider())
     if normalized == "auto":
         return _auto_resolve_llm_provider()
     return normalized
+
+
+def get_phase_provider(phase: str) -> str:
+    """Provider for a phase: the configured one, or with MEMORY_LLM_FALLBACK_PROVIDERS
+    the first provider of the phase's chain that is available right now."""
+    return resolve_llm_provider(_normalize_phase(phase))
 
 
 def get_phase_model(phase: str) -> str:
@@ -1104,3 +1118,280 @@ def reset_mode_resolution() -> None:
     global _mode_resolved
     _mode_resolved = False
     os.environ.pop("MEMORY_MODE_RESOLVED", None)
+
+
+# ──────────────────────────────────────────────
+# Recall tier weights (14.8.0)
+# ──────────────────────────────────────────────
+#
+# `memory_recall` fuses the ranked lists of its retrieval tiers with weighted
+# Reciprocal Rank Fusion. The weights used to be constants inside the server;
+# they are now read from ``MEMORY_RECALL_TIER_WEIGHTS`` so an installation (or
+# an ablation run) can retune or switch a tier off without a code change.
+#
+#   MEMORY_RECALL_TIER_WEIGHTS=fts=1.0,semantic=1.2,fuzzy=0,graph=0.8
+#
+# Tiers that are not named keep their default. A weight of 0 switches the tier
+# off entirely: it is not executed, so it costs no time and adds no candidates.
+
+RECALL_TIERS: tuple[str, ...] = (
+    "fts", "semantic", "hyde", "multi_repr", "fuzzy", "graph", "episode", "atomic_facts",
+    "directives", "multi_query",
+)
+
+DEFAULT_RECALL_TIER_WEIGHTS: dict[str, float] = {
+    "fts": 1.0,
+    "semantic": 1.2,
+    "hyde": 1.0,
+    "multi_repr": 1.0,
+    "fuzzy": 0.5,
+    # Graph candidates are one hop from the seeds, never evidence on their own.
+    "graph": 0.3,
+    "episode": 0.9,
+    # Atomic facts only count when no other tier found anything; see Recall.
+    "atomic_facts": 1.0,
+    # Conventions and preferences of the project for advice-shaped queries.
+    "directives": 1.0,
+    # Each side of an ordering / comparison question searched on its own.
+    # Off by default: neutral on LoCoMo and LongMemEval-S held-out splits
+    # (docs/benchmarks/tier-ablation-v14), costs ~20 ms when it fires.
+    "multi_query": 0.0,
+}
+
+_tier_weights_cache: dict[str, dict[str, float]] = {}
+
+
+def parse_tier_weights(raw: str | None) -> dict[str, float]:
+    """Parse ``tier=weight,...`` into a full weight table over RECALL_TIERS.
+
+    Unknown tiers, non-numeric or negative weights raise ValueError so a typo
+    in the environment is reported instead of silently ignored.
+    """
+    weights = dict(DEFAULT_RECALL_TIER_WEIGHTS)
+    if raw is None or not raw.strip():
+        return weights
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        name, sep, value = part.partition("=")
+        name = name.strip().lower()
+        if not sep or name not in RECALL_TIERS:
+            raise ValueError(
+                f"MEMORY_RECALL_TIER_WEIGHTS: unknown tier {name!r}; known tiers: {', '.join(RECALL_TIERS)}"
+            )
+        try:
+            weight = float(value.strip())
+        except ValueError as error:
+            raise ValueError(f"MEMORY_RECALL_TIER_WEIGHTS: {name} needs a number, got {value.strip()!r}") from error
+        if weight < 0 or math.isnan(weight) or math.isinf(weight):
+            raise ValueError(f"MEMORY_RECALL_TIER_WEIGHTS: {name} must be a finite number >= 0, got {weight}")
+        weights[name] = weight
+    return weights
+
+
+def get_recall_tier_weights() -> dict[str, float]:
+    """Tier weights from the environment; a malformed value is logged and ignored.
+
+    The lookup is cached per raw string so the hot recall path parses nothing.
+    """
+    raw = os.environ.get("MEMORY_RECALL_TIER_WEIGHTS", "")
+    cached = _tier_weights_cache.get(raw)
+    if cached is None:
+        try:
+            cached = parse_tier_weights(raw)
+        except ValueError as error:
+            import logging
+            logging.getLogger(__name__).warning(
+                "ignoring MEMORY_RECALL_TIER_WEIGHTS, using defaults", extra={"error": str(error)}
+            )
+            cached = dict(DEFAULT_RECALL_TIER_WEIGHTS)
+        _tier_weights_cache[raw] = cached
+    return dict(cached)
+
+
+def tier_weight_signature(weights: dict[str, float]) -> str | None:
+    """Compact cache-key fragment; None when the weights are the defaults."""
+    if all(float(weights.get(name, DEFAULT_RECALL_TIER_WEIGHTS[name])) == DEFAULT_RECALL_TIER_WEIGHTS[name]
+           for name in RECALL_TIERS):
+        return None
+    return ",".join(f"{name}={float(weights.get(name, DEFAULT_RECALL_TIER_WEIGHTS[name])):g}" for name in RECALL_TIERS)
+
+
+# ──────────────────────────────────────────────
+# Graph tier hub cut-off (14.8.0)
+# ──────────────────────────────────────────────
+
+DEFAULT_GRAPH_HUB_DEGREE = 200
+
+
+def get_graph_hub_degree() -> int:
+    """Nodes linked to more records than this are ignored by the recall graph tier.
+
+    MEMORY_GRAPH_HUB_DEGREE; a non-positive or malformed value falls back to the default.
+    """
+    raw = os.environ.get("MEMORY_GRAPH_HUB_DEGREE", "").strip()
+    if not raw:
+        return DEFAULT_GRAPH_HUB_DEGREE
+    try:
+        value = int(raw)
+    except ValueError:
+        import logging
+        logging.getLogger(__name__).warning("ignoring MEMORY_GRAPH_HUB_DEGREE, using default",
+                                            extra={"value": raw})
+        return DEFAULT_GRAPH_HUB_DEGREE
+    return value if value > 0 else DEFAULT_GRAPH_HUB_DEGREE
+
+
+# ──────────────────────────────────────────────
+# LLM provider fallback chain (14.8.0)
+# ──────────────────────────────────────────────
+#
+# Enrichment (triples, representations, deep enrichment, session compression,
+# contradiction checks) used to stop silently when the configured provider,
+# usually a local Ollama, was down: queue rows stayed pending and nothing said
+# so. With
+#
+#   MEMORY_LLM_FALLBACK_PROVIDERS=anthropic,openai
+#
+# every phase resolves its provider through a chain: the configured provider
+# first, then the fallbacks in order; the first one whose availability probe
+# passes is used. Probes are the same cached ones has_llm() uses, so the hot
+# path pays nothing extra. Fallback use is capped per process with
+# MEMORY_LLM_FALLBACK_MAX_CALLS (resolutions that landed on a fallback; each
+# enrichment call resolves once). llm_health() reports the chain, which
+# providers answer, the active one and the pending queue rows, and
+# memory_stats / the dashboard health endpoint include it.
+
+DEFAULT_LLM_FALLBACK_MAX_CALLS = 500
+
+_fallback_calls = 0
+
+
+def get_llm_fallback_providers() -> tuple[str, ...]:
+    """Providers named in MEMORY_LLM_FALLBACK_PROVIDERS, in order, unknown names dropped with a log line."""
+    raw = os.environ.get("MEMORY_LLM_FALLBACK_PROVIDERS", "")
+    names: list[str] = []
+    for part in raw.split(","):
+        name = part.strip().lower()
+        if not name or name in names:
+            continue
+        if name == "auto" or name not in _SUPPORTED_LLM_PROVIDERS:
+            import logging
+            logging.getLogger(__name__).warning(
+                "ignoring unknown entry in MEMORY_LLM_FALLBACK_PROVIDERS", extra={"provider": name})
+            continue
+        names.append(name)
+    return tuple(names)
+
+
+def get_llm_fallback_max_calls() -> int:
+    raw = os.environ.get("MEMORY_LLM_FALLBACK_MAX_CALLS", "").strip()
+    if not raw:
+        return DEFAULT_LLM_FALLBACK_MAX_CALLS
+    try:
+        value = int(raw)
+    except ValueError:
+        import logging
+        logging.getLogger(__name__).warning("ignoring MEMORY_LLM_FALLBACK_MAX_CALLS, using default",
+                                            extra={"value": raw})
+        return DEFAULT_LLM_FALLBACK_MAX_CALLS
+    return max(0, value)
+
+
+def get_llm_provider_chain(phase: str | None = None) -> list[str]:
+    """The configured provider for `phase` (or the global one) followed by the fallbacks."""
+    primary = _configured_phase_provider(phase) if phase else _configured_llm_provider()
+    return [primary, *[name for name in get_llm_fallback_providers() if name != primary]]
+
+
+def provider_is_available(name: str) -> bool:
+    """Cached availability probe for one provider name; a failing probe is False, never an error."""
+    if name == "ollama":
+        return detect_ollama() and has_model(get_llm_model_for_provider("ollama"))
+    try:
+        from llm_provider import make_provider
+        return bool(make_provider(name).available())
+    except Exception as error:  # noqa: BLE001 — a probe must not raise into the caller
+        import logging
+        logging.getLogger(__name__).debug("provider probe failed", extra={"provider": name, "error": str(error)})
+        return False
+
+
+def resolve_llm_provider(phase: str | None = None) -> str:
+    """First available provider of the chain; the configured one when nothing answers or no chain is set."""
+    chain = get_llm_provider_chain(phase)
+    if len(chain) == 1:
+        return chain[0]
+    global _fallback_calls
+    for name in chain:
+        if not provider_is_available(name):
+            continue
+        if name == chain[0]:
+            return name
+        if _fallback_calls >= get_llm_fallback_max_calls():
+            import logging
+            logging.getLogger(__name__).warning(
+                "LLM fallback budget exhausted; staying on the configured provider",
+                extra={"phase": phase or "global", "configured": chain[0], "fallback": name,
+                       "calls": _fallback_calls})
+            return chain[0]
+        _fallback_calls += 1
+        return name
+    return chain[0]
+
+
+def reset_llm_fallback_budget() -> None:
+    """Test helper and per-run reset for long-lived processes."""
+    global _fallback_calls
+    _fallback_calls = 0
+
+
+def llm_health(phase: str | None = None) -> dict:
+    """Operator view of the LLM chain for `phase`: who is configured, who answers, who is active."""
+    chain = get_llm_provider_chain(phase)
+    mode = get_llm_mode()
+    available = {name: provider_is_available(name) for name in chain} if mode != "false" else {}
+    active = None
+    if mode == "false":
+        active = None
+    elif mode in ("true", "force"):
+        active = chain[0]
+    else:
+        active = next((name for name in chain if available.get(name)), None)
+    return {
+        "phase": phase or "global",
+        "mode": mode,
+        "configured": chain[0],
+        "chain": chain,
+        "available": available,
+        "active": active,
+        "fallback_calls": _fallback_calls,
+        "fallback_max_calls": get_llm_fallback_max_calls(),
+    }
+
+
+# ──────────────────────────────────────────────
+# User-turn boost for advice queries (14.8.0)
+# ──────────────────────────────────────────────
+#
+# "Recommend me X" is answered by what the user said about X earlier, not by
+# what the assistant replied; the user's turn rarely shares words with the
+# request. For advice-shaped queries the fused score of records that are user
+# turns ("[date] user: ...") is multiplied by this factor. 1.0 switches it off.
+
+DEFAULT_USER_TURN_BOOST = 1.3
+
+
+def get_user_turn_boost() -> float:
+    raw = os.environ.get("MEMORY_RECALL_USER_TURN_BOOST", "").strip()
+    if not raw:
+        return DEFAULT_USER_TURN_BOOST
+    try:
+        value = float(raw)
+    except ValueError:
+        import logging
+        logging.getLogger(__name__).warning("ignoring MEMORY_RECALL_USER_TURN_BOOST, using default",
+                                            extra={"value": raw})
+        return DEFAULT_USER_TURN_BOOST
+    return value if value > 0 else DEFAULT_USER_TURN_BOOST

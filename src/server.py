@@ -2816,6 +2816,10 @@ class Store:
 # Retrieval
 # ═══════════════════════════════════════════════════════════
 
+class _TierOff(Exception):
+    """Raised inside a tier's try-block to skip it when its weight is 0."""
+
+
 class Recall:
     def __init__(self, store: Store):
         self.s = store
@@ -2824,14 +2828,10 @@ class Recall:
     # ── RRF: Reciprocal Rank Fusion ──────────────────────────
     # Default tier weights: semantic gets slight boost, fuzzy is penalized
     RRF_K = 60  # standard RRF constant
-    RRF_WEIGHTS = {
-        "fts": 1.0,
-        "semantic": 1.2,
-        "hyde": 1.0,
-        "fuzzy": 0.5,
-        "graph": 0.8,
-        "episode": 0.9,
-    }
+    # Kept as a class attribute for callers that read it; the live weights come
+    # from config.get_recall_tier_weights() (MEMORY_RECALL_TIER_WEIGHTS) or the
+    # `tier_weights` argument of search().
+    from config import DEFAULT_RECALL_TIER_WEIGHTS as RRF_WEIGHTS
 
     @staticmethod
     def _rrf_fuse(tier_rankings, weights, k=60, *, score_weight=None):
@@ -2863,6 +2863,27 @@ class Recall:
                 )
         return scores
 
+    # Candidate generators live in memory_core.retrieval_tiers; these thin
+    # wrappers keep the call sites inside _search_impl readable.
+    from memory_core.retrieval_tiers import GRAPH_HUB_TYPES, GRAPH_MAX_SEED_NODES
+
+    def _shared_entity_neighbours(self, seed_ids, seed_scores, *, limit):
+        from memory_core.retrieval_tiers import shared_entity_neighbours
+        return shared_entity_neighbours(self.s, seed_ids, seed_scores, limit=limit)
+
+    def _lexical_candidates(self, text, *, project, ktype, branch, limit):
+        from memory_core.retrieval_tiers import lexical_candidates
+        return lexical_candidates(self.s, text, project=project, ktype=ktype, branch=branch, limit=limit)
+
+    def _directive_candidates(self, query, *, project, branch, limit, can_embed):
+        from memory_core.retrieval_tiers import directive_candidates
+        return directive_candidates(self.s, query, project=project, branch=branch, limit=limit, can_embed=can_embed)
+
+    def _multi_query_candidates(self, parts, *, project, ktype, branch, limit, can_embed, spaces):
+        from memory_core.retrieval_tiers import multi_query_candidates
+        return multi_query_candidates(self.s, parts, fuse=self._rrf_fuse, project=project, ktype=ktype,
+                                      branch=branch, limit=limit, can_embed=can_embed, spaces=spaces)
+
     def _should_use_advanced_rag(self):
         """Check if advanced RAG (HyDE + reranker) is available and enabled."""
         if not HAS_RERANKER:
@@ -2887,7 +2908,7 @@ class Recall:
 
     def search(self, query, project=None, ktype="all", limit=10, detail="full", branch=None, fusion="rrf",
                rerank=False, diverse=False, embedding_space=None, _explain=False,
-               record_usage=True, defer_cross_rerank=False):
+               record_usage=True, defer_cross_rerank=False, tier_weights=None):
         # v11 Phase 5 — total wall-clock for this search; recorded into
         # `memory_core.telemetry.counters['search_total_ms']`.
         try:
@@ -2904,13 +2925,17 @@ class Recall:
                 branch=branch, fusion=fusion, rerank=rerank, diverse=diverse,
                 embedding_space=embedding_space, _explain=_explain,
                 record_usage=record_usage, defer_cross_rerank=defer_cross_rerank,
+                tier_weights=tier_weights,
             )
 
     def _search_impl(self, query, project=None, ktype="all", limit=10, detail="full",
                      branch=None, fusion="rrf", rerank=False, diverse=False,
                      embedding_space=None, _explain=False, record_usage=True,
-                     defer_cross_rerank=False):
+                     defer_cross_rerank=False, tier_weights=None):
         """Underlying implementation; wrapped by `search` for telemetry.
+
+        `tier_weights` (dict tier -> weight) overrides the environment's
+        MEMORY_RECALL_TIER_WEIGHTS for this call; a weight of 0 skips the tier.
 
         `defer_cross_rerank=True` (team server workers) skips the cross-encoder
         stage and returns the whole fused window instead of `limit` records,
@@ -2957,6 +2982,28 @@ class Recall:
             _v11_spaces = sorted({
                 str(s).strip().lower() for s in embedding_space if str(s).strip()
             }) or None
+        from config import get_recall_tier_weights, tier_weight_signature
+        weights = get_recall_tier_weights()
+        if tier_weights:
+            weights.update({str(name): float(value) for name, value in tier_weights.items()})
+        _weights_sig = tier_weight_signature(weights)
+
+        def _tier_on(name: str) -> bool:
+            return weights.get(name, 1.0) > 0
+
+        explain_sub_queries: list[str] = []
+        query_vector_cache: dict[str, list[float] | None] = {}
+        from memory_core.query_shapes import is_advice_query, is_user_turn
+        advice_query = is_advice_query(query)
+        user_turn_boosted: list[int] = []
+
+        def _query_vector():
+            """The query embedding, computed once per search."""
+            if "q" not in query_vector_cache:
+                vectors = self.s.embed([query]) if can_embed else None
+                query_vector_cache["q"] = vectors[0] if vectors else None
+            return query_vector_cache["q"]
+
         # v9 A2 L1: fast-path query cache. Keyed by full filter set so that
         # different projects / ktypes / branches / spaces don't collide.
         _v9 = getattr(self.s, "v9_cache", None)
@@ -2966,6 +3013,7 @@ class Recall:
             # v11 Phase 6b — embedding_space affects candidate pool, must be in cache key.
             "embedding_space": ",".join(_v11_spaces) if _v11_spaces else None,
             "cross_rerank": f"{cross.model}/{cross.window}/{cross.weight}/{cross.context_chars}" if cross_active else None,
+            "tier_weights": _weights_sig,
         }
         # _explain bypasses both caches: the payload includes ephemeral
         # tier rankings that are not part of the cached representation.
@@ -2983,7 +3031,8 @@ class Recall:
             cache_key = self.s.cache.make_key(query=query, project=project, ktype=ktype,
                                                limit=limit, detail=detail, branch=branch,
                                                fusion=fusion, rerank=rerank, diverse=diverse,
-                                               embedding_space=",".join(_v11_spaces) if _v11_spaces else None)
+                                               embedding_space=",".join(_v11_spaces) if _v11_spaces else None,
+                                               tier_weights=_weights_sig)
             cached = self.s.cache.get(cache_key)
             if cached is not None:
                 if record_usage:
@@ -3028,6 +3077,8 @@ class Recall:
         from memory_core.query_terms import fts_match_query
         fts_q = fts_match_query(query)
         try:
+            if not _tier_on("fts"):
+                raise _TierOff("fts")
             conds = ["knowledge_fts MATCH ?", "k.status='active'"]
             params = [fts_q]
             joins = ""
@@ -3102,6 +3153,8 @@ class Recall:
                     tier_scores.setdefault("fts", {})[int(r["id"])] = float(bm25_raw)
             if fts_tier:
                 tier_rankings["fts"] = fts_tier
+        except _TierOff:
+            pass
         except Exception:
             from memory_core.telemetry import counters
             counters.bump("retrieval_fts_errors")
@@ -3109,7 +3162,7 @@ class Recall:
 
         from memory_core.atomic_facts import FactRepository
         try:
-            atomic_hits = FactRepository(self.s.db).search(query, scope, pool * 3)
+            atomic_hits = FactRepository(self.s.db).search(query, scope, pool * 3) if _tier_on("atomic_facts") else []
             if atomic_hits:
                 tier_rankings["atomic_facts"] = [hit["id"] for hit in atomic_hits]
                 for hit in atomic_hits:
@@ -3129,7 +3182,7 @@ class Recall:
         self.s._semantic_diagnostics = []
         semantic_tier = self.s._search_spaces(
             query, project=project, spaces=_v11_spaces, limit=pool * 3, kind=ktype, branch=branch,
-        ) if can_embed else []
+        ) if can_embed and _tier_on("semantic") else []
         from memory_core.retrieval import fetch_active_records
         semantic_records = fetch_active_records(
             self.s.db, [kid for kid, _ in semantic_tier if kid not in results],
@@ -3146,7 +3199,7 @@ class Recall:
             if _explain:
                 tier_scores.setdefault("semantic", {})[kid] = float(similarity)
 
-        if (can_embed and use_advanced and query_info and query_info.get("expand")
+        if (can_embed and _tier_on("hyde") and use_advanced and query_info and query_info.get("expand")
                 and (not _v11_spaces or "text" in _v11_spaces)):
             try:
                 hyde_vector = hyde_expand(query, project)
@@ -3184,16 +3237,11 @@ class Recall:
         try:
             from multi_repr_search import has_representations, search_with_winners
 
-            if can_embed and has_representations(self.s.db):
-                # Reuse query embedding if already computed above; else compute now
-                try:
-                    q_emb = embs[0]  # noqa: F821 — defined in upstream can_embed branch
-                except (NameError, UnboundLocalError):
-                    q_emb_list = self.s.embed([query])
-                    q_emb = q_emb_list[0] if q_emb_list else None
+            if can_embed and _tier_on("multi_repr") and has_representations(self.s.db):
+                q_emb = _query_vector()
                 if q_emb:
                     repr_hits, repr_winners = search_with_winners(
-                        self.s.db, q_emb, project=project, n_candidates=100, top_n=pool * 3
+                        self.s.db, q_emb, project=project, n_candidates=0, top_n=pool * 3
                     )
                     if repr_hits:
                         repr_records = fetch_active_records(
@@ -3227,7 +3275,7 @@ class Recall:
             LOG(f"multi_repr tier error: {e}")
 
         # ── Tier 3: Fuzzy search (catches typos and partial matches) ──
-        if len(results) < pool:
+        if len(results) < pool and _tier_on("fuzzy"):
             from memory_core.telemetry import op_timer
             with op_timer("retrieval_fuzzy_ms"):
                 try:
@@ -3269,7 +3317,8 @@ class Recall:
 
         # ── Tier 4: Graph expansion ──
         graph_candidates = [kid for kid in results if results[kid]["via"] != ["atomic_facts"]]
-        top5 = sorted(graph_candidates or results, key=lambda x: results[x]["score"], reverse=True)[:5]
+        top5 = (sorted(graph_candidates or results, key=lambda x: results[x]["score"], reverse=True)[:5]
+                if _tier_on("graph") else [])
         graph_tier = []
         if use_advanced and query_info and query_info.get("deep_graph"):
             # Multi-hop graph traversal (2 hops for architecture queries)
@@ -3283,7 +3332,8 @@ class Recall:
                     if _explain:
                         tier_scores.setdefault("graph", {})[int(did)] = float(sc)
         else:
-            # Standard 1-hop expansion
+            # Standard 1-hop expansion: explicit links (memory_relate) plus the
+            # knowledge graph — records that share an entity node with a seed.
             for kid in top5:
                 for r in self.s.q("""
                     SELECT k.* FROM relations rel
@@ -3296,6 +3346,28 @@ class Recall:
                         graph_tier.append((r["id"], graph_score))
                         if _explain:
                             tier_scores.setdefault("graph", {})[int(r["id"])] = float(graph_score)
+            try:
+                shared = self._shared_entity_neighbours(
+                    top5, {kid: results[kid]["score"] for kid in top5}, limit=limit)
+                shared_records = fetch_active_records(self.s.db, [kid for kid, _ in shared if kid not in results])
+                for kid, graph_score in shared:
+                    if kid in results:
+                        if "graph" not in results[kid]["via"]:
+                            results[kid]["via"].append("graph")
+                            results[kid]["score"] += graph_score
+                    else:
+                        row = shared_records.get(kid)
+                        if not row:
+                            continue
+                        results[kid] = {"r": row, "score": graph_score, "via": ["graph"]}
+                    graph_tier.append((kid, graph_score))
+                    if _explain:
+                        tier_scores.setdefault("graph", {})[int(kid)] = float(graph_score)
+            except sqlite3.Error as error:
+                from memory_core.telemetry import counters
+                counters.bump("retrieval_graph_errors")
+                logging.getLogger(__name__).warning("Graph tier unavailable",
+                                                    extra={"tier": "graph", "error": str(error)})
 
         if graph_tier:
             graph_tier.sort(key=lambda x: x[1], reverse=True)
@@ -3304,11 +3376,14 @@ class Recall:
         # Tier 6: Episode retrieval (v11 W1-A) — coherent (when/who/where/what)
         # windows over fact rows. Each EpisodeHit expands to its constituent
         # knowledge_ids weighted by the episode's fused score.
-        if os.environ.get("MEMORY_EPISODE_TIER", "true").strip().lower() in ("1", "true", "yes", "on"):
+        if (_tier_on("episode")
+                and os.environ.get("MEMORY_EPISODE_TIER", "true").strip().lower() in ("1", "true", "yes", "on")):
             try:
                 from memory_core.episodes.retriever import retrieve_episodes
                 episode_tier: list[tuple[int, float]] = []
                 def ep_embed(txt):
+                    if txt == query:
+                        return _query_vector()
                     vecs = self.s.embed([txt])
                     if not vecs:
                         return None
@@ -3354,6 +3429,71 @@ class Recall:
                 pass
             except Exception as e:
                 LOG(f"episode tier error: {e}")
+
+        # ── Tier 7: directives — conventions of the project for advice-shaped queries ──
+        # "How should I name branches?" shares no words with "branches: feature/<ticket>-<slug>";
+        # the convention records are searched on their own and fused with their own weight.
+        if _tier_on("directives"):
+            try:
+                if advice_query:
+                    directive_tier = self._directive_candidates(
+                        query, project=project, branch=branch, limit=pool, can_embed=can_embed)
+                    directive_records = fetch_active_records(
+                        self.s.db, [kid for kid, _ in directive_tier if kid not in results])
+                    kept: list[int] = []
+                    for kid, score in directive_tier:
+                        if kid in results:
+                            if "directives" not in results[kid]["via"]:
+                                results[kid]["via"].append("directives")
+                        else:
+                            row = directive_records.get(kid)
+                            if not row:
+                                continue
+                            results[kid] = {"r": row, "score": score, "via": ["directives"]}
+                        kept.append(kid)
+                        if _explain:
+                            tier_scores.setdefault("directives", {})[int(kid)] = float(score)
+                    if kept:
+                        tier_rankings["directives"] = kept
+            except sqlite3.Error as error:
+                from memory_core.telemetry import counters
+                counters.bump("retrieval_directives_errors")
+                logging.getLogger(__name__).warning("Directives tier unavailable",
+                                                    extra={"tier": "directives", "error": str(error)})
+
+        # ── Tier 8: multi-query — each side of an ordering / comparison question ──
+        if _tier_on("multi_query"):
+            try:
+                from memory_core.query_shapes import sub_queries
+                parts = sub_queries(query)
+                if parts:
+                    multi_tier = self._multi_query_candidates(
+                        parts, project=project, ktype=ktype, branch=branch, limit=pool, can_embed=can_embed,
+                        spaces=_v11_spaces)
+                    multi_records = fetch_active_records(
+                        self.s.db, [kid for kid, _ in multi_tier if kid not in results])
+                    kept = []
+                    for kid, score in multi_tier:
+                        if kid in results:
+                            if "multi_query" not in results[kid]["via"]:
+                                results[kid]["via"].append("multi_query")
+                        else:
+                            row = multi_records.get(kid)
+                            if not row:
+                                continue
+                            results[kid] = {"r": row, "score": score, "via": ["multi_query"]}
+                        kept.append(kid)
+                        if _explain:
+                            tier_scores.setdefault("multi_query", {})[int(kid)] = float(score)
+                    if kept:
+                        tier_rankings["multi_query"] = kept
+                    if _explain:
+                        explain_sub_queries = parts
+            except sqlite3.Error as error:
+                from memory_core.telemetry import counters
+                counters.bump("retrieval_multi_query_errors")
+                logging.getLogger(__name__).warning("Multi-query tier unavailable",
+                                                    extra={"tier": "multi_query", "error": str(error)})
 
         for kid in list(results):
             if not scope.allows(results[kid]["r"], self.s.db):
@@ -3503,8 +3643,9 @@ class Recall:
         if use_rrf and tier_rankings:
             # Compute RRF scores with per-tier decay folded in
             rrf_scores = self._rrf_fuse(
-                tier_rankings, {**self.RRF_WEIGHTS, "atomic_facts":
-                    0.0 if any(ids for tier, ids in tier_rankings.items() if tier != "atomic_facts") else 1.0},
+                tier_rankings, {**weights, "atomic_facts":
+                    0.0 if any(ids for tier, ids in tier_rankings.items() if tier != "atomic_facts")
+                    else weights.get("atomic_facts", 1.0)},
                 self.RRF_K,
                 score_weight=_tier_score_weight,
             )
@@ -3512,10 +3653,18 @@ class Recall:
             # Apply importance boost on the fused score (per-tier decay is
             # already inside rrf_scores). Drift penalty already lowered
             # `item["score"]` upstream — keep it in sync for additive paths.
+            # Advice-shaped query: the user's own turns carry the preference.
+            user_turn_boost = 1.0
+            if advice_query:
+                from config import get_user_turn_boost
+                user_turn_boost = get_user_turn_boost()
             for doc_id, rrf_sc in rrf_scores.items():
                 if doc_id in results:
                     item = results[doc_id]
                     boost = item["importance_boost"]
+                    if user_turn_boost != 1.0 and is_user_turn(item["r"].get("content") or ""):
+                        boost *= user_turn_boost
+                        user_turn_boosted.append(int(doc_id))
                     item["rrf_score"] = rrf_sc * boost * (0.3 if item.get("drift") else 1.0)
                     item["score"] *= item["decay_factor"] * boost
 
@@ -3897,6 +4046,11 @@ class Recall:
                 "graph": _tier_pairs("graph", "score"),
                 "fuzzy": _tier_pairs("fuzzy", "ratio"),
                 "hyde": _tier_pairs("hyde", "score"),
+                "directives": _tier_pairs("directives", "score"),
+                "multi_query": _tier_pairs("multi_query", "score"),
+                "sub_queries": explain_sub_queries,
+                "advice_query": advice_query,
+                "user_turn_boosted": sorted(user_turn_boosted),
                 "merged": merged,
                 "rerank_applied": bool(rerank and HAS_RERANKER),
                 "embedding_space": (
@@ -3904,6 +4058,7 @@ class Recall:
                     else (list(_v11_spaces) if _v11_spaces else None)
                 ),
                 "tiers_used": list(tier_rankings.keys()),
+                "tier_weights": {name: weights.get(name, 1.0) for name in sorted(set(weights) | set(tier_rankings))},
             }
 
         return result
@@ -6069,7 +6224,9 @@ async def _do(name, a):
         return J({"updated": True, "old_id": old["id"], "new_id": new_id})
 
     elif name == "memory_stats":
-        return J(recall.stats())
+        data = recall.stats()
+        data["llm"] = _llm_and_queue_health(store.db)
+        return J(data)
 
     elif name == "memory_consolidate":
         threshold = a.get("threshold", 0.75)
@@ -6659,7 +6816,7 @@ async def _do(name, a):
     elif name == "session_end":
         from session_continuity import SessionContinuity
         sc = SessionContinuity(store.db)
-        return J(sc.session_end(
+        ended = sc.session_end(
             a["session_id"], a.get("summary"),
             highlights=a.get("highlights"),
             pitfalls=a.get("pitfalls"),
@@ -6668,7 +6825,14 @@ async def _do(name, a):
             project=a.get("project", "general"),
             auto_compress=a.get("auto_compress", False),
             transcript=a.get("transcript"),
-        ))
+        )
+        note = _session_note_text(a, ended)
+        if note:
+            note_id, *_ = store.save_knowledge(
+                a["session_id"], note, "note", project=a.get("project", "general"),
+                tags=["session-note"], skip_quality=True, repeat="replace")
+            ended["note_id"] = note_id
+        return J(ended)
 
     elif name == "ingest_codebase":
         from ast_ingest import ASTIngester
@@ -7501,6 +7665,50 @@ async def _do(name, a):
     # _call_tool_impl turns this into an isError=true CallToolResult so the
     # model sees it and can self-correct.
     raise ValueError(f"Unknown tool: {name}")
+
+
+def _session_note_text(args: dict, ended: dict) -> str | None:
+    """The end-of-session summary as one retrievable record (type `note`).
+
+    `session_summaries` is read once by session_init and then consumed, so
+    a later question like "how did we deploy the billing service" never found
+    it. The note keeps the summary, next steps and pitfalls in the knowledge
+    table, where every recall tier sees it. MEMORY_SESSION_NOTES=off disables it.
+    """
+    if os.environ.get("MEMORY_SESSION_NOTES", "on").strip().lower() in ("0", "false", "no", "off"):
+        return None
+    summary = (args.get("summary") or "").strip()
+    if not summary:
+        return None
+    day = (ended.get("ended_at") or "")[:10]
+    lines = [f"Session note ({args.get('project', 'general')}, {day}): {summary}"]
+    for label, key in (("Next steps", "next_steps"), ("Pitfalls", "pitfalls"), ("Highlights", "highlights")):
+        items = [str(item).strip() for item in (args.get(key) or []) if str(item).strip()]
+        if items:
+            lines.append(f"{label}: " + "; ".join(items))
+    return "\n".join(lines)
+
+
+def _llm_and_queue_health(db) -> dict:
+    """LLM chain state plus the enrichment queues it feeds; `stalled` when rows wait and nothing answers."""
+    import config as _config
+    health = _config.llm_health()
+    queues = {}
+    pending = 0
+    for label, module_name, class_name in (("triple", "triple_extraction_queue", "TripleExtractionQueue"),
+                                            ("enrich", "deep_enrichment_queue", "DeepEnrichmentQueue"),
+                                            ("repr", "representations_queue", "RepresentationsQueue")):
+        try:
+            module = __import__(module_name)
+            counts = getattr(module, class_name)(db).stats()
+        except (sqlite3.Error, AttributeError, ImportError) as error:
+            counts = {"error": str(error)}
+        queues[label] = counts
+        pending += int(counts.get("pending", 0) or 0)
+    health["queues"] = queues
+    health["pending_total"] = pending
+    health["stalled"] = bool(pending and health["mode"] != "false" and health["active"] is None)
+    return health
 
 
 def _detect_git_branch():

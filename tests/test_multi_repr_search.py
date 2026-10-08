@@ -134,3 +134,27 @@ def test_search_tolerates_dim_mismatch(mrs_db):
     ids = [r[0] for r in search(mrs_db, _det_emb("foo", dim=8), top_n=5)]
     # No crash; kid skipped because of dim mismatch
     assert kid not in ids
+
+
+def test_every_representation_row_of_the_scope_is_scored(mrs_db):
+    """Until 14.8.0 only the first 100 rows in table order were scored; the 150th was invisible."""
+    from multi_repr_search import search
+
+    target = None
+    for index in range(150):
+        kid = _seed(mrs_db, f"filler record {index}")
+        _add_repr(mrs_db, kid, "summary", f"filler summary {index}")
+        target = kid
+    query = _det_emb("filler summary 149")
+    ranked = search(mrs_db, query, project="demo", top_n=5)
+    assert ranked and ranked[0][0] == target
+    assert ranked[0][1] > ranked[-1][1]  # fused RRF score, best first
+
+
+def test_rows_of_another_embedding_dimension_are_ignored(mrs_db):
+    from multi_repr_search import search
+    from multi_repr_store import MultiReprStore
+
+    kid = _seed(mrs_db, "wide")
+    MultiReprStore(mrs_db).upsert(kid, "summary", "wide", _det_emb("wide", dim=16), "other-model")
+    assert search(mrs_db, _det_emb("wide"), project="demo", top_n=5) == []
