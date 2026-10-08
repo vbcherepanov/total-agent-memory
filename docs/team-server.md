@@ -13,7 +13,7 @@ The server instructions work on Linux, macOS and Windows. Run commands in a dire
 
 ## Start a server without Docker
 
-Install the package in a dedicated environment. To use a locally built wheel instead, pass its path (for example `./dist/total_agent_memory-14.7.0-py3-none-any.whl`) in place of the package name. Linux/macOS:
+Install the package in a dedicated environment. To use a locally built wheel instead, pass its path (for example `./dist/total_agent_memory-14.8.0-py3-none-any.whl`) in place of the package name. Linux/macOS:
 
 ```sh
 python3 -m venv .venv

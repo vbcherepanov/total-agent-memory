@@ -1,4 +1,4 @@
-ARG DEV_IMAGE=tam-development:14.7.0
+ARG DEV_IMAGE=tam-development:14.8.0
 FROM ${DEV_IMAGE}
 ARG FAISS_VERSION=1.15.0
 RUN python -m pip install --no-cache-dir "faiss-cpu==${FAISS_VERSION}"

@@ -3,7 +3,7 @@
   "name": "io.github.vbcherepanov/total-agent-memory",
   "title": "Total Agent Memory",
   "description": "Persistent local memory for coding agents: temporal knowledge graph, procedural and episodic recall",
-  "version": "14.7.0",
+  "version": "14.8.0",
   "websiteUrl": "https://totalmemory.dev",
   "repository": {
     "url": "https://github.com/vbcherepanov/total-agent-memory",
@@ -13,7 +13,7 @@
     {
       "registryType": "pypi",
       "identifier": "total-agent-memory",
-      "version": "14.7.0",
+      "version": "14.8.0",
       "transport": {
         "type": "stdio"
       }
