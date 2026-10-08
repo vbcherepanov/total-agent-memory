@@ -1,4 +1,4 @@
-ARG DEVELOPMENT_IMAGE=tam-development:14.7.0
+ARG DEVELOPMENT_IMAGE=tam-development:14.8.0
 FROM ${DEVELOPMENT_IMAGE}
 ARG PLAYWRIGHT_VERSION=1.62.0
 RUN python -m pip install --no-cache-dir playwright==${PLAYWRIGHT_VERSION} \

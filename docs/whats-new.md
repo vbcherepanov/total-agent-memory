@@ -4,6 +4,7 @@ Release summaries for the 14.x series, moved here from the README. The
 [CHANGELOG](../CHANGELOG.md) is the complete, authoritative record; this page
 keeps the measurements and usage notes that the summaries added.
 
+- [14.8.0](#version-1480--every-recall-tier-measured-two-of-them-fixed)
 - [14.7.0](#version-1470--whole-records-fill-the-context-budget)
 - [14.6.0](#version-1460--a-company-memory-server-you-can-run-dashboard-roles-onboarding-postgresql)
 - [14.5.0](#version-1450--no-significant-difference-from-mem0-platform-on-locomo-and-longmemeval)
@@ -13,6 +14,41 @@ keeps the measurements and usage notes that the summaries added.
 - [14.2.0](#version-1420--facts-that-change-over-time)
 - [14.1.0](#version-1410--what-is-new)
 - [14.0.0](#version-1400--what-is-new)
+## Version 14.8.0 — every recall tier measured, two of them fixed
+
+**Release date: 2026-10-08.** Nothing in the Claude Code plugin, the hooks, the skill or the 77 tool
+schemas changed; `tests/fixtures/tool_contract.json` now pins them.
+
+`memory_recall` fuses up to ten retrieval tiers. Their weights are now configuration
+(`MEMORY_RECALL_TIER_WEIGHTS`; a weight of 0 skips a tier), and
+[`benchmarks/tier_ablation.py`](../benchmarks/tier_ablation.py) measures what each tier is worth on
+LoCoMo, LongMemEval-S or a copy of an installed store
+([results](benchmarks/tier-ablation-v14/RESULTS.md)). On a copy of the author's store the probe
+found two tiers that did nothing useful:
+
+| Live store, 150 queries, R@10 ([details](benchmarks/tier-ablation-v14/RESULTS.md)) | 14.7.0 code | 14.8.0 |
+|---|---:|---:|
+| full pipeline | 0.133 | **0.167** |
+| p50 latency, cross-encoder off | 336 ms | **128 ms** |
+
+- The **graph tier** read the `relations` table, which only `memory_relate` writes, so it had never
+  fired. It now walks the knowledge graph (records sharing an entity node with a top hit), with hub
+  nodes skipped and nodes weighted by how few records they link to.
+- The **multi-representation tier** scored the first 100 representation rows in table order, an
+  arbitrary old subset of the 10,000 on that store. It now scores every row of the scope with one
+  matrix product.
+
+Two new tiers cover question shapes the ranking missed: an advice-shaped question also searches the
+project's conventions on their own (`directives`), and an ordering or comparison question can be split
+into its sides (`multi_query`, off by default: measured neutral on the held-out splits). `session_end` now also keeps its summary, next steps and pitfalls as
+a `note` record, so later recalls find them.
+
+Operations: `MEMORY_LLM_FALLBACK_PROVIDERS` gives every LLM phase a chain of providers, so a stopped
+Ollama no longer leaves the enrichment queues pending in silence; `memory_stats` and the dashboard
+`/api/system/status` report the chain and a `stalled` flag. The hourly reflection job now consolidates idle
+projects (episodes, duplicate merging, decay), which used to happen only on the team server.
+Details: [CHANGELOG](../CHANGELOG.md).
+
 ## Version 14.7.0 — whole records fill the context budget
 
 **Release date: 2026-09-30.**

@@ -9,7 +9,7 @@
 
 > Persistent, local memory for AI coding agents: Claude Code, Codex CLI, Cursor and any MCP client.
 
-[![Version](https://img.shields.io/badge/version-14.7.0-8ad.svg)](https://pypi.org/project/total-agent-memory/)
+[![Version](https://img.shields.io/badge/version-14.8.0-8ad.svg)](https://pypi.org/project/total-agent-memory/)
 [![PyPI](https://img.shields.io/badge/PyPI-total--agent--memory-3776AB.svg)](https://pypi.org/project/total-agent-memory/)
 [![npm](https://img.shields.io/badge/npm-total--agent--memory-cb3837.svg)](https://www.npmjs.com/package/total-agent-memory)
 [![Docker GHCR](https://img.shields.io/badge/docker-ghcr.io-2496ED.svg)](https://github.com/vbcherepanov/total-agent-memory/pkgs/container/total-agent-memory)
@@ -64,7 +64,7 @@ the ones you pick ([setup wizard](docs/SETUP_WIZARD.md)).
 
 | Channel | Command |
 |---|---|
-| Docker (linux/amd64, linux/arm64) | `docker run -p 3737:3737 -p 37737:37737 -v ~/.tam:/data ghcr.io/vbcherepanov/total-agent-memory:14.7.0` — MCP over HTTP on `:3737/mcp`, dashboard on `:37737` |
+| Docker (linux/amd64, linux/arm64) | `docker run -p 3737:3737 -p 37737:37737 -v ~/.tam:/data ghcr.io/vbcherepanov/total-agent-memory:14.8.0` — MCP over HTTP on `:3737/mcp`, dashboard on `:37737` |
 | npx connector | `npx -y total-agent-memory connect claude-code` (or `codex`, `cursor`, `cline`, `continue`, `aider`, `windsurf`, `gemini-cli`, `opencode`) |
 | Claude Code plugin (server, skill and capture hooks) | `/plugin marketplace add vbcherepanov/total-agent-memory`<br>`/plugin install total-agent-memory@vbcherepanov` |
 | Plugin for Claude Code and Cowork, from the [plugin repository](https://github.com/vbcherepanov/total-agent-memory-plugin) (server and skill, no hooks; needs [uv](https://docs.astral.sh/uv/)) | `/plugin marketplace add vbcherepanov/total-agent-memory-plugin`<br>`/plugin install total-agent-memory@vbcherepanov` |
@@ -212,7 +212,7 @@ A paper describing TAM is under review at the Journal of Open Source Software
 ([paper/paper.md](paper/paper.md)). Until it is published, please cite the
 software and the preprint:
 
-> Cherepanov, V. total-agent-memory (version 14.7.0) [software].
+> Cherepanov, V. total-agent-memory (version 14.8.0) [software].
 > https://github.com/vbcherepanov/total-agent-memory
 >
 > Preprint: [doi:10.5281/zenodo.23011523](https://doi.org/10.5281/zenodo.23011523)

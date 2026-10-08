@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS bench_fragments (
 """
 SQLITE_MAX_PARAMS = 900
 FORBIDDEN_ROOTS = (".tam", ".claude-memory")
+# Hosted OpenAI-compatible embedding endpoints the worker may call; each needs embed_key_file.
+HOSTED_EMBED_BASES = ("https://api.deepinfra.com/",)
+LOCAL_EMBED_BASES = ("http://127.0.0.1", "http://localhost")
 BENCH_ROOT = Path(__file__).resolve().parents[1]
 SHUTDOWN_GRACE_S = 30.0
 
@@ -65,6 +68,14 @@ class TamWorkerSettings:
     worker_timeout_s: float = 1800.0
     work_root: str | None = None
     python_executable: str | None = None
+    # Extra variables for the worker, applied after the secret scrub; meant for a local
+    # embedding server (e.g. MEMORY_EMBED_PROVIDER=openai with MEMORY_EMBED_API_BASE pointing
+    # at a local OpenAI-compatible endpoint, which needs a non-empty placeholder key).
+    extra_env: dict[str, str] | None = None
+    # File holding only the API key of a hosted embedding endpoint (HOSTED_EMBED_BASES). The key
+    # is read when the worker environment is built, so it never appears in these settings, in
+    # the harness's memory_config.json or in the parent's environment.
+    embed_key_file: str | None = None
 
     def validate(self) -> TamWorkerSettings:
         if not (Path(self.tam_src) / "server.py").is_file():
@@ -78,6 +89,21 @@ class TamWorkerSettings:
             raise ValueError("cross_rerank must be one of on/off/auto")
         if self.work_root is not None:
             check_work_root(self.work_root)
+        if self.extra_env is not None:
+            if not all(isinstance(key, str) and isinstance(value, str) for key, value in self.extra_env.items()):
+                raise ValueError("extra_env must map strings to strings")
+            base = self.extra_env.get("MEMORY_EMBED_API_BASE", "")
+            if base.startswith(HOSTED_EMBED_BASES):
+                if self.embed_key_file is None:
+                    raise ValueError("a hosted MEMORY_EMBED_API_BASE needs embed_key_file")
+            elif base and not base.startswith(LOCAL_EMBED_BASES):
+                raise ValueError("extra_env MEMORY_EMBED_API_BASE must be a local endpoint or one of "
+                                 f"{list(HOSTED_EMBED_BASES)}")
+        if self.embed_key_file is not None:
+            if not Path(self.embed_key_file).expanduser().is_file():
+                raise ValueError(f"embed_key_file={self.embed_key_file!r} does not exist")
+            if self.extra_env and "MEMORY_EMBED_API_KEY" in self.extra_env:
+                raise ValueError("MEMORY_EMBED_API_KEY must come from embed_key_file, not extra_env")
         if self.python_executable is not None and not Path(self.python_executable).is_file():
             raise ValueError(f"python_executable={self.python_executable!r} does not exist")
         return self
@@ -110,6 +136,13 @@ def worker_environment(base: dict[str, str], memory_dir: str, settings: TamWorke
         "PYTHONPATH": os.pathsep.join([str(BENCH_ROOT), settings.tam_src]),
         "PYTHONUNBUFFERED": "1",
     })
+    if settings.extra_env:
+        env.update(settings.extra_env)
+    if settings.embed_key_file:
+        key = Path(settings.embed_key_file).expanduser().read_text(encoding="utf-8").strip()
+        if not key:
+            raise ValueError(f"embed_key_file={settings.embed_key_file!r} is empty")
+        env["MEMORY_EMBED_API_KEY"] = key
     return env
 
 
@@ -145,6 +178,11 @@ def serve(settings: TamWorkerSettings) -> None:
             try:
                 if request["op"] == "add":
                     reply = {"ok": True, "data": _add(store, db, request["fragments"], settings)}
+                elif request["op"] == "checkpoint":
+                    # Fold the WAL into the main file so a copy of the directory is a complete store.
+                    db.commit()
+                    db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    reply = {"ok": True, "data": {"checkpointed": True}}
                 elif request["op"] == "search":
                     hits = _search(recall, db, flatten_results, request["query"], request.get("limit"), settings)
                     if request.get("radius"):
@@ -174,7 +212,9 @@ def serve(settings: TamWorkerSettings) -> None:
 
 def _add(store, db, fragments: list[dict[str, Any]], settings: TamWorkerSettings) -> dict[str, Any]:
     started = time.perf_counter()
-    texts = [fragment["index_text"] for fragment in fragments]
+    # A fragment may carry a shorter `embed_text` (e.g. the part that fits the embedding
+    # model's window); FTS and the stored record always use the full `index_text`.
+    texts = [fragment.get("embed_text") or fragment["index_text"] for fragment in fragments]
     vectors: list[list[float]] = []
     for offset in range(0, len(texts), settings.embed_batch):
         chunk = texts[offset:offset + settings.embed_batch]
@@ -383,7 +423,7 @@ class TamStoreProcess:
     """
 
     def __init__(self, settings: TamWorkerSettings, slots: threading.Semaphore | None = None,
-                 prefix: str = "tam-bench-"):
+                 prefix: str = "tam-bench-", seed_dir: str | Path | None = None):
         self.settings = settings.validate()
         self._lock = threading.Lock()
         if slots is not None:
@@ -392,6 +432,9 @@ class TamStoreProcess:
             if settings.work_root is not None:
                 check_work_root(settings.work_root).mkdir(parents=True, exist_ok=True)
             self.memory_dir = tempfile.mkdtemp(prefix=prefix, dir=settings.work_root)
+            if seed_dir is not None:
+                # Start from a saved store (see snapshot()): the worker opens a copy of it.
+                shutil.copytree(seed_dir, self.memory_dir, dirs_exist_ok=True)
             python = settings.python_executable or sys.executable
             self._process = subprocess.Popen(
                 [python, "-m", "tam_bench_common.tam_worker", json.dumps(asdict(settings))],
@@ -482,6 +525,13 @@ class TamStoreProcess:
     def outline(self) -> list[dict[str, Any]]:
         """Position and metadata of every stored fragment, in insertion order."""
         return self.call("outline")
+
+    def snapshot(self, target_dir: str | Path) -> None:
+        """Copy the store (checkpointed, WAL folded in) to target_dir, which must not exist;
+        a later TamStoreProcess(..., seed_dir=target_dir) serves the same records."""
+        self.call("checkpoint")
+        with self._lock:
+            shutil.copytree(self.memory_dir, target_dir)
 
     def close(self) -> None:
         self._finalizer()

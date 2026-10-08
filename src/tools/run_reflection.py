@@ -160,7 +160,7 @@ def main() -> int:
     # Build embedder bound to Store (shares FastEmbed / Ollama)
     embedder = None
     try:
-        import server as _srv  # noqa: E402
+        import server as _srv
         _srv.MEMORY_DIR = memory_dir
         store = _srv.Store()
         def embed(text: str) -> list[float]:
@@ -170,7 +170,7 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         _log(f"embedder init failed (repr generation will skip): {e}")
 
-    from reflection.agent import ReflectionAgent  # noqa: E402
+    from reflection.agent import ReflectionAgent
 
     agent = ReflectionAgent(db, embedder=embedder)
 
@@ -185,8 +185,48 @@ def main() -> int:
     elapsed = round(time.time() - t0, 1)
     _log(f"done in {elapsed}s — {json.dumps(result, default=str)[:500]}")
     db.close()
+    _run_consolidation_sweep(db_path, embedder)
     _release_lock(lock_path)
     return 0
+
+
+def _run_consolidation_sweep(db_path: Path, embedder) -> None:
+    """Materialize episodes, merge duplicates and decay stale facts for idle projects.
+
+    The consolidation daemon only runs on the team server; on a personal
+    install nothing else fills ``episodes_v11``, so the recall episode tier
+    never fires. This sweep runs after every reflection pass, bounded by
+    MEMORY_CONSOLIDATION_BUDGET_SEC (default 120 s, 0 switches it off) over
+    at most MEMORY_CONSOLIDATION_MAX_PROJECTS idle projects.
+    """
+    try:
+        budget = int(os.environ.get("MEMORY_CONSOLIDATION_BUDGET_SEC", "120"))
+        max_projects = int(os.environ.get("MEMORY_CONSOLIDATION_MAX_PROJECTS", "3"))
+    except ValueError as error:
+        _log(f"consolidation sweep skipped: bad env value ({error})")
+        return
+    if budget <= 0 or max_projects <= 0:
+        _log("consolidation sweep off (MEMORY_CONSOLIDATION_BUDGET_SEC=0)")
+        return
+    from workers.consolidation_daemon import (
+        _open_conn,
+        consolidate_idle_projects,
+    )
+
+    conn = _open_conn(str(db_path))
+    t0 = time.time()
+    try:
+        runs = consolidate_idle_projects(conn, budget_seconds=budget, max_projects=max_projects,
+                                         embed_fn=embedder)
+    except sqlite3.Error as error:
+        _log(f"consolidation sweep failed: {error}")
+        return
+    finally:
+        conn.close()
+    summary = [{"project": run.project, "episodes": run.episodes_materialized,
+                "duplicates": run.duplicates_merged, "transitive": run.transitive_facts_added,
+                "decay": run.decay_applied, "paused": run.paused, "error": run.error} for run in runs]
+    _log(f"consolidation sweep in {round(time.time() - t0, 1)}s — {json.dumps(summary)}")
 
 
 if __name__ == "__main__":

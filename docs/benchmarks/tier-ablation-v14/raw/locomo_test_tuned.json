@@ -1,0 +1,285 @@
+{
+ "bench": "locomo",
+ "split": "test",
+ "limit": 0,
+ "cross_rerank": "off",
+ "units": 7,
+ "questions": 1153,
+ "defaults": {
+  "fts": 1.0,
+  "semantic": 1.2,
+  "hyde": 1.0,
+  "multi_repr": 1.0,
+  "fuzzy": 0.5,
+  "graph": 0.3,
+  "episode": 0.9,
+  "atomic_facts": 1.0,
+  "directives": 1.0,
+  "multi_query": 0.8
+ },
+ "configs": {
+  "full": {
+   "fts": 1.0,
+   "semantic": 1.2,
+   "hyde": 1.0,
+   "multi_repr": 1.0,
+   "fuzzy": 0.5,
+   "graph": 0.3,
+   "episode": 0.9,
+   "atomic_facts": 1.0,
+   "directives": 1.0,
+   "multi_query": 0.8
+  },
+  "tuned": {
+   "fts": 2.0,
+   "semantic": 2.0,
+   "hyde": 1.0,
+   "multi_repr": 1.0,
+   "fuzzy": 0.5,
+   "graph": 0.3,
+   "episode": 0.9,
+   "atomic_facts": 1.0,
+   "directives": 1.0,
+   "multi_query": 0.0
+  },
+  "equal": {
+   "fts": 1.0,
+   "semantic": 1.0,
+   "hyde": 1.0,
+   "multi_repr": 1.0,
+   "fuzzy": 0.5,
+   "graph": 0.3,
+   "episode": 0.9,
+   "atomic_facts": 1.0,
+   "directives": 1.0,
+   "multi_query": 0.8
+  },
+  "no_multi_query": {
+   "fts": 1.0,
+   "semantic": 1.2,
+   "hyde": 1.0,
+   "multi_repr": 1.0,
+   "fuzzy": 0.5,
+   "graph": 0.3,
+   "episode": 0.9,
+   "atomic_facts": 1.0,
+   "directives": 1.0,
+   "multi_query": 0.0
+  }
+ },
+ "results": {
+  "full": {
+   "all": {
+    "n": 1153,
+    "R@1": 0.314,
+    "R@5": 0.5863,
+    "R@10": 0.6713,
+    "MRR": 0.4393
+   },
+   "multi-hop": {
+    "n": 208,
+    "R@1": 0.2067,
+    "R@5": 0.4519,
+    "R@10": 0.5673,
+    "MRR": 0.3269
+   },
+   "open-domain": {
+    "n": 73,
+    "R@1": 0.0959,
+    "R@5": 0.3562,
+    "R@10": 0.3973,
+    "MRR": 0.2152
+   },
+   "single-hop": {
+    "n": 641,
+    "R@1": 0.3448,
+    "R@5": 0.6427,
+    "R@10": 0.7192,
+    "MRR": 0.4778
+   },
+   "temporal": {
+    "n": 231,
+    "R@1": 0.3939,
+    "R@5": 0.6234,
+    "R@10": 0.7186,
+    "MRR": 0.5046
+   },
+   "tier_fired": {
+    "fts": 1.0,
+    "semantic": 1.0,
+    "hyde": 0.0,
+    "multi_repr": 0.0,
+    "fuzzy": 0.0,
+    "graph": 0.0,
+    "episode": 0.0,
+    "atomic_facts": 0.0,
+    "directives": 0.0,
+    "multi_query": 0.056
+   },
+   "latency_ms": {
+    "p50": 27.1,
+    "p95": 43.5
+   }
+  },
+  "tuned": {
+   "all": {
+    "n": 1153,
+    "R@1": 0.32,
+    "R@5": 0.5898,
+    "R@10": 0.6748,
+    "MRR": 0.4438
+   },
+   "multi-hop": {
+    "n": 208,
+    "R@1": 0.2163,
+    "R@5": 0.4471,
+    "R@10": 0.5625,
+    "MRR": 0.3311
+   },
+   "open-domain": {
+    "n": 73,
+    "R@1": 0.1233,
+    "R@5": 0.3562,
+    "R@10": 0.3836,
+    "MRR": 0.2278
+   },
+   "single-hop": {
+    "n": 641,
+    "R@1": 0.3495,
+    "R@5": 0.6505,
+    "R@10": 0.7254,
+    "MRR": 0.4829
+   },
+   "temporal": {
+    "n": 231,
+    "R@1": 0.3939,
+    "R@5": 0.6234,
+    "R@10": 0.7273,
+    "MRR": 0.505
+   },
+   "tier_fired": {
+    "fts": 1.0,
+    "semantic": 1.0,
+    "hyde": 0.0,
+    "multi_repr": 0.0,
+    "fuzzy": 0.0,
+    "graph": 0.0,
+    "episode": 0.0,
+    "atomic_facts": 0.0,
+    "directives": 0.0,
+    "multi_query": 0.0
+   },
+   "latency_ms": {
+    "p50": 26.7,
+    "p95": 37.7
+   }
+  },
+  "equal": {
+   "all": {
+    "n": 1153,
+    "R@1": 0.3192,
+    "R@5": 0.5889,
+    "R@10": 0.6739,
+    "MRR": 0.4429
+   },
+   "multi-hop": {
+    "n": 208,
+    "R@1": 0.2163,
+    "R@5": 0.4471,
+    "R@10": 0.5577,
+    "MRR": 0.331
+   },
+   "open-domain": {
+    "n": 73,
+    "R@1": 0.1096,
+    "R@5": 0.3425,
+    "R@10": 0.3836,
+    "MRR": 0.2171
+   },
+   "single-hop": {
+    "n": 641,
+    "R@1": 0.3479,
+    "R@5": 0.6505,
+    "R@10": 0.7254,
+    "MRR": 0.4818
+   },
+   "temporal": {
+    "n": 231,
+    "R@1": 0.3983,
+    "R@5": 0.6234,
+    "R@10": 0.7273,
+    "MRR": 0.5073
+   },
+   "tier_fired": {
+    "fts": 1.0,
+    "semantic": 1.0,
+    "hyde": 0.0,
+    "multi_repr": 0.0,
+    "fuzzy": 0.0,
+    "graph": 0.0,
+    "episode": 0.0,
+    "atomic_facts": 0.0,
+    "directives": 0.0,
+    "multi_query": 0.056
+   },
+   "latency_ms": {
+    "p50": 27.1,
+    "p95": 43.5
+   }
+  },
+  "no_multi_query": {
+   "all": {
+    "n": 1153,
+    "R@1": 0.314,
+    "R@5": 0.5863,
+    "R@10": 0.6722,
+    "MRR": 0.439
+   },
+   "multi-hop": {
+    "n": 208,
+    "R@1": 0.2067,
+    "R@5": 0.4519,
+    "R@10": 0.5721,
+    "MRR": 0.327
+   },
+   "open-domain": {
+    "n": 73,
+    "R@1": 0.0959,
+    "R@5": 0.3562,
+    "R@10": 0.3973,
+    "MRR": 0.2143
+   },
+   "single-hop": {
+    "n": 641,
+    "R@1": 0.3448,
+    "R@5": 0.6427,
+    "R@10": 0.7192,
+    "MRR": 0.4773
+   },
+   "temporal": {
+    "n": 231,
+    "R@1": 0.3939,
+    "R@5": 0.6234,
+    "R@10": 0.7186,
+    "MRR": 0.5045
+   },
+   "tier_fired": {
+    "fts": 1.0,
+    "semantic": 1.0,
+    "hyde": 0.0,
+    "multi_repr": 0.0,
+    "fuzzy": 0.0,
+    "graph": 0.0,
+    "episode": 0.0,
+    "atomic_facts": 0.0,
+    "directives": 0.0,
+    "multi_query": 0.0
+   },
+   "latency_ms": {
+    "p50": 26.8,
+    "p95": 38.2
+   }
+  }
+ },
+ "seconds": 136.4
+}

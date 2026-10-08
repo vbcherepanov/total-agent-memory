@@ -41,6 +41,39 @@ waited for before the first query). Everything else is identical.
   was tuned on LongMemEval-V2 questions; all values are general defaults chosen before
   any run.
 
+## Chunk index (`index_mode: "chunk"`, added 2026-09-29)
+
+An opt-in second backend layout; the state layout above stays the default.
+
+**Indexing.** Each state's accessibility tree is cleaned (element ids, the
+`visible`/`clickable` flags, nameless layout containers and icon-glyph text removed;
+nesting kept as one space per level) and cut into chunks of whole lines of at most 3,000
+characters. Every chunk is indexed with the page title and URL path in front of it;
+identical chunks (menus and headers repeated on many pages) are indexed once and remember
+every state they occur in. Each state also gets a short step fragment (title, URL,
+thought, the action that led to it, the next action, goal) and each trajectory the
+overview fragment. Embeddings: `bge-m3` (Ollama `bge-m3-8k`, local, through TAM's
+OpenAI-compatible embedding provider) over the first 4,000 characters of a fragment.
+
+**Retrieval.** The answer-format sentences (`\boxed{}` / "final answer") are dropped from
+the question; TAM recall (FTS5 + vectors + RRF, cross-encoder off) returns the top 200
+fragments; hits are folded into states (each hit adds 1/(10 + rank) to every state it
+occurs in) and trajectory overviews; at most 2 states per (page title, percent-decoded
+URL path) are shown; each state is shown with its header and, when the cleaned page is
+longer than 6,000 characters, only its matching chunks plus one chunk on either side
+(at most 12,000 characters per state), best first, until 200,000 characters.
+
+**Persistence.** The built index can be saved with the harness's `--save-memory` and
+reloaded with `--load-memory-dir` (store copy + adapter state); index parameters must
+match, query-time parameters may differ.
+
+**Choices made on benchmark questions (disclosure).** Chunking, the page cap, query
+cleaning and the 200,000-character budget were chosen while looking at the retrieved
+contexts and accuracies of a 20-question pilot subset (seed 20260928); three budgets were
+tried (48k-character state layout, 100k and 200k chunk layout). The configuration was then
+fixed and checked on 40 other questions (seed 20260929). No gold answer or evidence
+location is read by the memory.
+
 ## Models
 
 | Role | Model | Where | Notes |

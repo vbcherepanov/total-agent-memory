@@ -1,4 +1,4 @@
-ARG DEV_IMAGE=tam-development:14.7.0
+ARG DEV_IMAGE=tam-development:14.8.0
 FROM ${DEV_IMAGE}
 ARG TORCH_INDEX_URL
 RUN test -n "$TORCH_INDEX_URL" && python -m pip install --no-cache-dir torch --index-url "$TORCH_INDEX_URL"

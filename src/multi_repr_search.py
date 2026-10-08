@@ -21,7 +21,7 @@ import sqlite3
 import struct
 import sys
 import threading
-from typing import Iterable
+from collections.abc import Iterable
 
 try:
     import numpy as np
@@ -99,9 +99,9 @@ def _process_representation(
     try:
         if db_lock is not None:
             with db_lock:
-                rows = _fetch(db, repr_name, project, n_candidates)
+                rows = _fetch(db, repr_name, project, n_candidates, len(query_embedding))
         else:
-            rows = _fetch(db, repr_name, project, n_candidates)
+            rows = _fetch(db, repr_name, project, n_candidates, len(query_embedding))
     except sqlite3.Error as e:
         LOG(f"fetch error for representation={repr_name}: {e}")
         return repr_name, []
@@ -117,13 +117,16 @@ def _score_rows(
     """Pure-python cosine scoring. Safe to call from any thread (no sqlite)."""
     if not rows:
         return []
+    dim = len(query_embedding)
+    if np is not None:
+        return _score_rows_numpy(rows, query_embedding, top_n, dim)
     scored: list[tuple[int, float]] = []
     for r in rows:
         try:
             vec = _unpack_vector(r["float32_vector"], r["embed_dim"])
         except (struct.error, KeyError):
             continue
-        if len(vec) != len(query_embedding):
+        if len(vec) != dim:
             # Dim mismatch — different embedder. Skip silently.
             continue
         sim = _cosine(query_embedding, vec)
@@ -133,6 +136,31 @@ def _score_rows(
         return []
     scored.sort(key=lambda kv: kv[1], reverse=True)
     return scored[:top_n]
+
+
+def _score_rows_numpy(rows, query_embedding, top_n: int, dim: int) -> list[tuple[int, float]]:
+    """One matrix product over every row of the scope instead of a Python loop per row."""
+    ids: list[int] = []
+    blobs: list[bytes] = []
+    expected = dim * 4
+    for r in rows:
+        blob = r["float32_vector"]
+        if int(r["embed_dim"] or 0) != dim or blob is None or len(blob) != expected:
+            continue
+        ids.append(int(r["knowledge_id"]))
+        blobs.append(bytes(blob))
+    if not ids:
+        return []
+    matrix = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(ids), dim)
+    query = np.asarray(query_embedding, dtype=np.float32)
+    query_norm = float(np.linalg.norm(query))
+    if query_norm == 0:
+        return []
+    norms = np.linalg.norm(matrix, axis=1)
+    norms[norms == 0] = np.inf
+    sims = (matrix @ query) / (norms * query_norm)
+    order = np.argsort(-sims, kind="stable")[:top_n]
+    return [(ids[int(i)], float(sims[int(i)])) for i in order if float(sims[int(i)]) > 0]
 
 
 def _search_sequential(
@@ -177,7 +205,7 @@ async def _search_parallel_async(
     fetched: dict[str, list[sqlite3.Row]] = {}
     for repr_name in _SEARCH_REPRESENTATIONS:
         try:
-            rows = _fetch(db, repr_name, project, n_candidates)
+            rows = _fetch(db, repr_name, project, n_candidates, len(query_embedding))
         except sqlite3.Error as e:
             LOG(f"fetch error for representation={repr_name}: {e}")
             continue
@@ -241,7 +269,7 @@ def search(
     db: sqlite3.Connection,
     query_embedding: list[float],
     project: str | None = None,
-    n_candidates: int = 100,
+    n_candidates: int = 0,
     top_n: int = 20,
 ) -> list[tuple[int, float]]:
     """Search each representation, fuse with RRF, return (knowledge_id, score).
@@ -263,7 +291,7 @@ def search_with_winners(
     db: sqlite3.Connection,
     query_embedding: list[float],
     project: str | None = None,
-    n_candidates: int = 100,
+    n_candidates: int = 0,
     top_n: int = 20,
 ) -> tuple[list[tuple[int, float]], dict[int, str]]:
     """Same as ``search`` but also returns ``winners``.
@@ -311,24 +339,32 @@ def _fetch(
     representation: str,
     project: str | None,
     limit: int,
+    dim: int | None = None,
 ) -> list[sqlite3.Row]:
+    """Representation vectors of the scope.
+
+    Every row of the scope is scored: until 14.8.0 the query took the first
+    ``limit`` rows in table order, so on a store with more representations
+    than that the tier compared the query with an arbitrary old subset and
+    never saw newer records. ``limit`` is now only a safety cap (0 = none)
+    and rows of another embedding dimension are left out in SQL.
+    """
+    conds = ["kr.representation = ?", "k.status = 'active'"]
+    params: list[object] = [representation]
     if project:
-        return db.execute(
-            """SELECT kr.knowledge_id, kr.float32_vector, kr.embed_dim
-                 FROM knowledge_representations kr
-                 JOIN knowledge k ON k.id = kr.knowledge_id
-                WHERE kr.representation = ?
-                  AND k.status = 'active'
-                  AND k.project = ?
-                LIMIT ?""",
-            (representation, project, limit),
-        ).fetchall()
+        conds.append("k.project = ?")
+        params.append(project)
+    if dim:
+        conds.append("kr.embed_dim = ?")
+        params.append(int(dim))
+    tail = ""
+    if limit and limit > 0:
+        tail = " LIMIT ?"
+        params.append(int(limit))
     return db.execute(
-        """SELECT kr.knowledge_id, kr.float32_vector, kr.embed_dim
+        f"""SELECT kr.knowledge_id, kr.float32_vector, kr.embed_dim
              FROM knowledge_representations kr
              JOIN knowledge k ON k.id = kr.knowledge_id
-            WHERE kr.representation = ?
-              AND k.status = 'active'
-            LIMIT ?""",
-        (representation, limit),
+            WHERE {' AND '.join(conds)}{tail}""",
+        params,
     ).fetchall()

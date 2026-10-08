@@ -1,0 +1,69 @@
+{
+ "bench": "lme",
+ "split": "all",
+ "limit": 0,
+ "cross_rerank": "off",
+ "units": 30,
+ "questions": 30,
+ "defaults": {
+  "fts": 1.0,
+  "semantic": 1.2,
+  "hyde": 1.0,
+  "multi_repr": 1.0,
+  "fuzzy": 0.5,
+  "graph": 0.3,
+  "episode": 0.9,
+  "atomic_facts": 1.0,
+  "directives": 1.0,
+  "multi_query": 0.0
+ },
+ "configs": {
+  "full": {
+   "fts": 1.0,
+   "semantic": 1.2,
+   "hyde": 1.0,
+   "multi_repr": 1.0,
+   "fuzzy": 0.5,
+   "graph": 0.3,
+   "episode": 0.9,
+   "atomic_facts": 1.0,
+   "directives": 1.0,
+   "multi_query": 0.0
+  }
+ },
+ "results": {
+  "full": {
+   "all": {
+    "n": 30,
+    "R@1": 0.3333,
+    "R@5": 0.6333,
+    "R@10": 0.7,
+    "MRR": 0.46
+   },
+   "single-session-preference": {
+    "n": 30,
+    "R@1": 0.3333,
+    "R@5": 0.6333,
+    "R@10": 0.7,
+    "MRR": 0.46
+   },
+   "tier_fired": {
+    "fts": 1.0,
+    "semantic": 1.0,
+    "hyde": 0.0,
+    "multi_repr": 0.0,
+    "fuzzy": 0.0,
+    "graph": 0.0,
+    "episode": 0.0,
+    "atomic_facts": 0.0,
+    "directives": 0.0,
+    "multi_query": 0.0
+   },
+   "latency_ms": {
+    "p50": 66.9,
+    "p95": 92.8
+   }
+  }
+ },
+ "seconds": 1379.1
+}

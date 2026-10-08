@@ -1,7 +1,7 @@
 services:
   team-memory:
     build: .
-    image: ${TAM_TEAM_IMAGE:-total-agent-memory:14.7.0}
+    image: ${TAM_TEAM_IMAGE:-total-agent-memory:14.8.0}
     init: true
     restart: unless-stopped
     extra_hosts:
@@ -108,7 +108,7 @@ services:
 
   replica-s3-init:
     profiles: ["s3-local"]
-    image: ${TAM_TEAM_IMAGE:-total-agent-memory:14.7.0}
+    image: ${TAM_TEAM_IMAGE:-total-agent-memory:14.8.0}
     restart: on-failure
     command: ["python", "/app/src/team_memory/cli.py", "--root", "/team-data", "replication", "init-bucket"]
     environment:

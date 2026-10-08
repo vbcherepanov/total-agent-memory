@@ -15,6 +15,9 @@
 #   OPERATING_POINTS  space-separated subset of "norerank rerank" (default both)
 #   READER_BASE_URL   default http://127.0.0.1:11434/v1 (Ollama)
 #   READER_MODEL      default qwen3.5-9b (ollama create qwen3.5-9b -f Modelfile.qwen3.5-9b)
+#   READER_KEY_FILE   file holding only the reader API key, for a hosted reader
+#                     (e.g. READER_BASE_URL=https://api.deepinfra.com/v1/openai,
+#                     READER_MODEL=Qwen/Qwen3.5-9B); the harness reads it, it is never exported
 #   KEY_FILE / UPSTREAM   as in tam_bench_common/run_guarded.py (dry runs: local stub + dummy key)
 #
 # Outputs under OUT_DIR: tam_<point>_<domain>_small/ (harness outputs: per_question.jsonl,

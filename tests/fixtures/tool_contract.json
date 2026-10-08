@@ -1,0 +1,2890 @@
+{
+  "analogize": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "exclude_project": {
+          "type": "string"
+        },
+        "limit": {
+          "default": 10,
+          "type": "integer"
+        },
+        "min_score": {
+          "default": 0.1,
+          "type": "number"
+        },
+        "only_types": {
+          "default": [
+            "solution",
+            "lesson",
+            "decision"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    }
+  },
+  "benchmark": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "scenarios_path": {
+          "description": "Custom scenarios dir or file",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "classify_task": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "type": "object"
+    }
+  },
+  "file_context": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 20,
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
+  },
+  "ingest_codebase": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "include": {
+          "description": "Extension allowlist e.g. ['.py','.go']",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sample_limit": {
+          "default": 5,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    }
+  },
+  "kg_add_fact": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "confidence": {
+          "default": 1.0,
+          "type": "number"
+        },
+        "context": {
+          "type": "string"
+        },
+        "invalidate_previous": {
+          "default": true,
+          "type": "boolean"
+        },
+        "object": {
+          "type": "string"
+        },
+        "predicate": {
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "valid_from": {
+          "description": "ISO 8601 time the fact became true; default now. Back-dated facts close and are closed by their neighbours.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "predicate",
+        "object"
+      ],
+      "type": "object"
+    }
+  },
+  "kg_at": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 100,
+          "type": "integer"
+        },
+        "object": {
+          "type": "string"
+        },
+        "predicate": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "ISO 8601 or omit for now",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "kg_invalidate_fact": {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "at": {
+          "description": "ISO 8601 time the fact stopped being true; default now",
+          "type": "string"
+        },
+        "object": {
+          "type": "string"
+        },
+        "predicate": {
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "reason": {
+          "default": "manually_invalidated",
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "predicate",
+        "object"
+      ],
+      "type": "object"
+    }
+  },
+  "kg_timeline": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 500,
+          "type": "integer"
+        },
+        "predicate": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject"
+      ],
+      "type": "object"
+    }
+  },
+  "learn_error": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "category": {
+          "default": "bug",
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "fix": {
+          "type": "string"
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "root_cause": {
+          "type": "string"
+        },
+        "severity": {
+          "default": "medium",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "file",
+        "error",
+        "root_cause",
+        "fix",
+        "pattern"
+      ],
+      "type": "object"
+    }
+  },
+  "list_intents": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 50,
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_answer": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "followup": {
+          "default": true,
+          "type": "boolean"
+        },
+        "limit": {
+          "default": 10,
+          "maximum": 20,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_bytes": {
+          "default": 24000,
+          "maximum": 24000,
+          "minimum": 512,
+          "type": "integer"
+        },
+        "project": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "query": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "all",
+            "fact",
+            "decision",
+            "solution",
+            "lesson",
+            "convention"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "query",
+        "project"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_associate": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "max_results": {
+          "default": 10,
+          "type": "integer"
+        },
+        "min_coverage": {
+          "default": 0.7,
+          "description": "Min coverage for composition mode (0.0-1.0)",
+          "type": "number"
+        },
+        "mode": {
+          "default": "recall",
+          "description": "recall=find related, composition=build solution from parts",
+          "enum": [
+            "recall",
+            "composition"
+          ],
+          "type": "string"
+        },
+        "project": {
+          "description": "Filter by project",
+          "type": "string"
+        },
+        "query": {
+          "description": "Natural language query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_concepts": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "include_memories": {
+          "default": false,
+          "description": "Include linked knowledge records",
+          "type": "boolean"
+        },
+        "limit": {
+          "default": 20,
+          "type": "integer"
+        },
+        "query": {
+          "description": "Search concepts by name",
+          "type": "string"
+        },
+        "type": {
+          "description": "Filter by node type",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_consolidate": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "dry_run": {
+          "default": true,
+          "description": "If true, only show what would be merged",
+          "type": "boolean"
+        },
+        "project": {
+          "description": "Consolidate only this project (optional)",
+          "type": "string"
+        },
+        "threshold": {
+          "default": 0.75,
+          "description": "Similarity threshold 0.0-1.0 (default 0.75)",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_consolidate_status": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    }
+  },
+  "memory_context_build": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "max_tokens": {
+          "default": 4000,
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "query": {
+          "description": "What you need context for",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_delete": {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "hard": {
+          "default": false,
+          "description": "Erase permanently instead of hiding; cannot be undone",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "Knowledge record ID to delete",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_entity_resolve": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "create_if_missing": {
+          "default": true,
+          "type": "boolean"
+        },
+        "mention": {
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "threshold": {
+          "default": 0.85,
+          "description": "Cosine similarity threshold for embedding match.",
+          "type": "number"
+        },
+        "type": {
+          "default": "person",
+          "description": "Entity type: person, technology, project, company, ...",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mention"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_episode_recall": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "concepts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "limit": {
+          "default": 10,
+          "type": "integer"
+        },
+        "min_impact": {
+          "default": 0.0,
+          "type": "number"
+        },
+        "outcome": {
+          "enum": [
+            "breakthrough",
+            "failure",
+            "routine",
+            "discovery"
+          ],
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "query": {
+          "description": "Search narrative text",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_episode_save": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "approaches_tried": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "concepts": {
+          "description": "Key concepts involved",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "frustration_signals": {
+          "default": 0,
+          "type": "integer"
+        },
+        "impact_score": {
+          "default": 0.5,
+          "description": "0.0-1.0, how significant",
+          "type": "number"
+        },
+        "key_insight": {
+          "description": "The aha moment, if any",
+          "type": "string"
+        },
+        "narrative": {
+          "description": "2-3 sentence narrative of what happened",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "breakthrough",
+            "failure",
+            "routine",
+            "discovery"
+          ],
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        }
+      },
+      "required": [
+        "narrative",
+        "outcome"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_eval_contradictions": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "fixture_path": {
+          "type": "string"
+        },
+        "mode": {
+          "default": "fast",
+          "enum": [
+            "fast",
+            "balanced",
+            "deep"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_eval_entity_consistency": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "mode": {
+          "default": "fast",
+          "enum": [
+            "fast",
+            "balanced",
+            "deep"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_eval_locomo": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "description": "Cap how many scenarios to run.",
+          "type": "integer"
+        },
+        "mode": {
+          "default": "fast",
+          "enum": [
+            "fast",
+            "balanced",
+            "deep"
+          ],
+          "type": "string"
+        },
+        "scenarios_path": {
+          "description": "Optional override path.",
+          "type": "string"
+        },
+        "top_k": {
+          "default": 5,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_eval_long_context": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "mode": {
+          "default": "fast",
+          "enum": [
+            "fast",
+            "balanced",
+            "deep"
+          ],
+          "type": "string"
+        },
+        "n_records": {
+          "default": 200,
+          "type": "integer"
+        },
+        "top_k": {
+          "default": 5,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_eval_recall": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "dataset_path": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "mode": {
+          "default": "fast",
+          "enum": [
+            "fast",
+            "balanced",
+            "deep"
+          ],
+          "type": "string"
+        },
+        "top_k": {
+          "default": 5,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_eval_temporal": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "type": "integer"
+        },
+        "mode": {
+          "default": "fast",
+          "enum": [
+            "fast",
+            "balanced",
+            "deep"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_explain_search": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "embedding_space": {
+          "type": [
+            "string",
+            "array"
+          ]
+        },
+        "limit": {
+          "default": 10,
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "type": {
+          "default": "all",
+          "enum": [
+            "decision",
+            "fact",
+            "solution",
+            "lesson",
+            "convention",
+            "all"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_export": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "project": {
+          "description": "Export only this project (optional)",
+          "type": "string"
+        },
+        "save_to_file": {
+          "default": true,
+          "description": "Save to <memory-dir>/backups/ (default true)",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_extract_session": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "action": {
+          "description": "list: show pending sessions. get: return transcript data. complete: mark as done.",
+          "enum": [
+            "list",
+            "get",
+            "complete"
+          ],
+          "type": "string"
+        },
+        "chunk": {
+          "default": 0,
+          "description": "Chunk number for large transcripts (0-based)",
+          "type": "integer"
+        },
+        "session_id": {
+          "description": "Session ID (required for 'get' and 'complete')",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_forget": {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "dry_run": {
+          "default": true,
+          "description": "If true, only show what would be affected",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_get": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "detail": {
+          "default": "full",
+          "description": "'summary' truncates content to 150 chars, 'full' returns everything",
+          "enum": [
+            "summary",
+            "full"
+          ],
+          "type": "string"
+        },
+        "ids": {
+          "description": "Knowledge record IDs (max 50 per call; extras are silently dropped)",
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "ids"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_graph": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "depth": {
+          "default": 2,
+          "description": "Traversal depth (1-3)",
+          "type": "integer"
+        },
+        "node": {
+          "description": "Node name or ID to explore",
+          "type": "string"
+        },
+        "types": {
+          "description": "Filter by node types (rule, skill, concept, etc.)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_graph_index": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "target": {
+          "default": "all",
+          "enum": [
+            "all",
+            "claude_md",
+            "skills",
+            "rules"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_graph_stats": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    }
+  },
+  "memory_history": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "id": {
+          "description": "Knowledge record ID to get history for",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_index_passages": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "after_id": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "limit": {
+          "default": 20,
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "project": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_observe": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "files_affected": {
+          "description": "List of affected file paths",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "observation_type": {
+          "default": "change",
+          "description": "Type of observation",
+          "enum": [
+            "bugfix",
+            "feature",
+            "refactor",
+            "change",
+            "discovery",
+            "decision"
+          ],
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "summary": {
+          "description": "What happened (e.g. 'Modified auth controller')",
+          "type": "string"
+        },
+        "tool_name": {
+          "description": "Which tool triggered this (Write, Edit, Bash, etc.)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name",
+        "summary"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_perf_report": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    }
+  },
+  "memory_rebuild_embeddings": {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "batch_size": {
+          "default": 32,
+          "type": "integer"
+        },
+        "embedding_space": {
+          "description": "Optional: only re-encode rows in these spaces.",
+          "type": [
+            "string",
+            "array"
+          ]
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_rebuild_fts": {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    }
+  },
+  "memory_recall": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "branch": {
+          "description": "Filter by git branch (also includes branch-agnostic records)",
+          "type": "string"
+        },
+        "context_max_chars": {
+          "default": 24000,
+          "description": "Context character budget; evidence mode uses the same value as a stricter UTF-8 byte budget.",
+          "minimum": 512,
+          "type": "integer"
+        },
+        "decisions_only": {
+          "default": false,
+          "description": "Return only structured decisions (v8.0): type=decision AND tags contain 'structured'. Results include parsed schema payload under 'decision'.",
+          "type": "boolean"
+        },
+        "detail": {
+          "default": "full",
+          "description": "Level of detail: 'compact' ~50 tokens/result (id+title+score), 'summary' truncates content to 150 chars, 'full' returns everything, 'auto' picks based on query complexity (paths/urls/code → full, short → compact). Ignored when mode!='search'.",
+          "enum": [
+            "compact",
+            "summary",
+            "full",
+            "auto"
+          ],
+          "type": "string"
+        },
+        "diverse": {
+          "default": false,
+          "description": "Enable MMR diversity to reduce redundant results (useful for broad queries)",
+          "type": "boolean"
+        },
+        "entities": {
+          "description": "Filter by extracted entity names (technology/person/project, case-insensitive)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "evidence_followup": {
+          "default": true,
+          "description": "Evidence mode: allow one search for an explicitly supplied missing_relation.",
+          "type": "boolean"
+        },
+        "expand_budget": {
+          "default": 5,
+          "description": "Max number of additional records to include via graph expansion",
+          "type": "integer"
+        },
+        "expand_context": {
+          "default": false,
+          "description": "Add graph-related records (1-hop neighbors via knowledge graph) as 'expansion' results",
+          "type": "boolean"
+        },
+        "fill_budget": {
+          "default": false,
+          "description": "Context mode: search deeper (up to 100 hits) and keep whole hits in rank order until context_max_chars is used, instead of excerpting the top `limit` hits to fit. Neighbours default to 0 here; pass `neighbors` to keep each hit with the records around it.",
+          "type": "boolean"
+        },
+        "fusion": {
+          "default": "rrf",
+          "description": "Score fusion method: 'rrf' = Reciprocal Rank Fusion (better multi-tier ranking), 'legacy' = original additive scoring",
+          "enum": [
+            "rrf",
+            "legacy"
+          ],
+          "type": "string"
+        },
+        "intent": {
+          "description": "Filter by classified intent (question|procedural|fact|decision|problem|solution|incident|plan)",
+          "type": "string"
+        },
+        "limit": {
+          "default": 10,
+          "type": "integer"
+        },
+        "missing_relation": {
+          "additionalProperties": false,
+          "description": "Evidence mode: missing relation; subject must occur in the original question.",
+          "properties": {
+            "relation": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "time": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject",
+            "relation"
+          ],
+          "type": "object"
+        },
+        "mode": {
+          "default": "search",
+          "description": "Progressive-disclosure mode: 'search' (default) = normal results, 'index' = ultra-compact metadata only (id+title+score+type+project+created_at, ~40-60 tok/hit, no cognitive expansion, use memory_get(ids=...) to fetch full content), 'timeline' = chronological compact view; 'context' = source excerpts; 'evidence' = indexed passage search with bounded follow-up retrieval",
+          "enum": [
+            "search",
+            "index",
+            "timeline",
+            "context",
+            "evidence"
+          ],
+          "type": "string"
+        },
+        "neighbors": {
+          "default": 2,
+          "description": "Timeline/context modes: records before/after each hit; context accepts 0–3.",
+          "type": "integer"
+        },
+        "project": {
+          "description": "Filter by project name",
+          "type": "string"
+        },
+        "query": {
+          "description": "What to search for",
+          "type": "string"
+        },
+        "rerank": {
+          "default": false,
+          "description": "Enable CrossEncoder re-ranking for higher precision (adds ~30ms latency)",
+          "type": "boolean"
+        },
+        "topics": {
+          "description": "Filter results to records tagged with any of these topics (from deep enrichment)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "default": "all",
+          "enum": [
+            "decision",
+            "fact",
+            "solution",
+            "lesson",
+            "convention",
+            "all"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_recall_iterative": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "k_per_iter": {
+          "default": 10,
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "llm_model": {
+          "default": "configured",
+          "type": "string"
+        },
+        "max_iters": {
+          "default": 4,
+          "maximum": 12,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_reflect_now": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "scope": {
+          "default": "full",
+          "description": "quick=dedup only, full=digest+synthesize, weekly=deep analysis",
+          "enum": [
+            "quick",
+            "full",
+            "weekly"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_relate": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "from_id": {
+          "description": "Source knowledge record ID",
+          "type": "integer"
+        },
+        "to_id": {
+          "description": "Target knowledge record ID",
+          "type": "integer"
+        },
+        "type": {
+          "description": "Relation type",
+          "enum": [
+            "causal",
+            "solution",
+            "context",
+            "related",
+            "contradicts"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_id",
+        "to_id",
+        "type"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_report": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "default": "markdown",
+          "description": "markdown (readable) or json (structured)",
+          "enum": [
+            "markdown",
+            "json"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "include_llm_summary": {
+          "default": false,
+          "description": "Add an LLM-written paragraph (needs a configured LLM)",
+          "title": "Include Llm Summary",
+          "type": "boolean"
+        },
+        "limit": {
+          "default": 20,
+          "description": "Maximum items per section",
+          "maximum": 200,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "description": "day/week/month only: 0 = current, -1 = previous (yesterday, last week, last month)",
+          "maximum": 0,
+          "minimum": -520,
+          "title": "Offset",
+          "type": "integer"
+        },
+        "period": {
+          "default": "week",
+          "description": "day = today, week = this ISO week, month = this calendar month, all = since the first record, custom = since/until",
+          "enum": [
+            "day",
+            "week",
+            "month",
+            "all",
+            "custom"
+          ],
+          "title": "Period",
+          "type": "string"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Project name; omit for all projects",
+          "title": "Project"
+        },
+        "save": {
+          "default": false,
+          "description": "Also write the Markdown under <memory dir>/reports/",
+          "title": "Save",
+          "type": "boolean"
+        },
+        "since": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "custom only: first day YYYY-MM-DD (inclusive) or an ISO date-time",
+          "title": "Since"
+        },
+        "tz": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "IANA timezone for period boundaries, e.g. Europe/Berlin; default: MEMORY_REPORT_TZ, TZ or the system zone",
+          "title": "Tz"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "custom only: last day YYYY-MM-DD (inclusive) or an ISO date-time (exclusive); default today",
+          "title": "Until"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_save": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "agent_id": {
+          "description": "Optional Claude Code subagent ID (x-claude-code-agent-id header / OTEL agent_id attribute, v2.1.139+). Lets recall trace which subagent produced this knowledge.",
+          "type": "string"
+        },
+        "branch": {
+          "description": "Git branch this knowledge relates to",
+          "type": "string"
+        },
+        "content": {
+          "description": "The knowledge to save",
+          "type": "string"
+        },
+        "context": {
+          "description": "Additional context, WHY for decisions",
+          "type": "string"
+        },
+        "coref": {
+          "description": "Opt into v10 coreference rewrite — expand pronouns ('after this it broke') into self-contained text using recent session history. Costs ~1s LLM round-trip; default off.",
+          "type": "boolean"
+        },
+        "filter": {
+          "description": "Optional content filter (pytest|cargo|git_status|docker_ps|generic_logs). Trims noisy CLI output while preserving URLs/paths/code.",
+          "type": "string"
+        },
+        "importance": {
+          "default": "medium",
+          "description": "Recall-time boost: critical x1.5, high x1.2, medium x1.0, low x0.8. Reserve `critical` for migration-blocking decisions and security incidents.",
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ],
+          "type": "string"
+        },
+        "parent_agent_id": {
+          "description": "Optional parent agent ID (the dispatching Agent tool / parent span). Together with agent_id forms the subagent lineage tree.",
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "source_format": {
+          "default": "auto",
+          "description": "Conversation preserves dialogue structure and bypasses automatic CLI filters.",
+          "enum": [
+            "auto",
+            "conversation"
+          ],
+          "type": "string"
+        },
+        "supersede": {
+          "default": false,
+          "description": "Retire active records of the same project and type that this one gives a new value for: same opening words, different trailing value (\"X's citizenship is Argentina\" -> \"... is Armenia\"). Use for single-valued facts only; \"likes jazz\" would retire \"likes rock\". The retired ids are returned as `superseded`.",
+          "type": "boolean"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "decision",
+            "fact",
+            "solution",
+            "lesson",
+            "convention"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_save_fast": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "agent_id": {
+          "description": "Optional Claude Code subagent ID (v2.1.139+)",
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "filter": {
+          "type": "string"
+        },
+        "importance": {
+          "default": "medium",
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ],
+          "type": "string"
+        },
+        "parent_agent_id": {
+          "description": "Optional parent agent ID (the dispatching span)",
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "source_format": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "conversation"
+          ],
+          "type": "string"
+        },
+        "supersede": {
+          "default": false,
+          "description": "Same as memory_save.supersede: retire records this one gives a new value for.",
+          "type": "boolean"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "decision",
+            "fact",
+            "solution",
+            "lesson",
+            "convention"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_search_by_tag": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "project": {
+          "description": "Filter by project (optional)",
+          "type": "string"
+        },
+        "tag": {
+          "description": "Tag to search for (partial match)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tag"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_search_fast": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "detail": {
+          "default": "full",
+          "enum": [
+            "compact",
+            "summary",
+            "full"
+          ],
+          "type": "string"
+        },
+        "embedding_space": {
+          "description": "Filter to one or more embedding spaces (text|code|log|config).",
+          "type": [
+            "string",
+            "array"
+          ]
+        },
+        "fusion": {
+          "default": "rrf",
+          "enum": [
+            "rrf",
+            "legacy"
+          ],
+          "type": "string"
+        },
+        "limit": {
+          "default": 10,
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "type": {
+          "default": "all",
+          "enum": [
+            "decision",
+            "fact",
+            "solution",
+            "lesson",
+            "convention",
+            "all"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_self_assess": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "concepts": {
+          "description": "Domains/concepts to assess competency for",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "full_report": {
+          "default": false,
+          "description": "Return full self-model report",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_skill_get": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "list_all": {
+          "default": false,
+          "type": "boolean"
+        },
+        "name": {
+          "description": "Get skill by exact name",
+          "type": "string"
+        },
+        "trigger": {
+          "description": "Natural language trigger to match",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_skill_update": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "new_anti_pattern": {
+          "description": "Anti-pattern learned from failure",
+          "type": "string"
+        },
+        "new_steps": {
+          "description": "Additional steps to add",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "skill_id": {
+          "description": "Skill ID",
+          "type": "string"
+        },
+        "success": {
+          "description": "Was the skill application successful?",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "skill_id",
+        "success"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_stats": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    }
+  },
+  "memory_temporal_query": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "a": {
+          "description": "ISO datetime — duration_between",
+          "type": "string"
+        },
+        "a_end": {
+          "type": "string"
+        },
+        "a_start": {
+          "description": "ISO datetime — relation only",
+          "type": "string"
+        },
+        "anchor": {
+          "description": "ISO datetime anchor for relative phrases",
+          "type": "string"
+        },
+        "b": {
+          "type": "string"
+        },
+        "b_end": {
+          "type": "string"
+        },
+        "b_start": {
+          "type": "string"
+        },
+        "lang": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "en",
+            "ru"
+          ],
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            "relation",
+            "duration_between",
+            "normalize"
+          ],
+          "type": "string"
+        },
+        "phrase": {
+          "description": "Natural-language date — normalize",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_timeline": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "date_from": {
+          "description": "YYYY-MM-DD",
+          "type": "string"
+        },
+        "date_to": {
+          "description": "YYYY-MM-DD",
+          "type": "string"
+        },
+        "limit": {
+          "default": 5,
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "session_number": {
+          "type": "integer"
+        },
+        "sessions_ago": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "memory_update": {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "find": {
+          "description": "Search query to find the old knowledge (when no id)",
+          "type": "string"
+        },
+        "id": {
+          "description": "Exact record to replace; takes precedence over find",
+          "type": "integer"
+        },
+        "new_content": {
+          "description": "New content to replace with",
+          "type": "string"
+        },
+        "project": {
+          "description": "Limit the find search to this project",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why updating",
+          "type": "string"
+        }
+      },
+      "required": [
+        "new_content"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_warmup": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    }
+  },
+  "memory_wiki_generate": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "project": {
+          "description": "Project to refresh (omit for all)",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "phase_transition": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "artifacts": {
+          "type": "object"
+        },
+        "new_phase": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "new_phase"
+      ],
+      "type": "object"
+    }
+  },
+  "rule_set_phase": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "phase": {
+          "description": "Phase name or null to clear.",
+          "enum": [
+            "van",
+            "plan",
+            "creative",
+            "build",
+            "reflect",
+            "archive",
+            null
+          ],
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rule_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rule_id"
+      ],
+      "type": "object"
+    }
+  },
+  "save_decision": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "criteria_matrix": {
+          "description": "criterion -> {option_name: rating 0-5}",
+          "type": "object"
+        },
+        "discarded": {
+          "description": "Option names rejected (subset of options - {selected})",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "options": {
+          "description": "Options considered: [{name, pros[], cons[], unknowns[]}, ...]",
+          "items": {
+            "properties": {
+              "cons": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pros": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "unknowns": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "project": {
+          "type": "string"
+        },
+        "rationale": {
+          "description": "Why this option was chosen",
+          "type": "string"
+        },
+        "selected": {
+          "description": "Chosen option name (must be in options)",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "description": "Short decision title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "options",
+        "criteria_matrix",
+        "selected",
+        "rationale"
+      ],
+      "type": "object"
+    }
+  },
+  "save_intent": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "project": {
+          "description": "Project slug",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "User prompt text as submitted",
+          "type": "string"
+        },
+        "session_id": {
+          "description": "Session id (defaults to current MCP session)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt"
+      ],
+      "type": "object"
+    }
+  },
+  "search_intents": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "default": 20,
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "query": {
+          "description": "Substring to match in prompt text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    }
+  },
+  "self_error_log": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "category": {
+          "description": "Error category for pattern grouping",
+          "enum": [
+            "code_error",
+            "logic_error",
+            "config_error",
+            "api_error",
+            "timeout",
+            "loop_detected",
+            "wrong_assumption",
+            "missing_context"
+          ],
+          "type": "string"
+        },
+        "context": {
+          "default": "",
+          "description": "What was being done when error occurred",
+          "type": "string"
+        },
+        "description": {
+          "description": "What went wrong: symptom, expectation vs reality",
+          "type": "string"
+        },
+        "fix": {
+          "default": "",
+          "description": "How it was fixed (empty if unresolved)",
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "severity": {
+          "default": "medium",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "description",
+        "category"
+      ],
+      "type": "object"
+    }
+  },
+  "self_insight": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "action": {
+          "enum": [
+            "add",
+            "upvote",
+            "downvote",
+            "edit",
+            "list",
+            "promote"
+          ],
+          "type": "string"
+        },
+        "category": {
+          "description": "Error category (for add)",
+          "type": "string"
+        },
+        "content": {
+          "description": "Insight text (for add/edit)",
+          "type": "string"
+        },
+        "context": {
+          "default": "",
+          "type": "string"
+        },
+        "id": {
+          "description": "Insight ID (for upvote/downvote/edit/promote)",
+          "type": "integer"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "source_error_ids": {
+          "description": "Error IDs that spawned this (for add)",
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    }
+  },
+  "self_patterns": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "days": {
+          "default": 30,
+          "type": "integer"
+        },
+        "project": {
+          "type": "string"
+        },
+        "view": {
+          "default": "full_report",
+          "enum": [
+            "error_patterns",
+            "insight_candidates",
+            "rule_effectiveness",
+            "improvement_trend",
+            "full_report"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "self_reflect": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "outcome": {
+          "default": "success",
+          "enum": [
+            "success",
+            "partial",
+            "failure",
+            "ongoing"
+          ],
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "reflection": {
+          "description": "What went well, what to improve, what to do differently",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "task_summary": {
+          "description": "Brief description of what was done",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reflection",
+        "task_summary"
+      ],
+      "type": "object"
+    }
+  },
+  "self_rules": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "action": {
+          "enum": [
+            "list",
+            "fire",
+            "rate",
+            "suspend",
+            "activate",
+            "retire",
+            "add_manual"
+          ],
+          "type": "string"
+        },
+        "category": {
+          "description": "Category (for add_manual)",
+          "type": "string"
+        },
+        "content": {
+          "description": "Rule text (for add_manual)",
+          "type": "string"
+        },
+        "id": {
+          "description": "Rule ID (for fire/rate/suspend/activate/retire)",
+          "type": "integer"
+        },
+        "priority": {
+          "default": 5,
+          "description": "1-10",
+          "type": "integer"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "scope": {
+          "default": "global",
+          "description": "global | project:<name> | category:<name>",
+          "type": "string"
+        },
+        "success": {
+          "description": "For rate: was rule helpful?",
+          "type": "boolean"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    }
+  },
+  "self_rules_context": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "categories": {
+          "description": "Error categories relevant to current task",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "phase": {
+          "description": "Optional: lazy-load only rules relevant to this phase (core + phase-specific). Omit to get all rules.",
+          "enum": [
+            "van",
+            "plan",
+            "creative",
+            "build",
+            "reflect",
+            "archive"
+          ],
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "session_end": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "auto_compress": {
+          "default": false,
+          "type": "boolean"
+        },
+        "highlights": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "next_steps": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "open_questions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pitfalls": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "transcript": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object"
+    }
+  },
+  "session_init": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "mark_consumed": {
+          "default": true,
+          "type": "boolean"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "task_create": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "level": {
+          "type": "integer"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "description"
+      ],
+      "type": "object"
+    }
+  },
+  "task_phases_list": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "type": "object"
+    }
+  },
+  "workflow_learn": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "context": {
+          "type": "object"
+        },
+        "description": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "trigger_pattern": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "steps"
+      ],
+      "type": "object"
+    }
+  },
+  "workflow_predict": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "trigger": {
+          "type": "string"
+        },
+        "workflow_id": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "workflow_track": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "duration_ms": {
+          "type": "integer"
+        },
+        "error_details": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "success",
+            "failure",
+            "partial",
+            "aborted"
+          ],
+          "type": "string"
+        },
+        "workflow_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workflow_id",
+        "outcome"
+      ],
+      "type": "object"
+    }
+  }
+}

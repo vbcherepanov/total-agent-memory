@@ -100,10 +100,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build candidate image
-        run: docker build -t tam-compose-candidate:14.7.0 .
+        run: docker build -t tam-compose-candidate:14.8.0 .
       - name: Compose cold start, real MCP, restart and persistence
         env:
-          TAM_TEAM_IMAGE: tam-compose-candidate:14.7.0
+          TAM_TEAM_IMAGE: tam-compose-candidate:14.8.0
         run: bash tests/smoke/compose-candidate.sh
 
   browser:

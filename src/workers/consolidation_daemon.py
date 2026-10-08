@@ -720,6 +720,83 @@ def consolidate_project(
 # ─── public: run_daemon ────────────────────────────────────────────────
 
 
+def list_idle_projects_by_knowledge(
+    conn: sqlite3.Connection,
+    *,
+    idle_seconds: int = 1800,
+    consolidate_cooldown_seconds: int = 21600,
+    now: datetime | None = None,
+) -> list[str]:
+    """Idle projects judged by their newest knowledge row, oldest first.
+
+    The personal server never writes ``project_activity`` (only the team
+    daemon does), so the hourly reflection job decides idleness from the
+    knowledge table itself: a project whose newest active record is older
+    than ``idle_seconds`` and that was not consolidated within the cooldown.
+    """
+    when = now or _utcnow()
+    idle_cutoff = _iso(when - timedelta(seconds=idle_seconds))
+    cooldown_cutoff = _iso(when - timedelta(seconds=consolidate_cooldown_seconds))
+    rows = conn.execute(
+        """
+        SELECT k.project, MAX(k.created_at) AS newest
+        FROM knowledge k
+        LEFT JOIN consolidation_state cs ON cs.project = k.project
+        WHERE COALESCE(k.status, 'active') = 'active'
+          AND k.project IS NOT NULL AND k.project <> ''
+          AND (cs.last_consolidated_at IS NULL OR cs.last_consolidated_at < ?)
+        GROUP BY k.project
+        HAVING newest < ?
+        ORDER BY newest ASC, k.project ASC
+        """,
+        (cooldown_cutoff, idle_cutoff),
+    ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def consolidate_idle_projects(
+    conn: sqlite3.Connection,
+    *,
+    budget_seconds: int = 120,
+    max_projects: int = 3,
+    idle_seconds: int = 1800,
+    consolidate_cooldown_seconds: int = 21600,
+    embed_fn: Callable[[str], Sequence[float]] | None = None,
+    llm_summarizer: Callable[[str], str] | None = None,
+    now: datetime | None = None,
+) -> list[ConsolidationStats]:
+    """One bounded consolidation sweep for a scheduled job (the reflection runner).
+
+    Takes up to ``max_projects`` idle projects, oldest first, and shares
+    ``budget_seconds`` of wall clock between them. Each project gets the
+    remaining budget; the sweep stops when it is used up.
+    """
+    started = _utcnow()
+    deadline = started + timedelta(seconds=budget_seconds)
+    results: list[ConsolidationStats] = []
+    candidates = list_idle_projects_by_knowledge(
+        conn, idle_seconds=idle_seconds, consolidate_cooldown_seconds=consolidate_cooldown_seconds, now=now)
+    for project in candidates[:max_projects]:
+        remaining = int((deadline - _utcnow()).total_seconds())
+        if remaining <= 0:
+            break
+        stats = consolidate_project(
+            conn, project,
+            budget_seconds=remaining,
+            pause_check=None,
+            embed_fn=embed_fn,
+            llm_summarizer=llm_summarizer,
+        )
+        results.append(stats)
+        log.info(
+            "consolidation_sweep_project",
+            extra={"project": project, "paused": stats.paused, "error": stats.error,
+                   "episodes": stats.episodes_materialized, "duplicates": stats.duplicates_merged,
+                   "transitive": stats.transitive_facts_added, "decay": stats.decay_applied},
+        )
+    return results
+
+
 def _open_conn(db_path: str) -> sqlite3.Connection:
     """Open a daemon-private connection with WAL + busy timeout.
 

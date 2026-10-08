@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "total-agent-memory"
-version = "14.7.0"
+version = "14.8.0"
 description = "Persistent local memory MCP server for Claude Code, Codex CLI, Cursor and any MCP client: 77 tools — temporal knowledge graph, procedural memory, episodic memory, AST codebase ingest, pre-edit guard, auto-consolidating error capture"
 readme = "README.md"
 license = "MIT"

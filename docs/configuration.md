@@ -38,6 +38,14 @@ Environment variables (all optional):
 | `MEMORY_LOG_EMBED_MODEL` | _empty → TEXT_ | Model for `embedding_space=log`. |
 | `MEMORY_CONFIG_EMBED_MODEL` | _empty → TEXT_ | Model for `embedding_space=config`. |
 | `MEMORY_DEFAULT_EMBEDDING_SPACE` | `text` | Space for unclassified content. |
+| `MEMORY_RECALL_TIER_WEIGHTS` | `fts=1,semantic=1.2,hyde=1,multi_repr=1,fuzzy=0.5,graph=0.3,episode=0.9,atomic_facts=1,directives=1,multi_query=0` | **14.8.0** — weights of the recall tiers in the rank fusion; name only the tiers to change. `0` switches a tier off (it is not run). `memory_explain_search` shows the weights in use; `benchmarks/tier_ablation.py` measures them. |
+| `MEMORY_GRAPH_HUB_DEGREE` | `200` | **14.8.0** — a graph node linked to more records than this is ignored by the graph tier (it would connect everything to everything). |
+| `MEMORY_RECALL_USER_TURN_BOOST` | `1.3` | **14.8.0** — for advice-shaped queries ("recommend", "how should I", "посоветуй") the fused score of records that are the user's own turns (`[date] user: ...`) is multiplied by this factor; the preference behind a request is in what the user said, not in the assistant's reply. `1.0` switches it off. |
+| `MEMORY_SESSION_NOTES` | `on` | **14.8.0** — `session_end` also saves its summary, next steps and pitfalls as a `note` record so later recalls find them. |
+| `MEMORY_LLM_FALLBACK_PROVIDERS` | _unset_ | **14.8.0** — comma-separated providers tried, in order, when the configured one does not answer its availability probe (`ollama`, `openai`, `openai-compatible`, `anthropic`). Applies to every LLM phase. |
+| `MEMORY_LLM_FALLBACK_MAX_CALLS` | `500` | **14.8.0** — how many times per process a phase may resolve to a fallback provider before it stays on the configured one. |
+| `MEMORY_CONSOLIDATION_BUDGET_SEC` | `120` | **14.8.0** — wall clock the hourly reflection job spends consolidating idle projects (episodes, duplicate merging, decay). `0` switches the sweep off. |
+| `MEMORY_CONSOLIDATION_MAX_PROJECTS` | `3` | **14.8.0** — idle projects consolidated per reflection run, oldest first. |
 
 ### v10 + earlier
 
