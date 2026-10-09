@@ -107,7 +107,8 @@ postgres = [
 all = ["total-agent-memory[rerank]", "total-agent-memory[postgres]"]
 
 [project.urls]
-Homepage = "https://github.com/vbcherepanov/total-agent-memory"
+Homepage = "https://totalmemory.dev"
+Documentation = "https://totalmemory.dev/docs"
 Repository = "https://github.com/vbcherepanov/total-agent-memory"
 Issues = "https://github.com/vbcherepanov/total-agent-memory/issues"
 
