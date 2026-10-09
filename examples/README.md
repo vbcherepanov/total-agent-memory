@@ -94,3 +94,11 @@ Your cheat sheet — all 46 tools, grouped:
 **Procedural memory (3):** `workflow_learn` · `workflow_predict` · `workflow_track`
 
 **Pre-flight & automation (8):** `file_context` · `learn_error` · `session_init` · `session_end` · `ingest_codebase` · `analogize` · `benchmark`
+
+---
+
+## Runnable examples
+
+| Directory | What it shows |
+|---|---|
+| [`correction-vs-old-memory/`](correction-vs-old-memory/README.md) | A newer user correction against an older stored fact: `memory_save(supersede=true)` retires the old record, `memory_recall` returns the correction, and `kg_at` answers point-in-time queries on dated facts. One command, temp database, no LLM. |
