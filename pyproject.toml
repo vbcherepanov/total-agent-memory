@@ -59,6 +59,11 @@ dependencies = [
     "snowballstemmer>=2.2",
     # Team dashboard: provider API keys are stored Fernet-encrypted at rest.
     "cryptography>=42",
+    # Image OCR on macOS (src/ingestion/ocr.py) uses Apple Vision. Its pyobjc
+    # path needs pyobjc-framework-Vision, which was never declared, so every
+    # install silently fell back to pytesseract or to no OCR at all. pymacos
+    # reaches Vision through ctypes: no dependencies of its own, macOS only.
+    "pymacos>=1.19; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]

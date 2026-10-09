@@ -2,11 +2,12 @@
 """
 OCR module using Apple Vision Framework (macOS).
 
-Uses pyobjc to access macOS Vision.framework for free, fast, local OCR.
+Uses macOS Vision.framework for free, fast, local OCR: through pymacos (a
+declared dependency on macOS), or through pyobjc when that is installed instead.
 Supports: PNG, JPG, TIFF, BMP, PDF (first page).
 Languages: English, Russian (configurable).
 
-Fallback: If pyobjc not available, tries pytesseract, then returns empty.
+Fallback: If neither is available, tries pytesseract, then returns empty.
 
 Usage:
     from ingestion.ocr import OCREngine
@@ -24,7 +25,18 @@ from pathlib import Path
 LOG = lambda msg: sys.stderr.write(f"[memory-ocr] {msg}\n")
 
 
-# Try to import Apple Vision
+# Apple Vision through pymacos: no pyobjc needed, and it reads PDFs too.
+_HAS_PYMACOS = False
+if sys.platform == "darwin":
+    try:
+        import macos
+
+        _HAS_PYMACOS = True
+        LOG("Apple Vision framework: available (pymacos)")
+    except ImportError:
+        pass
+
+# Try to import Apple Vision through pyobjc
 _HAS_VISION = False
 try:
     import objc
@@ -63,7 +75,7 @@ class OCREngine:
 
     def _detect_method(self) -> str:
         """Detect available OCR method."""
-        if _HAS_VISION:
+        if _HAS_PYMACOS or _HAS_VISION:
             return "apple_vision"
         # Try pytesseract
         try:
@@ -108,6 +120,8 @@ class OCREngine:
 
     def _extract_vision(self, image_path: str) -> str:
         """Extract text using Apple Vision framework."""
+        if _HAS_PYMACOS:
+            return self._extract_pymacos(image_path)
         try:
             # Create image URL
             file_url = NSURL.fileURLWithPath_(image_path)
@@ -117,7 +131,7 @@ class OCREngine:
 
             # Create text recognition request
             request = VNRecognizeTextRequest.alloc().init()
-            request.setRecognitionLevel_(1)  # 0 = fast, 1 = accurate
+            request.setRecognitionLevel_(0)  # VNRequestTextRecognitionLevel: 0 = accurate, 1 = fast
             request.setUsesLanguageCorrection_(True)
             request.setRecognitionLanguages_(self.languages)
 
@@ -145,6 +159,18 @@ class OCREngine:
 
             return "\n".join(lines)
 
+        except Exception as e:
+            LOG(f"Vision OCR error: {e}")
+            return ""
+
+    def _extract_pymacos(self, image_path: str) -> str:
+        """Extract text using Apple Vision through pymacos (accurate recognition)."""
+        try:
+            image = image_path
+            if Path(image_path).suffix.lower() == ".pdf":
+                image = macos.pdf.render(image_path, 1, size=2048)  # Vision reads images: the first page, drawn
+            lines = macos.vision.lines(image, languages=self.languages)
+            return "\n".join(line.text for line in lines if line.confidence > 0.3)  # Filter low-confidence results
         except Exception as e:
             LOG(f"Vision OCR error: {e}")
             return ""
@@ -230,7 +256,7 @@ if __name__ == "__main__":
     engine = OCREngine()
 
     if not engine.available:
-        print("No OCR engine available. Install: pip install pyobjc-framework-Vision")
+        print("No OCR engine available. Install: pip install pymacos (macOS)")
         sys.exit(1)
 
     text = engine.extract_text(args.image)
