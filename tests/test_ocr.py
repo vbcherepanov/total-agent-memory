@@ -1,12 +1,14 @@
 """Apple Vision OCR (src/ingestion/ocr.py).
 
-The unit tests swap the pyobjc classes for fakes, so they run on any platform.
-The last test drives the real Vision framework and runs only on macOS with the
-[ocr] extra installed.
+The unit tests swap pymacos and the pyobjc classes for fakes, so they run on
+any platform. The last tests drive the real Vision framework and run only on
+macOS with the [ocr] extra installed.
 """
 
+import importlib
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -102,6 +104,7 @@ def vision(monkeypatch):
         _Observation("smudge", 0.1),
         _Observation("Total 13.50", 0.9),
     ]
+    monkeypatch.setattr(ocr, "_HAS_PYMACOS", False)
     monkeypatch.setattr(ocr, "_HAS_VISION", True)
     monkeypatch.setattr(ocr, "VNImageRequestHandler", _FakeHandler, raising=False)
     monkeypatch.setattr(ocr, "VNRecognizeTextRequest", _FakeRequest, raising=False)
@@ -196,20 +199,90 @@ def test_perform_outcome_normalises_both_pyobjc_shapes(result, expected):
     assert ocr._perform_outcome(result) == expected
 
 
+class _FakeMacos:
+    """Stands in for pymacos: records what Vision was asked to read."""
+
+    def __init__(self, lines):
+        self.read = []
+        self.rendered = []
+        self.vision = SimpleNamespace(lines=self._lines)
+        self.pdf = SimpleNamespace(render=self._render)
+        self._result = lines
+
+    def _lines(self, image, languages=None):
+        self.read.append((image, languages))
+        return self._result
+
+    def _render(self, path, page, size):
+        self.rendered.append((path, page, size))
+        return b"page-png"
+
+
+def _line(text, confidence):
+    return SimpleNamespace(text=text, confidence=confidence, box=(0, 0, 1, 1))
+
+
+@pytest.fixture
+def pymacos(monkeypatch):
+    fake = _FakeMacos([_line("Invoice 42", 0.98), _line("smudge", 0.1), _line("Total 13.50", 0.9)])
+    monkeypatch.setattr(ocr, "macos", fake, raising=False)
+    monkeypatch.setattr(ocr, "_HAS_PYMACOS", True)
+    monkeypatch.setattr(ocr, "_HAS_VISION", False)
+    return fake
+
+
+def test_pymacos_reads_images_with_the_languages_and_drops_low_confidence(pymacos, image):
+    engine = OCREngine(languages=["en-US", "ru-RU"])
+
+    assert engine.available and engine._method == "apple_vision"
+    assert engine.extract_text(str(image)) == "Invoice 42\nTotal 13.50"
+    assert pymacos.read == [(str(image.resolve()), ["en-US", "ru-RU"])]
+
+
+def test_pymacos_is_used_before_pyobjc(pymacos, vision, image, monkeypatch):
+    monkeypatch.setattr(ocr, "_HAS_PYMACOS", True)  # `vision` turned it off: now both are present
+
+    assert OCREngine().extract_text(str(image)) == "Invoice 42\nTotal 13.50"
+    assert pymacos.read and not vision.created
+
+
+def test_pymacos_reads_the_first_page_of_a_pdf(pymacos, tmp_path):
+    document = tmp_path / "scan.pdf"
+    document.write_bytes(b"%PDF-1.4")
+
+    assert OCREngine().extract_text(str(document)) == "Invoice 42\nTotal 13.50"
+    assert pymacos.rendered == [(str(document.resolve()), 1, ocr.PDF_RENDER_LONG_SIDE)]
+    assert pymacos.read[0][0] == b"page-png"  # Vision reads the page drawn as an image
+
+
+def test_a_pymacos_error_is_logged_and_gives_empty_text(pymacos, image, capsys):
+    def broken(image, languages=None):
+        raise RuntimeError("the image could not be read")
+
+    pymacos.vision.lines = broken
+
+    assert OCREngine().extract_text(str(image)) == ""
+    assert "the image could not be read" in capsys.readouterr().err
+
+
 ARIAL = Path("/System/Library/Fonts/Supplemental/Arial.ttf")
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="Apple Vision is macOS only")
-def test_apple_vision_reads_english_and_russian_from_png_and_pdf(tmp_path):
-    pytest.importorskip("Vision")
-    pytest.importorskip("Quartz")
+@pytest.fixture
+def ocr_without_pymacos(monkeypatch):
+    """ingestion.ocr loaded as if pymacos were not installed, so it probes pyobjc."""
+    monkeypatch.setitem(sys.modules, "macos", None)
+    yield importlib.reload(ocr)
+    monkeypatch.undo()
+    importlib.reload(ocr)
+
+
+def _assert_reads_english_and_russian(module, tmp_path):
     image_module = pytest.importorskip("PIL.Image")
     font_module = pytest.importorskip("PIL.ImageFont")
     draw_module = pytest.importorskip("PIL.ImageDraw")
     if not ARIAL.exists():
         pytest.skip("Arial is needed to draw Cyrillic text")
-    if not ocr._HAS_VISION:
-        pytest.fail("Vision and Quartz import, yet ingestion.ocr did not enable Apple Vision")
 
     font = font_module.truetype(str(ARIAL), 40)
     canvas = image_module.new("RGB", (1400, 300), "white")
@@ -220,8 +293,25 @@ def test_apple_vision_reads_english_and_russian_from_png_and_pdf(tmp_path):
     canvas.save(png)
     canvas.save(pdf)
 
-    engine = OCREngine(languages=["en-US", "ru-RU"])
+    engine = module.OCREngine(languages=["en-US", "ru-RU"])
     for path in (png, pdf):
         text = engine.extract_text(str(path))
         assert "Invoice 2026 total 42.00 USD" in text, (path.name, text)
         assert "Счёт на оплату номер 17" in text, (path.name, text)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Apple Vision is macOS only")
+def test_apple_vision_through_pyobjc_reads_english_and_russian_from_png_and_pdf(ocr_without_pymacos, tmp_path):
+    pytest.importorskip("Vision")
+    pytest.importorskip("Quartz")
+    if not ocr_without_pymacos._HAS_VISION:
+        pytest.fail("Vision and Quartz import, yet ingestion.ocr did not enable Apple Vision")
+    _assert_reads_english_and_russian(ocr_without_pymacos, tmp_path)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Apple Vision is macOS only")
+def test_apple_vision_through_pymacos_reads_english_and_russian_from_png_and_pdf(tmp_path):
+    pytest.importorskip("macos")
+    if not ocr._HAS_PYMACOS:
+        pytest.fail("pymacos imports, yet ingestion.ocr did not enable it")
+    _assert_reads_english_and_russian(ocr, tmp_path)

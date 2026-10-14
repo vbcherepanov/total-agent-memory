@@ -6,6 +6,10 @@ and versions use [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Image OCR through pymacos.** The `[ocr]` extra also installs [pymacos](https://pypi.org/project/pymacos/), which reaches Apple Vision through ctypes and is tried before pyobjc; when it loads, pyobjc is not probed. Same languages, accurate level, confidence floor and first-page PDF rendering as the pyobjc path (#36).
+
 ## [14.9.0] - 2026-10-13
 
 ### Added

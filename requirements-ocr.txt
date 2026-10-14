@@ -4,3 +4,4 @@
 -r requirements.txt
 pyobjc-framework-Vision>=10.3; sys_platform == 'darwin'
 pyobjc-framework-Quartz>=10.3; sys_platform == 'darwin'
+pymacos>=1.25,<1.26; sys_platform == 'darwin'

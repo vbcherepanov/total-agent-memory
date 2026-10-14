@@ -48,7 +48,11 @@ ROOT = Path(__file__).resolve().parents[1]
 OPTIONAL = {
     "apscheduler",  # reflection scheduler — falls back to manual drain
     "watchdog",     # file watcher — falls back to polling
+    "pymacos",      # image OCR — falls back to pyobjc, then pytesseract
 }
+
+# Distributions whose import name differs from the name they are declared by.
+IMPORT_NAMES = {"pymacos": "macos"}
 
 
 def _name(spec: str) -> str:
@@ -111,15 +115,16 @@ def test_the_http_transport_dependencies_are_declared():
 @pytest.mark.parametrize("package", sorted(OPTIONAL))
 def test_optional_packages_really_are_optional(package: str):
     """An entry in OPTIONAL must be imported defensively somewhere in src/."""
+    module = IMPORT_NAMES.get(package, package)
     hits = [
         path
         for path in (ROOT / "src").rglob("*.py")
-        if package in path.read_text(errors="replace").lower()
+        if module in path.read_text(errors="replace").lower()
     ]
     assert hits, f"{package} is marked optional but src/ never mentions it"
     guarded = any(
         re.search(
-            rf"try:[^\n]*\n(?:.*\n)*?\s*(?:from|import)\s+{package}",
+            rf"try:[^\n]*\n(?:.*\n)*?\s*(?:from|import)\s+{module}\b",
             path.read_text(errors="replace"),
             re.IGNORECASE,
         )
@@ -183,6 +188,15 @@ def test_the_ocr_extra_carries_what_the_ocr_module_imports():
     assert ocr is not None, "pyproject lost the 'ocr' optional-dependency group"
     assert OCR_STACK <= ocr, f"'ocr' is missing {sorted(OCR_STACK - ocr)}"
     assert not OCR_STACK & _pyproject(), "pyobjc is macOS-only and stays out of the base install"
+
+
+def test_pymacos_ships_in_the_ocr_extra_only():
+    """It loads into the MCP server process: opt-in, and capped, until it has a track record."""
+    assert "pymacos" in _extras()["ocr"]
+    assert "pymacos" not in _pyproject()
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    (spec,) = [s for s in data["project"]["optional-dependencies"]["ocr"] if _name(s) == "pymacos"]
+    assert "<" in spec.split(";")[0], f"{spec} has no upper bound"
 
 
 def test_the_ocr_requirements_file_mirrors_the_extra():

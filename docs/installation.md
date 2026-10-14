@@ -78,9 +78,9 @@ pip install -r requirements-rerank.txt        # clone / Docker
 ### Optional image OCR (macOS)
 
 The file watcher reads the text out of images and PDFs with Apple Vision. It
-needs pyobjc, which is an extra because it exists only on macOS. Without it,
-images are still stored but without their text (pytesseract is used instead
-when it is installed).
+needs pymacos or pyobjc (pymacos is tried first), which are an extra because
+they exist only on macOS. Without them, images are still stored but without
+their text (pytesseract is used instead when it is installed).
 
 ```bash
 pip install "total-agent-memory[ocr]"         # pip / uvx / pipx
