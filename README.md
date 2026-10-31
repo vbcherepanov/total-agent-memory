@@ -7,6 +7,8 @@
 
 <!-- mcp-name: io.github.vbcherepanov/total-agent-memory -->
 
+English | [简体中文](README.zh-CN.md)
+
 > Persistent, local memory for AI coding agents: Claude Code, Codex CLI, Cursor and any MCP client.
 >
 > Website and documentation: **[totalmemory.dev](https://totalmemory.dev)** · [Quick start](https://totalmemory.dev/docs/quick-start) · [Claude Code guide](https://totalmemory.dev/docs/claude-code) · [Benchmarks](https://totalmemory.dev/benchmarks) · [Compare with other tools](https://totalmemory.dev/compare)

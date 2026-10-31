@@ -19,6 +19,8 @@ recursive-include migrations/postgres *.sql
 recursive-include src/team_memory/static *.html *.js *.css *.svg *.woff2 *.txt
 recursive-include src/team_memory/reports/static *.js *.css
 recursive-include src/dashboard_static *.js *.txt
+recursive-include src/dashboard_static/locales *.json
+include docs/dashboard-i18n.md
 include THIRD-PARTY-LICENSES.md
 global-exclude *.py[cod]
 prune tests/.pytest_cache
