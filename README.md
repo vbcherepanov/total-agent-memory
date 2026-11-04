@@ -27,10 +27,14 @@ any MCP client can use it without code changes.
 
 Each store is one directory built around a SQLite database. Recall combines
 full-text BM25, dense embeddings computed locally, fuzzy matching and a
-knowledge graph, and fuses the ranked lists with reciprocal rank fusion; an
-optional cross-encoder can rerank the result. The default profile makes no LLM
-call on write or search, so retrieval can be measured offline and a rerun gives
-the same result. Facts can carry validity intervals (`kg_add_fact`, `kg_at`),
+knowledge graph, and fuses the ranked lists with reciprocal rank fusion. A local
+cross-encoder then reranks the result: by default it starts as soon as its model
+has loaded in the background, and `MEMORY_CROSS_RERANK=off` turns it off. The
+default profile makes no LLM call on write or search, so retrieval can be
+measured offline. With the cross-encoder off, reruns on fresh stores returned
+the same ranking for every LoCoMo question. With the default setting the first
+queries of a process can run before the model has loaded, so reruns are not
+guaranteed to match. Facts can carry validity intervals (`kg_add_fact`, `kg_at`),
 and a newer value of a single-valued fact can retire the older one.
 
 TAM is for developers who use coding agents daily and for researchers who need
@@ -52,8 +56,9 @@ uvx total-agent-memory                  # run once without installing
 ```
 
 This installs the `total-agent-memory` (alias `tam`) MCP server and the
-`tam-team`, `tam-remote` and `lookup-memory` commands. The optional
-cross-encoder reranker pulls in PyTorch and is an extra:
+`tam-team`, `tam-remote` and `lookup-memory` commands. The default cross-encoder
+runs on ONNX through fastembed and needs no extra. A separate
+sentence-transformers reranker pulls in PyTorch and is an extra:
 `pip install "total-agent-memory[rerank]"`. The PostgreSQL backend of the team
 server is the `[postgres]` extra.
 
@@ -182,13 +187,23 @@ have are skipped:
 
 The retrieval benchmarks (LoCoMo, LongMemEval, BEAM) need no API key and run
 with scripts in [benchmarks/](benchmarks) once the public datasets are
-downloaded. Results with the default profile, v13.0.0:
+downloaded. The table below was measured on v13.0.0, before the cross-encoder
+became the default in 14.5, so it describes retrieval without the cross-encoder
+and not a default install of the current version:
 
 | Benchmark | Metric | Result |
 |---|---|---:|
 | LongMemEval (470 questions) | R@5 (recall_any) | 95.1% |
 | LoCoMo (1,536 questions) | R@5 | 0.607 |
 | BEAM, 1M-token scale (625 probes) | R@5 | 0.448 |
+
+Default settings score higher on LoCoMo and take much longer per query. In the
+[JOSS review](https://github.com/openjournals/joss-reviews/issues/11457) of
+v14.6.0 the editor measured R@5 of about 0.745 at about 495 ms median with the
+defaults, against 0.607 at about 18 ms with `MEMORY_CROSS_RERANK=off`. Our own
+reruns with the cross-encoder off gave R@5 0.610 on v14.6.0 and 0.609 on v14.10.0
+([rows and reports](benchmarks/results/rerank-modes)). A full measurement of the
+default configuration is planned for the next release.
 
 Dataset locations, commands, end-to-end (LLM-judged) accuracy, negative
 controls, latency and the 14.x studies are in
