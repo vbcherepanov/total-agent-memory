@@ -1,0 +1,53 @@
+{
+  "version": "14.6.0",
+  "version_label": "v14.6.0",
+  "commit": "7482d8a",
+  "mode_requested": "off",
+  "mode_effective": "off",
+  "env_cross_rerank": "off",
+  "label": "run2",
+  "fresh_store": true,
+  "wait_for_encoder": false,
+  "lane_note": "3 concurrent runs; latency not solo",
+  "summary": {
+    "queries": 1986,
+    "graded": 1535,
+    "R@1": 0.3322,
+    "R@5": 0.6104,
+    "R@10": 0.7003,
+    "latency_p50_ms": 28.67,
+    "latency_p95_ms": 96.86,
+    "latency_p50_graded_ms": 28.68,
+    "queries_before_encoder_ready": 1986
+  },
+  "ingest": {
+    "saved": 5882,
+    "skipped": 0,
+    "elapsed_sec": 310.87,
+    "rate_turn_per_sec": 18.92
+  },
+  "eval_seconds": 81.8,
+  "load_average_before": [
+    10.35,
+    8.4,
+    7.5
+  ],
+  "load_average_after": [
+    13.67,
+    10.34,
+    8.34
+  ],
+  "machine": {
+    "cpu": "Apple M2 Max",
+    "cores": 12,
+    "os": "macOS-27.2-arm64-arm-64bit-Mach-O"
+  },
+  "python": "3.13.5",
+  "packages": {
+    "fastembed": "0.8.0",
+    "onnxruntime": "1.30.0",
+    "chromadb": "1.5.9",
+    "numpy": "2.5.3"
+  },
+  "finished_at": "2026-11-04T16:12:10Z"
+}
