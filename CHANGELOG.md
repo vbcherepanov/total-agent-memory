@@ -6,6 +6,10 @@ and versions use [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- **GHSA-f2j3-chh4-47jw: the Docker command in the README exposed the dashboard to the network (versions before 14.10.0).** `docker run -p 37737:37737` published the port on every host interface, and the dashboard had no authentication, so any host that could reach the port could read the memory store. 14.10.0 already fixed this (loopback port mappings and a required token beyond loopback); `SECURITY.md` now lists 14.x as supported, records the advisory, and describes safe remote access. Reported by @alex09x during the JOSS review.
+
 ### Fixed
 
 - **The orphan-edge backfill exited with an error.** `backfill_orphan_edges --trigger-now` (the macOS `orphan-backfill` LaunchAgent runs it every few hours) queued the records and then failed with `TypeError` while creating the `.reflect-pending` trigger, a regression in 14.10.0. Nothing was lost: reflection drained the queue on its next scheduled run instead of right away.

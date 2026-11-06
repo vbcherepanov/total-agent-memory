@@ -4,12 +4,28 @@
 
 | Version | Supported |
 |---------|-----------|
-| 13.x    | yes       |
-| < 13.0  | no        |
+| 14.x    | yes       |
+| < 14.0  | no        |
 
-Only the latest 13.x release receives security fixes. The 13.0.0 release
-changed how tools register against the MCP Python SDK; installs pinned to
-older SDK majors are not maintained.
+Only the latest 14.x release receives security fixes. Upgrade to it before
+reporting a problem you found on an older release.
+
+## Published advisories
+
+| Advisory | Affected | Fixed in |
+|----------|----------|----------|
+| [GHSA-f2j3-chh4-47jw](https://github.com/vbcherepanov/total-agent-memory/security/advisories/GHSA-f2j3-chh4-47jw): the documented `docker run` command published the unauthenticated dashboard on every host interface | < 14.10.0 | 14.10.0 |
+
+## Network exposure
+
+The dashboard (`:37737`) and the MCP HTTP transport (`:3737`) are meant for
+the machine they run on. Since 14.10.0 both require a bearer token whenever
+they listen beyond loopback, and the documented Docker port mappings publish
+on `127.0.0.1` only. Keep it that way: `docker run -p 37737:37737` without
+an address publishes the port on every interface, and Docker's own iptables
+rules bypass host firewalls such as ufw. For access from another machine,
+put a reverse proxy (for example nginx) in front with TLS and its own
+authentication, and keep the token from `<memory dir>/state/http-token`.
 
 ## Reporting a vulnerability
 
