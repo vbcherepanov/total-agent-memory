@@ -67,6 +67,16 @@ asks "Just me" or "Company server", detects Claude Code, Claude Desktop, Codex,
 Cursor, Windsurf, Gemini CLI, Cline and OpenCode, and registers the server with
 the ones you pick ([setup wizard](docs/SETUP_WIZARD.md)).
 
+**First start.** With no command, `tam` starts the MCP server on stdio, which
+is how MCP clients run it. `tam --help` lists the commands and `tam --version`
+prints the version (from 14.11; earlier versions start the server for any
+argument, so use `tam setup --help` there). The first start downloads about
+330 MB of models: the text embedder (about 240 MB) and the cross-encoder (about
+90 MB). The cross-encoder loads in the background, so a short script that exits
+after a few queries gets the fused order without it. fastembed keeps the models
+in the system temp directory, which macOS clears from time to time; set
+`TAM_MODEL_CACHE=~/.tam/models` to keep them.
+
 **Other channels:**
 
 | Channel | Command |
@@ -201,9 +211,13 @@ Default settings score higher on LoCoMo and take much longer per query. In the
 [JOSS review](https://github.com/openjournals/joss-reviews/issues/11457) of
 v14.6.0 the editor measured R@5 of about 0.745 at about 495 ms median with the
 defaults, against 0.607 at about 18 ms with `MEMORY_CROSS_RERANK=off`. Our own
-reruns with the cross-encoder off gave R@5 0.610 on v14.6.0 and 0.609 on v14.10.0
-([rows and reports](benchmarks/results/rerank-modes)). A full measurement of the
-default configuration is planned for the next release.
+runs of v14.6.0, three on a fresh store per setting, gave R@5 0.611 with the
+cross-encoder off and 0.746 with the default and with `on`, at about 0.95-1.0 s
+median per query on an Apple M2 Max; the median depends on the CPU. Each setting
+returned the same ranking for every question in all three runs. With the default,
+the first query of a process can arrive before the cross-encoder has loaded and
+keeps the fused order; in these runs that changed one question out of 1,986
+([rows, reports and commands](benchmarks/results/rerank-modes)).
 
 Dataset locations, commands, end-to-end (LLM-judged) accuracy, negative
 controls, latency and the 14.x studies are in

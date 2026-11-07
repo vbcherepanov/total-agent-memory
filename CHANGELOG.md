@@ -6,12 +6,23 @@ and versions use [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Warm-up for the LoCoMo rerank-mode runner.** `--warmup-queries N` asks N untimed queries before the measured run, and `benchmarks/locomo_rerank_matrix.sh` measures the default mode with and without warm-up and `on`, three fresh-store runs each, one at a time, then compares every rerun with the first.
+- **Default-mode LoCoMo results for v14.6.0.** `benchmarks/results/rerank-modes` now holds three fresh-store runs each of `auto` without and with warm-up and of `on`: R@5 0.746 in all three, the same ranking on all 1,986 questions across reruns of each setting, and one question (the first one asked) answered before the encoder had loaded in cold `auto`. The README cites these figures in place of the planned measurement.
+
+### Changed
+
+- **Paper and installation guide.** `paper/paper.md` now says the cross-encoder runs by default once its model has loaded, that only runs with it off are guaranteed to repeat, and that it raises query cost to hundreds of milliseconds. The README and `docs/installation.md` describe the first-start download (about 330 MB), `TAM_MODEL_CACHE`, the Homebrew source build, the six compose services, port conflicts, and Ollama as optional.
+
 ### Security
 
 - **GHSA-f2j3-chh4-47jw: the Docker command in the README exposed the dashboard to the network (versions before 14.10.0).** `docker run -p 37737:37737` published the port on every host interface, and the dashboard had no authentication, so any host that could reach the port could read the memory store. 14.10.0 already fixed this (loopback port mappings and a required token beyond loopback); `SECURITY.md` now lists 14.x as supported, records the advisory, and describes safe remote access. Reported by @alex09x during the JOSS review.
 
 ### Fixed
 
+- **`tam --help` and `tam --version` started the server.** The server takes no arguments, so both ran every migration and then waited on stdin. They now print the commands or the version and exit without touching the store; any other unknown argument prints a warning and starts the server as before, so client configs that pass extra arguments keep working.
+- **The LoCoMo rerank-mode runner graded 1,535 questions instead of 1,536.** One question text appears twice in a conversation of locomo10, in categories 4 and 5, and the runner looked labels up by text, so both got the second label. Labels are now consumed in dataset order. The `off` results from 2026-11-04 in `benchmarks/results/rerank-modes` were graded on 1,535 questions; the results README gives them regraded on 1,536 from the saved rows.
 - **The orphan-edge backfill exited with an error.** `backfill_orphan_edges --trigger-now` (the macOS `orphan-backfill` LaunchAgent runs it every few hours) queued the records and then failed with `TypeError` while creating the `.reflect-pending` trigger, a regression in 14.10.0. Nothing was lost: reflection drained the queue on its next scheduled run instead of right away.
 
 ## [14.10.0] - 2026-10-26

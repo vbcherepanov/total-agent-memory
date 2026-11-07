@@ -41,7 +41,7 @@ These are the published distribution channels. Python 3.11 or newer is required 
 | **npx** (Node) | `npx -y total-agent-memory connect claude-code` | Zero-install. Bootstraps a Python venv in `~/.tam/.venv` via uv (or python3 fallback), pulls the PyPI server, wires the MCP entry into your IDE. Replace `claude-code` with `codex` / `cursor` / `cline` / `continue` / `aider` / `windsurf` / `gemini-cli` / `opencode`. |
 | **uvx** (Python via uv) | `uvx total-agent-memory` | One-off run with no install. Best for trying without commitment. |
 | **pipx** (Python isolated) | `pipx install total-agent-memory` | Installs the `total-agent-memory`, `tam`, `tam-lookup`, `lookup-memory` binaries on PATH in an isolated venv. |
-| **brew** (macOS / Linuxbrew) | `brew install vbcherepanov/tap/total-memory` | Bottle-style install with `tam` and legacy `claude-total-memory` symlinks. |
+| **brew** (macOS / Linuxbrew) | `brew install vbcherepanov/tap/total-memory` | Builds from the PyPI source tarball in a Homebrew virtualenv (needs `cmake` and `rust` at build time), with `tam` and legacy `claude-total-memory` symlinks. |
 | **Docker** (multi-arch) | `docker run -p 127.0.0.1:3737:3737 -p 127.0.0.1:37737:37737 -v ~/.tam:/data ghcr.io/vbcherepanov/total-agent-memory:14.10.0` | Containerized (linux/amd64 + linux/arm64). MCP over HTTP on `:3737/mcp`, dashboard on `:37737`. |
 | **Claude Code plugin** | `/plugin marketplace add vbcherepanov/total-agent-memory`<br>`/plugin install total-agent-memory@vbcherepanov` | Installs the MCP server, the `memory-protocol` skill and all seven capture hooks in one step, from inside Claude Code. The bootstrap reuses an existing install if it finds one, so nothing is downloaded twice. |
 | **Claude plugin (directory edition)** | `/plugin marketplace add vbcherepanov/total-agent-memory-plugin`<br>`/plugin install total-agent-memory@vbcherepanov` | A small separate repository, [total-agent-memory-plugin](https://github.com/vbcherepanov/total-agent-memory-plugin), for Claude Code, Cowork and Codex (see the next row). Runs the pinned server with `uvx total-agent-memory==14.8.0` and adds the `memory-protocol` skill; no hooks. Needs [uv](https://docs.astral.sh/uv/). Use either this or the plugin above, not both. |
@@ -155,19 +155,23 @@ cd total-agent-memory
 bash install-docker.sh --with-compose
 ```
 
-Brings up 5 services:
+Brings up 6 services, built locally as `total-agent-memory:latest` (the one-line
+`docker run` above uses the published GHCR image instead):
 
 | Service | Role | Exposed |
 |---|---|---|
 | `mcp` | MCP server (HTTP transport) | `127.0.0.1:3737/mcp` |
 | `dashboard` | Web UI | `127.0.0.1:37737` |
 | `ollama` | Local LLM runtime | `127.0.0.1:11434` |
+| `model-init` | Pulls the Ollama models once, then exits | internal |
 | `reflection` | File-watch queue drainer | internal |
 | `scheduler` | Ofelia cron (backfill + update check) | internal |
 
 **Network exposure.** Inside the container both servers listen on `0.0.0.0`, so every request must carry the access token from `<data dir>/state/http-token` (created 0600 on first start; override with `TAM_HTTP_TOKEN`): `Authorization: Bearer <token>` for MCP and the API, `/login#token=<token>` once per browser for the dashboard (the fragment is never sent to the server; the page POSTs it, clears it from the address bar and sets an opaque session cookie that never contains the token; `POST /logout` ends it). The pre-14.10 form `/login?token=<token>` still works for one more release: it is exchanged at once and redirected to `/` with `Referrer-Policy: no-referrer`, but a reverse proxy in front may log the query string, so prefer the fragment. `/healthz` stays open. Always publish with `127.0.0.1:` as shown; a bare `-p 3737:3737` exposes the port on every interface. Changing an endpoint setting (`MEMORY_LLM_API_BASE`, `MEMORY_EMBED_API_BASE`, `OLLAMA_URL`) in the dashboard asks for an explicit confirmation because it redirects the stored API key and memory text.
 
-First run pulls `qwen2.5-coder:7b` (~4.7 GB) + `nomic-embed-text` (~275 MB) — 5–10 min cold start.
+If port 37737 or 3737 is already taken, for example by a dashboard of a native install, change the host side of the mapping: `-p 127.0.0.1:47737:37737`.
+
+First run pulls `qwen2.5-coder:7b` (~4.7 GB) + `nomic-embed-text` (~275 MB) — 5–10 min cold start. These models serve the optional LLM stages (summaries, contradiction checks, query rewriting); the one-line `docker run` needs neither them nor Ollama.
 
 **GPU note:** Docker Desktop on macOS doesn't forward Metal. Native install is faster on Mac. On Linux with NVIDIA Container Toolkit, uncomment the `deploy.resources.reservations.devices` block in `docker-compose.yml`.
 
@@ -227,10 +231,13 @@ config from.
 
 - **Python 3.11+** (3.13 recommended)
 - **Git** for cloning the repo
-- **~2 GB disk** (code + venv + MiniLM model + DB)
+- **About 1 GB disk** (venv about 380 MB, models about 330 MB, plus the database)
 - **Claude Code** (or Codex CLI / Cursor / Gemini CLI / OpenCode — any MCP client)
-- Optional but strongly recommended: **[Ollama](https://ollama.com)** running
-  locally (`ollama serve`) with `qwen2.5-coder:7b` + `nomic-embed-text` pulled
+- Optional: **[Ollama](https://ollama.com)** running locally (`ollama serve`)
+  with `qwen2.5-coder:7b` + `nomic-embed-text` pulled, for the optional LLM
+  stages (summaries, contradiction checks, query rewriting)
+- Optional: `TAM_MODEL_CACHE=~/.tam/models` keeps the downloaded models out of
+  the system temp directory, which macOS clears from time to time
 
 Clone the repo first (same on every platform):
 

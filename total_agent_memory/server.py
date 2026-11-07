@@ -78,9 +78,69 @@ def _adopt_existing_install():
     adopt_existing(os.environ)
 
 
+DISTRIBUTION = "total-agent-memory"
+HELP_FLAGS = ("-h", "--help", "help")
+VERSION_FLAGS = ("-V", "--version")
+SUBCOMMANDS = ("setup", "report", "daemon", "proxy", "redact-existing", "import", "export", "import-bundle",
+               "forget-auto")
+USAGE = """usage: tam [COMMAND] [ARGS...]
+
+With no command, tam starts the MCP server on stdio (MCP clients run it this way;
+MCP_TRANSPORT=http serves HTTP). In a terminal, the first run opens the setup wizard.
+
+commands:
+  setup                  configure clients and the store (tam setup --help)
+  report                 activity report for a project and period
+  daemon                 start|stop|status|restart the shared warm daemon
+  proxy                  stdio front end for the daemon
+  redact-existing        find and redact stored credentials
+  import                 import chat exports and notes
+  export --encrypted     export the store to an encrypted bundle
+  import-bundle          import an encrypted bundle
+  forget-auto            delete records that hooks saved on their own
+
+options:
+  -h, --help             show this message and exit
+  -V, --version          show the installed version and exit
+"""
+
+
+def _installed_version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version(DISTRIBUTION)
+    except PackageNotFoundError:
+        import tomllib
+
+        with open(os.path.join(_root, "pyproject.toml"), "rb") as handle:
+            return tomllib.load(handle)["project"]["version"]
+
+
+def _answer_without_server(argv) -> int | None:
+    """Exit code for `tam --help` / `tam --version`, which must not start the server or touch the store."""
+    if argv[:1] and argv[0] in HELP_FLAGS:
+        sys.stdout.write(USAGE)
+        return 0
+    if argv[:1] and argv[0] in VERSION_FLAGS:
+        sys.stdout.write(f"{DISTRIBUTION} {_installed_version()}\n")
+        return 0
+    return None
+
+
+def _warn_unknown_arguments(argv) -> None:
+    """The server takes no arguments; say so instead of silently starting it."""
+    if argv and argv[0] not in SUBCOMMANDS:
+        sys.stderr.write(f"tam: ignoring unknown argument(s): {' '.join(argv)}; starting the MCP server. "
+                         "Run `tam --help` for commands.\n")
+
+
 def main_sync():
     """Synchronous entry point for console_scripts."""
     argv = sys.argv[1:]
+    answered = _answer_without_server(argv)
+    if answered is not None:
+        sys.exit(answered)
     # Human-facing subcommands print paths and arrows; the MCP transports (no argument, `proxy`) own stdout.
     if argv and argv[0] != "proxy":
         if _src not in sys.path:
@@ -113,6 +173,7 @@ def main_sync():
         cli = _setup_wizard()
         if cli.should_autorun(os.environ):
             sys.exit(cli.main([], first_run=True))
+    _warn_unknown_arguments(argv)
     _load_server().run()
 
 

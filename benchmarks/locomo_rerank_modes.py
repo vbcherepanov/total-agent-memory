@@ -28,6 +28,7 @@ import statistics
 import subprocess
 import sys
 import time
+from collections import defaultdict, deque
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -37,6 +38,29 @@ TOP_K = 10
 ADVERSARIAL_CATEGORY = 5
 PACKAGES = ("fastembed", "onnxruntime", "chromadb", "numpy")
 PROGRESS_EVERY = 100
+# Untimed queries asked before the measured run. None of them is a LoCoMo
+# question, so the search cache cannot hand a measured question a stored answer.
+WARMUP_QUERIES = (
+    "What did they talk about at the start of the conversation?",
+    "Which plans were mentioned for the next weekend?",
+    "What does the other person do for work?",
+)
+WARMUP_PROJECT = "locomo_0"
+
+
+def run_warmup(server_mod, count: int, reranker) -> dict:
+    """Ask `count` untimed queries so model loading happens before the measured run."""
+    store = server_mod.Store()
+    recall = server_mod.Recall(store)
+    started = time.perf_counter()
+    for index in range(count):
+        recall.search(query=WARMUP_QUERIES[index % len(WARMUP_QUERIES)], project=WARMUP_PROJECT,
+                      limit=TOP_K, detail="summary", record_usage=False)
+    return {
+        "queries": count,
+        "seconds": round(time.perf_counter() - started, 2),
+        "encoder_ready_after": bool(reranker.ready) if reranker is not None else None,
+    }
 
 
 def cap_encoder_threads(threads: int) -> None:
@@ -87,7 +111,7 @@ def tree_version(tree: Path) -> str:
 class RowRecorder:
     """Wraps Recall.search and keeps what each call returned."""
 
-    def __init__(self, server_mod, gold_by_question: dict[tuple[str, str], tuple[int, list[str]]],
+    def __init__(self, server_mod, gold_by_question: dict[tuple[str, str], deque[tuple[int, list[str]]]],
                  extract_dia_ids):
         from memory_core.cross_rerank import shared_reranker
 
@@ -107,7 +131,7 @@ class RowRecorder:
         elapsed_ms = (time.perf_counter() - started) * 1000
         entries = response.get("results", {}).get("fact", [])
         project, question = kwargs["project"], kwargs["query"]
-        category, evidence = self._gold[(project, question)]
+        category, evidence = self._gold[(project, question)].popleft()
         dia = [(self._extract(entry) or [""])[0] for entry in entries]
         self.rows.append({
             "project": project,
@@ -122,12 +146,19 @@ class RowRecorder:
         return response
 
 
-def gold_index(samples: list[dict]) -> dict[tuple[str, str], tuple[int, list[str]]]:
-    gold = {}
+def gold_index(samples: list[dict]) -> dict[tuple[str, str], deque[tuple[int, list[str]]]]:
+    """Gold labels per question text, in dataset order.
+
+    A conversation can ask the same text twice with different labels (locomo10
+    has one question in both category 4 and 5), and eval_samples asks the
+    questions in dataset order, so each key holds a queue consumed in that order.
+    """
+    gold: dict[tuple[str, str], deque[tuple[int, list[str]]]] = defaultdict(deque)
     for index, sample in enumerate(samples):
         for qa in sample.get("qa", []):
-            gold[(f"locomo_{index}", qa.get("question", ""))] = (qa.get("category", 0), list(qa.get("evidence") or []))
-    return gold
+            gold[(f"locomo_{index}", qa.get("question", ""))].append(
+                (qa.get("category", 0), list(qa.get("evidence") or [])))
+    return dict(gold)
 
 
 def graded(rows: list[dict]) -> list[dict]:
@@ -206,6 +237,7 @@ def run(args: argparse.Namespace) -> dict:
 
     if args.wait_for_encoder and shared_reranker() is not None:
         shared_reranker().wait_ready()
+    warmup = run_warmup(server_mod, args.warmup_queries, shared_reranker()) if args.warmup_queries else None
 
     recorder = RowRecorder(server_mod, gold_index(samples), bench.extract_dia_ids)
 
@@ -234,6 +266,7 @@ def run(args: argparse.Namespace) -> dict:
         "label": args.label,
         "fresh_store": not args.skip_ingest,
         "wait_for_encoder": args.wait_for_encoder,
+        "warmup": warmup,
         "encoder_threads": args.encoder_threads or "onnxruntime default",
         "lane_note": args.lane_note,
         "summary": summarize(recorder.rows),
@@ -262,6 +295,8 @@ def main() -> int:
     parser.add_argument("--out-dir", default=str(REPO_ROOT / "benchmarks" / "results" / "rerank-modes"))
     parser.add_argument("--skip-ingest", action="store_true", help="reuse the store left by an earlier run")
     parser.add_argument("--wait-for-encoder", action="store_true", help="load the cross-encoder before the first query")
+    parser.add_argument("--warmup-queries", type=int, default=0,
+                        help="untimed queries asked after --wait-for-encoder and before the measured run")
     parser.add_argument("--encoder-threads", type=int, default=None,
                         help="cross-encoder threads; default lets onnxruntime use every core")
     parser.add_argument("--limit-samples", type=int, default=None)
