@@ -89,7 +89,7 @@ def test_warmup_queries_are_not_locomo_questions(runner):
     dataset = runner.REPO_ROOT / "benchmarks" / "data" / "locomo" / "data" / "locomo10.json"
     if not dataset.exists():
         pytest.skip("LoCoMo dataset is not downloaded")
-    questions = {qa.get("question", "") for sample in json.loads(dataset.read_text()) for qa in sample.get("qa", [])}
+    questions = {qa.get("question", "") for sample in json.loads(dataset.read_text(encoding="utf-8")) for qa in sample.get("qa", [])}
     assert not questions & set(runner.WARMUP_QUERIES)
 
 
@@ -107,7 +107,7 @@ def test_gold_index_grades_all_1536_locomo_questions(runner):
     dataset = runner.REPO_ROOT / "benchmarks" / "data" / "locomo" / "data" / "locomo10.json"
     if not dataset.exists():
         pytest.skip("LoCoMo dataset is not downloaded")
-    gold = runner.gold_index(json.loads(dataset.read_text()))
+    gold = runner.gold_index(json.loads(dataset.read_text(encoding="utf-8")))
     labels = [label for queue in gold.values() for label in queue]
     graded = [label for label in labels if label[0] != runner.ADVERSARIAL_CATEGORY and label[1]]
     assert len(labels) == 1986
