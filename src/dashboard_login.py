@@ -23,16 +23,16 @@ MAX_SESSIONS = 256
 LOGIN_BODY_MAX_BYTES = 4096
 TOKEN_FIELD = "token"
 
-LOGIN_PAGE = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Sign in</title>
+LOGIN_PAGE = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title data-i18n="Sign in">Sign in</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body style="font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem">
-<h1>Dashboard access token</h1>
-<p>Paste the token from <code>state/http-token</code> in the data directory. It is sent once, in a POST body, and
-exchanged for a session cookie; the token itself is never stored in the browser.</p>
+<h1><span data-i18n="Dashboard access token">Dashboard access token</span></h1>
+<p><span data-i18n="Paste the token from">Paste the token from</span> <code>state/http-token</code> <span data-i18n="in the data directory. It is sent once, in a POST body, and exchanged for a session cookie; the token itself is never stored in the browser.">in the data directory. It is sent once, in a POST body, and
+exchanged for a session cookie; the token itself is never stored in the browser.</span></p>
 <form id="login" method="post" action="/login">
 <input type="password" name="token" autocomplete="off" autofocus required style="width:100%;padding:.5rem">
-<p><button type="submit">Sign in</button></p>
+<p><button type="submit"><span data-i18n="Sign in">Sign in</span></button></p>
 </form>
 <script>
 (function () {

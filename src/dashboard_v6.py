@@ -444,20 +444,20 @@ def api_graph_delta(
 V6_PANELS_HTML = r"""
 <section id="v6-panels" style="padding:16px; display:grid; grid-template-columns:repeat(3,1fr); gap:12px;">
   <div class="v6-card" id="v6-savings-card" style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:12px;">
-    <h3 style="margin:0 0 8px 0;font-size:14px;color:#8ad;">💾 Token savings</h3>
-    <div id="v6-savings-body" style="font-size:12px;color:#ccc;">loading...</div>
+    <h3 style="margin:0 0 8px 0;font-size:14px;color:#8ad;"><span data-i18n="💾 Token savings">💾 Token savings</span></h3>
+    <div id="v6-savings-body" style="font-size:12px;color:#ccc;"><span data-i18n="loading...">loading...</span></div>
   </div>
   <div class="v6-card" style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:12px;">
-    <h3 style="margin:0 0 8px 0;font-size:14px;color:#8ad;">🔄 v6 queues</h3>
-    <div id="v6-queues-body" style="font-size:12px;color:#ccc;">loading...</div>
+    <h3 style="margin:0 0 8px 0;font-size:14px;color:#8ad;"><span data-i18n="🔄 v6 queues">🔄 v6 queues</span></h3>
+    <div id="v6-queues-body" style="font-size:12px;color:#ccc;"><span data-i18n="loading...">loading...</span></div>
   </div>
   <div class="v6-card" style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:12px;">
-    <h3 style="margin:0 0 8px 0;font-size:14px;color:#8ad;">📊 v6 coverage</h3>
-    <div id="v6-coverage-body" style="font-size:12px;color:#ccc;">loading...</div>
+    <h3 style="margin:0 0 8px 0;font-size:14px;color:#8ad;"><span data-i18n="📊 v6 coverage">📊 v6 coverage</span></h3>
+    <div id="v6-coverage-body" style="font-size:12px;color:#ccc;"><span data-i18n="loading...">loading...</span></div>
   </div>
   <div class="v6-card" style="grid-column:1/-1;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:12px;">
-    <h3 style="margin:0 0 8px 0;font-size:14px;color:#8ad;">⚡ v10.1 enrichment worker</h3>
-    <div id="v10-enrich-body" style="font-size:12px;color:#ccc;">loading...</div>
+    <h3 style="margin:0 0 8px 0;font-size:14px;color:#8ad;"><span data-i18n="⚡ v10.1 enrichment worker">⚡ v10.1 enrichment worker</span></h3>
+    <div id="v10-enrich-body" style="font-size:12px;color:#ccc;"><span data-i18n="loading...">loading...</span></div>
   </div>
 </section>
 <script>
@@ -475,15 +475,15 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&am
       // Savings panel
       const sBody = document.getElementById('v6-savings-body');
       if (sBody) {
-        const fmt = n => (n||0).toLocaleString();
+        const fmt = n => (n||0).toLocaleString(TAM_I18N.locale);
         let html = `<div style="font-size:20px;color:#4a9;">${fmt(savings.tokens_saved_estimate)}</div>`;
-        html += `<div>≈ tokens saved</div>`;
-        html += `<div>${fmt(savings.chars_saved)} chars (-${savings.total_reduction_pct||0}%)</div>`;
-        html += `<div style="margin-top:6px;font-size:11px;">${savings.applied_count||0} filters applied</div>`;
+        html += `<div><span data-i18n="≈ tokens saved">≈ tokens saved</span></div>`;
+        html += `<div>${esc(TAM_I18N.t('{count} chars (-{percent}%)', {count: fmt(savings.chars_saved), percent: savings.total_reduction_pct||0}))}</div>`;
+        html += `<div style="margin-top:6px;font-size:11px;">${esc(TAM_I18N.t('{count} filters applied', {count: savings.applied_count||0}))}</div>`;
         if (savings.by_filter && savings.by_filter.length) {
           html += '<div style="margin-top:6px;padding-top:6px;border-top:1px solid #333;font-size:11px;">';
           savings.by_filter.forEach(f => {
-            html += `<div>${esc(f.name)}: ${esc(f.uses)}× avg -${esc(f.avg_pct||0)}%</div>`;
+            html += `<div>${esc(f.name)}: ${esc(TAM_I18N.t('{count}× avg -{percent}%', {count: f.uses, percent: f.avg_pct||0}))}</div>`;
           });
           html += '</div>';
         }
@@ -501,8 +501,8 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&am
           const shortName = name.replace('_queue','').replace('_',' ');
           const color = pend > 10 ? '#fa0' : (pend > 0 ? '#ea5' : '#4a9');
           html += `<div style="margin:4px 0;">
-            <span style="color:${color};">●</span> <b>${shortName}</b>:
-            ${pend} pending, ${done} done${failed ? `, <span style="color:#f55;">${failed} failed</span>` : ''}
+            <span style="color:${color};">●</span> <b>${esc(TAM_I18N.t(shortName))}</b>:
+            ${esc(TAM_I18N.t('{pending} pending, {done} done', {pending: pend, done}))}${failed ? `, <span style="color:#f55;">${esc(TAM_I18N.t('{count} failed', {count: failed}))}</span>` : ''}
           </div>`;
         }
         qBody.innerHTML = html;
@@ -519,10 +519,10 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&am
              <div style="background:${color};width:${pct}%;height:100%;border-radius:3px;"></div>
            </div>`;
         cBody.innerHTML =
-          `<div>${total} active knowledge</div>` +
-          `<div style="margin-top:6px;font-size:11px;">representations: ${rpct}%</div>` +
+          `<div>${esc(TAM_I18N.t('{count} active knowledge', {count: total}))}</div>` +
+          `<div style="margin-top:6px;font-size:11px;">${esc(TAM_I18N.t('Representations: {percent}%', {percent: rpct}))}</div>` +
           bar(rpct, '#4a9') +
-          `<div style="font-size:11px;">enrichment: ${epct}%</div>` +
+          `<div style="font-size:11px;">${esc(TAM_I18N.t('Enrichment: {percent}%', {percent: epct}))}</div>` +
           bar(epct, '#8ad');
       }
 
@@ -542,17 +542,17 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&am
                     ? `${enrich.oldest_pending_age_sec}s`
                     : '—';
         let html = `<div style="display:flex;gap:18px;flex-wrap:wrap;">
-          <div><span style="color:${pendColor};">●</span> <b>${pend}</b> pending</div>
-          <div><span style="color:#888;">●</span> ${proc} processing</div>
-          <div><span style="color:#4a9;">●</span> ${done} done</div>
-          <div><span style="color:${failed>0?'#f55':'#666'};">●</span> ${failed} failed</div>
-          <div style="margin-left:auto;color:#888;">throughput ${tput}/min</div>
+          <div><span style="color:${pendColor};">●</span> <b>${pend}</b> <span data-i18n="pending">pending</span></div>
+          <div><span style="color:#888;">●</span> ${esc(TAM_I18N.t('{count} processing', {count: proc}))}</div>
+          <div><span style="color:#4a9;">●</span> ${esc(TAM_I18N.t('{count} done', {count: done}))}</div>
+          <div><span style="color:${failed>0?'#f55':'#666'};">●</span> ${esc(TAM_I18N.t('{count} failed', {count: failed}))}</div>
+          <div style="margin-left:auto;color:#888;">${esc(TAM_I18N.t('Throughput {count}/min', {count: tput}))}</div>
           <div style="color:#888;">p50 ${p50} · p95 ${p95}</div>
-          <div style="color:${ageColor};">oldest pending ${age}</div>
+          <div style="color:${ageColor};">${esc(TAM_I18N.t('Oldest pending {age}', {age}))}</div>
         </div>`;
         if (enrich.recent_failures && enrich.recent_failures.length) {
           html += `<details style="margin-top:8px;font-size:11px;color:#aaa;">
-            <summary style="cursor:pointer;color:#f55;">recent failures (${enrich.recent_failures.length})</summary>`;
+            <summary style="cursor:pointer;color:#f55;">${esc(TAM_I18N.t('Recent failures ({count})', {count: enrich.recent_failures.length}))}</summary>`;
           enrich.recent_failures.forEach(f => {
             html += `<div style="margin:4px 0 0 12px;">id=${f.id} kid=${f.knowledge_id}
               attempts=${f.attempts}<br/><code style="color:#ea7;">${esc(f.last_error)}</code></div>`;
@@ -561,7 +561,7 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&am
         }
         eBody.innerHTML = html;
       } else if (eBody) {
-        eBody.innerHTML = '<div style="color:#666;">enrichment_queue not available (set MEMORY_ASYNC_ENRICHMENT=true)</div>';
+        eBody.innerHTML = "<div style=\"color:#666;\"><span data-i18n=\"enrichment_queue not available (set MEMORY_ASYNC_ENRICHMENT=true)\">enrichment_queue not available (set MEMORY_ASYNC_ENRICHMENT=true)</span></div>";
       }
     } catch (e) {
       console.error('v6 refresh failed', e);
@@ -580,7 +580,7 @@ GRAPH_LIVE_HTML = r"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Graph Live 3D — total-agent-memory</title>
+<title data-i18n="Graph Live 3D — total-agent-memory">Graph Live 3D — total-agent-memory</title>
 <style>
   html,body { margin:0; padding:0; background:#0e0e0e; color:#ddd;
               font-family:-apple-system,Segoe UI,sans-serif; height:100%; overflow:hidden; }
@@ -631,64 +631,64 @@ GRAPH_LIVE_HTML = r"""<!DOCTYPE html>
 <body>
 
 <div id="vtabs">
-  <a href="/" class="home">← Dashboard</a>
-  <a href="/graph/live"   id="t-live" class="active">3D Live</a>
-  <a href="/graph/hive"   id="t-hive">Hive Plot</a>
-  <a href="/graph/matrix" id="t-matrix">Matrix</a>
+  <a href="/" class="home"><span data-i18n="← Dashboard">← Dashboard</span></a>
+  <a href="/graph/live"   id="t-live" class="active"><span data-i18n="3D Live">3D Live</span></a>
+  <a href="/graph/hive"   id="t-hive"><span data-i18n="Hive Plot">Hive Plot</span></a>
+  <a href="/graph/matrix" id="t-matrix"><span data-i18n="Matrix">Matrix</span></a>
 </div>
 
 <div id="top">
-  <h1>🧠 Graph Live <span style="font-size:10px;color:#666;">3D · WebGL</span></h1>
+  <h1><span data-i18n="🧠 Graph Live">🧠 Graph Live</span> <span style="font-size:10px;color:#666;"><span data-i18n="3D · WebGL">3D · WebGL</span></span></h1>
 
   <span id="breadcrumb">
-    <button id="btnBack" title="Back to full graph (Esc)">← back</button>
-    <span>focused: <b id="focusLabel">—</b></span>
+    <button id="btnBack" title="Back to full graph (Esc)" data-i18n-title="Back to full graph (Esc)"><span data-i18n="← back">← back</span></button>
+    <span><span data-i18n="focused:">focused:</span> <b id="focusLabel">—</b></span>
   </span>
 
-  <label title="Hide nodes that have no edges">
-    <input type="checkbox" id="hideOrphans" checked>hide orphans
+  <label title="Hide nodes that have no edges" data-i18n-title="Hide nodes that have no edges">
+    <input type="checkbox" id="hideOrphans" checked><span data-i18n="hide orphans">hide orphans</span>
   </label>
-  <label title="Server-side filter: only nodes with N+ mentions">
-    importance ≥
+  <label title="Server-side filter: only nodes with N+ mentions" data-i18n-title="Server-side filter: only nodes with N+ mentions">
+    <span data-i18n="importance ≥">importance ≥</span>
     <input type="range" id="minMentions" min="0" max="20" value="3" step="1" style="width:80px;vertical-align:middle;">
     <span id="minMentionsLbl" style="display:inline-block;width:18px;text-align:right;">3</span>
   </label>
-  <label title="Server-side filter: only edges with weight ≥ N (1 = co-occurred once, 5 = strong)">
-    edge weight ≥
+  <label title="Server-side filter: only edges with weight ≥ N (1 = co-occurred once, 5 = strong)" data-i18n-title="Server-side filter: only edges with weight ≥ N (1 = co-occurred once, 5 = strong)">
+    <span data-i18n="edge weight ≥">edge weight ≥</span>
     <input type="range" id="minEdgeW" min="0" max="10" value="2" step="1" style="width:80px;vertical-align:middle;">
     <span id="minEdgeWLbl" style="display:inline-block;width:18px;text-align:right;">2</span>
   </label>
-  <label>type:
-    <select id="typeFilter"><option value="">all</option></select>
+  <label><span data-i18n="type:">type:</span>
+    <select id="typeFilter"><option value="" data-i18n="all">all</option></select>
   </label>
-  <input type="text" id="search" placeholder="search name…">
-  <button id="btnFit" title="Fit all in view">⛶ fit</button>
-  <button id="btnRotate" title="Auto-rotate camera">🔄 rotate</button>
-  <button id="btnPause" title="Pause polling">⏸ pause</button>
-  <button id="btnClear" title="Reload">↺ reload</button>
+  <input type="text" id="search" placeholder="search name…" data-i18n-placeholder="search name…">
+  <button id="btnFit" title="Fit all in view" data-i18n-title="Fit all in view"><span data-i18n="⛶ fit">⛶ fit</span></button>
+  <button id="btnRotate" title="Auto-rotate camera" data-i18n-title="Auto-rotate camera"><span data-i18n="🔄 rotate">🔄 rotate</span></button>
+  <button id="btnPause" title="Pause polling" data-i18n-title="Pause polling"><span data-i18n="⏸ pause">⏸ pause</span></button>
+  <button id="btnClear" title="Reload" data-i18n-title="Reload"><span data-i18n="↺ reload">↺ reload</span></button>
 
-  <span class="stats" id="stats">connecting…</span>
+  <span class="stats" id="stats"><span data-i18n="connecting…">connecting…</span></span>
 </div>
 
 <div id="network"></div>
 
 <div id="legend">
-  <span class="row"><span class="dot" style="background:#00ff99"></span>concept</span>
-  <span class="row"><span class="dot" style="background:#33aaff"></span>technology</span>
-  <span class="row"><span class="dot" style="background:#ffaa00"></span>person</span>
-  <span class="row"><span class="dot" style="background:#ff5577"></span>project</span>
-  <span class="row"><span class="dot" style="background:#ffdd00"></span>company</span>
-  <span class="row"><span class="dot" style="background:#bb55ff"></span>product</span>
-  <span class="row"><span class="dot" style="background:#00ddcc"></span>pattern</span>
-  <span class="row"><span class="dot" style="background:#ff8800"></span>domain</span>
+  <span class="row"><span class="dot" style="background:#00ff99"></span><span data-i18n="concept">concept</span></span>
+  <span class="row"><span class="dot" style="background:#33aaff"></span><span data-i18n="technology">technology</span></span>
+  <span class="row"><span class="dot" style="background:#ffaa00"></span><span data-i18n="person">person</span></span>
+  <span class="row"><span class="dot" style="background:#ff5577"></span><span data-i18n="project">project</span></span>
+  <span class="row"><span class="dot" style="background:#ffdd00"></span><span data-i18n="company">company</span></span>
+  <span class="row"><span class="dot" style="background:#bb55ff"></span><span data-i18n="product">product</span></span>
+  <span class="row"><span class="dot" style="background:#00ddcc"></span><span data-i18n="pattern">pattern</span></span>
+  <span class="row"><span class="dot" style="background:#ff8800"></span><span data-i18n="domain">domain</span></span>
 </div>
 
 <div id="footer">
-  <span><kbd>L-drag</kbd> orbit</span>
-  <span><kbd>R-drag</kbd> pan</span>
-  <span><kbd>scroll</kbd> zoom</span>
-  <span><kbd>click</kbd> focus on node</span>
-  <span><kbd>esc</kbd> back to full view</span>
+  <span><kbd><span data-i18n="L-drag">L-drag</span></kbd> <span data-i18n="orbit">orbit</span></span>
+  <span><kbd><span data-i18n="R-drag">R-drag</span></kbd> <span data-i18n="pan">pan</span></span>
+  <span><kbd><span data-i18n="scroll">scroll</span></kbd> <span data-i18n="zoom">zoom</span></span>
+  <span><kbd><span data-i18n="click">click</span></kbd> <span data-i18n="focus on node">focus on node</span></span>
+  <span><kbd>esc</kbd> <span data-i18n="back to full view">back to full view</span></span>
 </div>
 
 <script>
@@ -898,14 +898,14 @@ searchInput.addEventListener('input', () => {
 });
 btnPause.addEventListener('click', () => {
   paused = !paused;
-  btnPause.textContent = paused ? '▶ resume' : '⏸ pause';
+  btnPause.textContent = paused ? TAM_I18N.t('▶ resume') : TAM_I18N.t('⏸ pause');
   btnPause.classList.toggle('active', paused);
 });
 btnFit.addEventListener('click', () => Graph && Graph.zoomToFit(800, 60));
 btnRotate.addEventListener('click', () => {
   autoRotate = !autoRotate;
   btnRotate.classList.toggle('active', autoRotate);
-  btnRotate.textContent = autoRotate ? '🔄 rotating' : '🔄 rotate';
+  btnRotate.textContent = autoRotate ? TAM_I18N.t('🔄 rotating') : TAM_I18N.t('🔄 rotate');
   if (autoRotate) {
     rotateTimer = setInterval(() => {
       if (!Graph) return;
@@ -942,10 +942,10 @@ minEdgeWInput.addEventListener('input', () => {
 
 function rebuildTypeFilter() {
   const cur = typeFilter.value;
-  typeFilter.innerHTML = '<option value="">all</option>';
+  typeFilter.innerHTML = "<option value=\"\" data-i18n=\"all\">all</option>";
   [...typeSet].sort().forEach(t => {
     const o = document.createElement('option');
-    o.value = t; o.textContent = t;
+    o.value = t; o.textContent = TAM_I18N.t(t);
     typeFilter.appendChild(o);
   });
   typeFilter.value = cur;
@@ -1002,9 +1002,9 @@ function fmtSec(ms) { return (ms/1000).toFixed(1) + 's'; }
 function updateStats(extra) {
   const total = nodesById.size, eTot = linksById.size;
   const phase = bulkDone
-    ? `🟢 live (loaded ${fmtSec(performance.now() - bulkStartedAt)})`
-    : `⏳ ${eTot}/${totalEdges}  workers:${activeWorkers}`;
-  statsEl.innerHTML = `<b>${total}</b> nodes · <b>${eTot}</b> edges  <span style="color:#888">${phase}</span>` +
+    ? TAM_I18N.t('🟢 live (loaded {time})', {time: fmtSec(performance.now() - bulkStartedAt)})
+    : TAM_I18N.t('⏳ {loaded}/{total} workers:{workers}', {loaded: eTot, total: totalEdges, workers: activeWorkers});
+  statsEl.innerHTML = `<b>${total}</b> <span data-i18n="nodes ·">nodes ·</span> <b>${eTot}</b> <span data-i18n="edges">edges</span>  <span style="color:#888">${phase}</span>` +
     (extra ? ` · ${extra}` : '');
 }
 
@@ -1107,7 +1107,7 @@ startBulk();
 # ──────────────────────────────────────────────
 
 
-_VIEW_TABS = """<style>
+_VIEW_TABS = r"""<style>
   body { margin:0; background:#0a0a14; color:#ddd; font-family:-apple-system,Segoe UI,sans-serif; }
   #vtabs { position:fixed; top:0; left:0; right:0; height:36px; z-index:20;
            background:rgba(14,14,20,0.92); border-bottom:1px solid #222;
@@ -1120,10 +1120,10 @@ _VIEW_TABS = """<style>
   #vmain { position:fixed; top:36px; left:0; right:0; bottom:0; }
 </style>
 <div id="vtabs">
-  <a href="/" class="home">← Dashboard</a>
-  <a href="/graph/live"   id="t-live">3D Live</a>
-  <a href="/graph/hive"   id="t-hive">Hive Plot</a>
-  <a href="/graph/matrix" id="t-matrix">Matrix</a>
+  <a href="/" class="home"><span data-i18n="← Dashboard">← Dashboard</span></a>
+  <a href="/graph/live"   id="t-live"><span data-i18n="3D Live">3D Live</span></a>
+  <a href="/graph/hive"   id="t-hive"><span data-i18n="Hive Plot">Hive Plot</span></a>
+  <a href="/graph/matrix" id="t-matrix"><span data-i18n="Matrix">Matrix</span></a>
 </div>
 <script>
 (function(){const p=location.pathname;
@@ -1138,7 +1138,7 @@ const id=map[p]; if(id) document.getElementById(id).classList.add('active');})()
 
 
 GRAPH_HIVE_HTML = r"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Hive Plot — total-agent-memory</title>
+<html><head><meta charset="utf-8"><title data-i18n="Hive Plot — total-agent-memory">Hive Plot — total-agent-memory</title>
 """ + _VIEW_TABS + r"""
 <style>
   #vmain { display:flex; flex-direction:column; }
@@ -1157,16 +1157,16 @@ GRAPH_HIVE_HTML = r"""<!DOCTYPE html>
 </head><body>
 <div id="vmain">
   <div id="toolbar">
-    <label>min mentions:
+    <label><span data-i18n="min mentions:">min mentions:</span>
       <input type="range" id="minM" min="1" max="20" value="3">
       <span id="minMV">3</span>
     </label>
-    <label>per axis:
+    <label><span data-i18n="per axis:">per axis:</span>
       <input type="range" id="perA" min="20" max="200" value="80" step="10">
       <span id="perAV">80</span>
     </label>
-    <button id="reload" style="background:#1a1a2a;color:#ccc;border:1px solid #333;padding:5px 10px;border-radius:4px;cursor:pointer;">↺ reload</button>
-    <span id="status">loading…</span>
+    <button id="reload" style="background:#1a1a2a;color:#ccc;border:1px solid #333;padding:5px 10px;border-radius:4px;cursor:pointer;"><span data-i18n="↺ reload">↺ reload</span></button>
+    <span id="status"><span data-i18n="loading…">loading…</span></span>
   </div>
   <svg id="hive"></svg>
 </div>
@@ -1185,7 +1185,7 @@ const minMV = document.getElementById('minMV');
 const perAV = document.getElementById('perAV');
 
 async function load() {
-  status.text('loading…');
+  status.text(TAM_I18N.t('loading…'));
   const data = await fetch(`/api/graph/by_type?min_mentions=${minM.value}&limit_per_type=${perA.value}`).then(r=>r.json());
   render(data);
 }
@@ -1198,7 +1198,7 @@ function render(data) {
   const innerR = 30;
 
   const types = (data.types || []).filter(t => (data.groups[t] || []).length > 0);
-  if (!types.length) { status.text('no data'); return; }
+  if (!types.length) { status.text(TAM_I18N.t('no data')); return; }
 
   // Axis layout: spread N types evenly around 360°
   const axes = types.map((t, i) => ({
@@ -1235,7 +1235,7 @@ function render(data) {
     .attr('y', d => cy + (R + 14) * Math.sin(d.angle))
     .attr('text-anchor', 'middle')
     .attr('dominant-baseline', 'middle')
-    .text(d => `${d.type} (${(data.groups[d.type] || []).length})`);
+    .text(d => `${TAM_I18N.t(d.type)} (${(data.groups[d.type] || []).length})`);
 
   // Edges as quadratic curves bowing toward center
   svg.selectAll('.edge').data(data.edges || []).join('path')
@@ -1265,9 +1265,9 @@ function render(data) {
     .attr('r', d => 3 + Math.min(8, Math.log2(1 + (d.mention_count || 0)) * 1.5))
     .attr('fill', d => TYPE_COLORS[d.type] || '#888')
     .append('title')
-    .text(d => `${d.name} (${d.type}, mentions: ${d.mention_count})`);
+    .text(d => `${d.name} (${TAM_I18N.t(d.type)}, ${TAM_I18N.t('Mentions')}: ${d.mention_count})`);
 
-  status.text(`${positions.size} nodes · ${(data.edges||[]).length} edges across ${types.length} axes`);
+  status.text(TAM_I18N.t('{nodes} nodes · {edges} edges across {axes} axes', {nodes: positions.size, edges: (data.edges||[]).length, axes: types.length}));
 }
 
 minM.addEventListener('input', () => { minMV.textContent = minM.value; load(); });
@@ -1285,7 +1285,7 @@ load();
 
 
 GRAPH_MATRIX_HTML = r"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Matrix — total-agent-memory</title>
+<html><head><meta charset="utf-8"><title data-i18n="Matrix — total-agent-memory">Matrix — total-agent-memory</title>
 """ + _VIEW_TABS + r"""
 <style>
   #vmain { display:flex; flex-direction:column; }
@@ -1302,16 +1302,16 @@ GRAPH_MATRIX_HTML = r"""<!DOCTYPE html>
 </head><body>
 <div id="vmain">
   <div id="toolbar">
-    <label>min mentions:
+    <label><span data-i18n="min mentions:">min mentions:</span>
       <input type="range" id="minM" min="1" max="30" value="5">
       <span id="minMV">5</span>
     </label>
-    <label>limit nodes:
+    <label><span data-i18n="limit nodes:">limit nodes:</span>
       <input type="range" id="lim" min="50" max="500" value="200" step="50">
       <span id="limV">200</span>
     </label>
-    <button id="reload" style="background:#1a1a2a;color:#ccc;border:1px solid #333;padding:5px 10px;border-radius:4px;cursor:pointer;">↺ reload</button>
-    <span id="status">loading…</span>
+    <button id="reload" style="background:#1a1a2a;color:#ccc;border:1px solid #333;padding:5px 10px;border-radius:4px;cursor:pointer;"><span data-i18n="↺ reload">↺ reload</span></button>
+    <span id="status"><span data-i18n="loading…">loading…</span></span>
   </div>
   <div id="wrap"><canvas id="mx"></canvas></div>
   <div id="tooltip"></div>
@@ -1334,7 +1334,7 @@ const limV = document.getElementById('limV');
 let nodes = [], cells = [], cellAt = new Map(), CELL = 6, MARGIN = 200;
 
 async function load() {
-  status.textContent = 'loading…';
+  status.textContent = TAM_I18N.t('loading…');
   const d = await fetch(`/api/graph/matrix?min_mentions=${minM.value}&limit=${lim.value}`).then(r=>r.json());
   nodes = d.nodes || [];
   cells = d.cells || [];
@@ -1342,7 +1342,7 @@ async function load() {
 }
 
 function render() {
-  if (!nodes.length) { status.textContent = 'no data'; return; }
+  if (!nodes.length) { status.textContent = TAM_I18N.t('no data'); return; }
   CELL = Math.max(3, Math.min(12, Math.floor(900 / nodes.length)));
   const N = nodes.length;
   const W = MARGIN + N * CELL + 20;
@@ -1395,7 +1395,7 @@ function render() {
     ctx.restore();
   }
 
-  status.textContent = `${N} nodes · ${cells.length} cells (cell=${CELL}px)`;
+  status.textContent = TAM_I18N.t('{nodes} nodes · {cells} cells (cell={size}px)', {nodes: N, cells: cells.length, size: CELL});
 }
 
 cv.addEventListener('mousemove', e => {
@@ -1409,7 +1409,7 @@ cv.addEventListener('mousemove', e => {
   }
   const w = cellAt.get(`${si},${ti}`);
   if (!w) { tooltip.style.display = 'none'; return; }
-  tooltip.innerHTML = `<b>${esc(nodes[si].name)}</b> → <b>${esc(nodes[ti].name)}</b><br>weight: ${esc(w)}<br>${esc(nodes[si].type)} → ${esc(nodes[ti].type)}`;
+  tooltip.innerHTML = `<b>${esc(nodes[si].name)}</b> → <b>${esc(nodes[ti].name)}</b><br>weight: ${esc(w)}<br>${esc(TAM_I18N.t(nodes[si].type))} → ${esc(TAM_I18N.t(nodes[ti].type))}`;
   tooltip.style.display = 'block';
   tooltip.style.left = (e.clientX + 14) + 'px';
   tooltip.style.top = (e.clientY + 14) + 'px';

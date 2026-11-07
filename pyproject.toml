@@ -197,6 +197,7 @@ src = [
     "team_memory/reports/static/*.js",
     "team_memory/reports/static/*.css",
     # Local dashboard's vendored browser libraries + their licenses (no CDN at runtime).
+    "dashboard_static/*.js",
     "dashboard_static/vendor/*/*.js",
     "dashboard_static/vendor/*/*.txt",
 ]

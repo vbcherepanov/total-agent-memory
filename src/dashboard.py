@@ -1639,16 +1639,16 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
     <header>
         <div>
             <h1>__TAM_MARK__total-agent-memory</h1>
-            <div class="subtitle">Version __TAM_VERSION__ &middot; Released __TAM_RELEASE_DATE__</div>
+            <div class="subtitle"><span data-i18n="Version {version} · Released {date}" data-i18n-args='{"version":"__TAM_VERSION__","date":"__TAM_RELEASE_DATE__"}'>Version __TAM_VERSION__ &middot; Released __TAM_RELEASE_DATE__</span></div>
             <div class="subtitle" style="display:flex;align-items:center;gap:10px;">
-                <span>Read-only dashboard &mdash; memory.db</span>
+                <span><span data-i18n="Read-only dashboard — memory.db">Read-only dashboard &mdash; memory.db</span></span>
                 <span id="header-feed-status" title="Live feed status (SSE)"
                       style="display:inline-flex;align-items:center;gap:6px;
                              padding:3px 8px;border-radius:10px;background:rgba(255,255,255,0.05);
-                             border:1px solid #333;font-size:11px;">
+                             border:1px solid #333;font-size:11px;" data-i18n-title="Live feed status (SSE)">
                     <span id="header-feed-dot" style="width:8px;height:8px;border-radius:50%;
                                                        background:#ef4444;display:inline-block;"></span>
-                    <span id="header-feed-text" style="color:var(--text-dim);">Disconnected</span>
+                    <span id="header-feed-text" style="color:var(--text-dim);"><span data-i18n="Disconnected">Disconnected</span></span>
                 </span>
             </div>
         </div>
@@ -1657,81 +1657,81 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
     <div id="error-container"></div>
 
     <div class="stats-row" id="stats-row">
-        <div class="stat-card"><div class="label">Total Knowledge</div><div class="value accent" id="stat-total">--</div></div>
-        <div class="stat-card"><div class="label">Sessions</div><div class="value" id="stat-sessions">--</div></div>
-        <div class="stat-card"><div class="label">Projects</div><div class="value" id="stat-projects">--</div></div>
-        <div class="stat-card"><div class="label">Health Score</div><div class="value green" id="stat-health">--</div></div>
-        <div class="stat-card"><div class="label">Storage</div><div class="value" id="stat-storage">--</div></div>
+        <div class="stat-card"><div class="label"><span data-i18n="Total Knowledge">Total Knowledge</span></div><div class="value accent" id="stat-total">--</div></div>
+        <div class="stat-card"><div class="label"><span data-i18n="Sessions">Sessions</span></div><div class="value" id="stat-sessions">--</div></div>
+        <div class="stat-card"><div class="label"><span data-i18n="Projects">Projects</span></div><div class="value" id="stat-projects">--</div></div>
+        <div class="stat-card"><div class="label"><span data-i18n="Health Score">Health Score</span></div><div class="value green" id="stat-health">--</div></div>
+        <div class="stat-card"><div class="label"><span data-i18n="Storage">Storage</span></div><div class="value" id="stat-storage">--</div></div>
         <div class="stat-card">
-            <div class="label">Self-Improvement</div>
+            <div class="label"><span data-i18n="Self-Improvement">Self-Improvement</span></div>
             <div class="value" id="stat-si" style="color: var(--rule-color)">--</div>
-            <div class="label" id="stat-si-detail">-- errors, -- insights, -- rules</div>
+            <div class="label" id="stat-si-detail"><span data-i18n="-- errors, -- insights, -- rules">-- errors, -- insights, -- rules</span></div>
         </div>
-        <div class="stat-card"><div class="label">Observations</div><div class="value" id="stat-observations" style="color:var(--insight-color)">--</div></div>
+        <div class="stat-card"><div class="label"><span data-i18n="Observations">Observations</span></div><div class="value" id="stat-observations" style="color:var(--insight-color)">--</div></div>
         <div class="stat-card">
-            <div class="label">Graph</div>
+            <div class="label"><span data-i18n="Graph">Graph</span></div>
             <div class="value" id="stat-graph" style="color: var(--accent)">--</div>
-            <div class="label" id="stat-graph-detail">-- nodes, -- edges</div>
+            <div class="label" id="stat-graph-detail"><span data-i18n="-- nodes, -- edges">-- nodes, -- edges</span></div>
         </div>
         <div class="stat-card">
-            <div class="label">Episodes</div>
+            <div class="label"><span data-i18n="Episodes">Episodes</span></div>
             <div class="value" id="stat-episodes" style="color: var(--solution)">--</div>
-            <div class="label" id="stat-episodes-detail">-- breakthroughs, -- failures</div>
+            <div class="label" id="stat-episodes-detail"><span data-i18n="-- breakthroughs, -- failures">-- breakthroughs, -- failures</span></div>
         </div>
         <div class="stat-card">
-            <div class="label">Skills</div>
+            <div class="label"><span data-i18n="Skills">Skills</span></div>
             <div class="value" id="stat-skills" style="color: var(--decision)">--</div>
-            <div class="label" id="stat-skills-detail">avg success: --%</div>
+            <div class="label" id="stat-skills-detail"><span data-i18n="avg success: --%">avg success: --%</span></div>
         </div>
-        <div class="stat-card"><div class="label">Blind Spots</div><div class="value" id="stat-blind-spots" style="color: var(--lesson)">--</div></div>
+        <div class="stat-card"><div class="label"><span data-i18n="Blind Spots">Blind Spots</span></div><div class="value" id="stat-blind-spots" style="color: var(--lesson)">--</div></div>
     </div>
 
     <!-- V6_PANELS_HERE -->
 
     <div class="tabs">
-        <button class="tab active" data-tab="knowledge">Knowledge</button>
-        <button class="tab" data-tab="sessions">Sessions</button>
-        <button class="tab" data-tab="graph">Graph</button>
-        <a class="tab" href="/graph/live" style="text-decoration:none;">Graph Live 🔴</a>
-        <a class="tab" href="/settings" style="text-decoration:none;">Settings</a>
-        <button class="tab" data-tab="self-improvement">Self-Improvement</button>
-        <button class="tab" data-tab="rules">Rules (SOUL)</button>
-        <button class="tab" data-tab="v5-graph">Graph v5</button>
-        <button class="tab" data-tab="v5-episodes">Episodes</button>
-        <button class="tab" data-tab="v5-skills">Skills</button>
-        <button class="tab" data-tab="v5-self">Self Model</button>
-        <button class="tab" data-tab="v5-reflection">Reflection</button>
-        <button class="tab" data-tab="live-feed">Live Feed</button>
+        <button class="tab active" data-tab="knowledge"><span data-i18n="Knowledge">Knowledge</span></button>
+        <button class="tab" data-tab="sessions"><span data-i18n="Sessions">Sessions</span></button>
+        <button class="tab" data-tab="graph"><span data-i18n="Graph">Graph</span></button>
+        <a class="tab" href="/graph/live" style="text-decoration:none;"><span data-i18n="Graph Live 🔴">Graph Live 🔴</span></a>
+        <a class="tab" href="/settings" style="text-decoration:none;"><span data-i18n="Settings">Settings</span></a>
+        <button class="tab" data-tab="self-improvement"><span data-i18n="Self-Improvement">Self-Improvement</span></button>
+        <button class="tab" data-tab="rules"><span data-i18n="Rules (SOUL)">Rules (SOUL)</span></button>
+        <button class="tab" data-tab="v5-graph"><span data-i18n="Graph v5">Graph v5</span></button>
+        <button class="tab" data-tab="v5-episodes"><span data-i18n="Episodes">Episodes</span></button>
+        <button class="tab" data-tab="v5-skills"><span data-i18n="Skills">Skills</span></button>
+        <button class="tab" data-tab="v5-self"><span data-i18n="Self Model">Self Model</span></button>
+        <button class="tab" data-tab="v5-reflection"><span data-i18n="Reflection">Reflection</span></button>
+        <button class="tab" data-tab="live-feed"><span data-i18n="Live Feed">Live Feed</span></button>
     </div>
 
     <!-- Knowledge Tab -->
     <div class="tab-content active" id="tab-knowledge">
         <div class="filters">
-            <input type="text" id="search-input" placeholder="Search knowledge...">
-            <select id="type-filter"><option value="">All types</option></select>
-            <select id="project-filter"><option value="">All projects</option></select>
+            <input type="text" id="search-input" placeholder="Search knowledge..." data-i18n-placeholder="Search knowledge...">
+            <select id="type-filter"><option value="" data-i18n="All types">All types</option></select>
+            <select id="project-filter"><option value="" data-i18n="All projects">All projects</option></select>
         </div>
         <div class="table-wrap">
             <table>
                 <thead>
                     <tr>
                         <th>ID</th>
-                        <th>Type</th>
-                        <th>Project</th>
-                        <th>Content</th>
-                        <th>Score</th>
-                        <th>Recalls</th>
-                        <th>Tokens</th>
-                        <th>Created</th>
+                        <th><span data-i18n="Type">Type</span></th>
+                        <th><span data-i18n="Project">Project</span></th>
+                        <th><span data-i18n="Content">Content</span></th>
+                        <th><span data-i18n="Score">Score</span></th>
+                        <th><span data-i18n="Recalls">Recalls</span></th>
+                        <th><span data-i18n="Tokens">Tokens</span></th>
+                        <th><span data-i18n="Created">Created</span></th>
                     </tr>
                 </thead>
                 <tbody id="knowledge-body"></tbody>
             </table>
         </div>
         <div class="pagination" id="pagination">
-            <button id="prev-btn" disabled>&laquo; Prev</button>
-            <span class="page-info" id="page-info">Page 1</span>
-            <button id="next-btn">&raquo; Next</button>
+            <button id="prev-btn" disabled><span data-i18n="« Prev">&laquo; Prev</span></button>
+            <span class="page-info" id="page-info"><span data-i18n="Page 1">Page 1</span></span>
+            <button id="next-btn"><span data-i18n="» Next">&raquo; Next</span></button>
         </div>
     </div>
 
@@ -1741,11 +1741,11 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
             <table>
                 <thead>
                     <tr>
-                        <th>Session ID</th>
-                        <th>Started</th>
-                        <th>Project</th>
-                        <th>Status</th>
-                        <th>Knowledge Count</th>
+                        <th><span data-i18n="Session ID">Session ID</span></th>
+                        <th><span data-i18n="Started">Started</span></th>
+                        <th><span data-i18n="Project">Project</span></th>
+                        <th><span data-i18n="Status">Status</span></th>
+                        <th><span data-i18n="Knowledge Count">Knowledge Count</span></th>
                     </tr>
                 </thead>
                 <tbody id="sessions-body"></tbody>
@@ -1756,38 +1756,38 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
     <!-- Graph Tab -->
     <div class="tab-content" id="tab-graph">
         <div id="graph-controls">
-            <button id="graph-zoom-in" title="Zoom In">&#x1F50D;+ Zoom In</button>
-            <button id="graph-zoom-out" title="Zoom Out">&#x1F50D;- Zoom Out</button>
-            <button id="graph-fit-all" title="Fit All">Fit All</button>
-            <button id="graph-restart" title="Re-layout">Re-layout</button>
+            <button id="graph-zoom-in" title="Zoom In" data-i18n-title="Zoom In"><span data-i18n="🔍+ Zoom In">&#x1F50D;+ Zoom In</span></button>
+            <button id="graph-zoom-out" title="Zoom Out" data-i18n-title="Zoom Out"><span data-i18n="🔍- Zoom Out">&#x1F50D;- Zoom Out</span></button>
+            <button id="graph-fit-all" title="Fit All" data-i18n-title="Fit All"><span data-i18n="Fit All">Fit All</span></button>
+            <button id="graph-restart" title="Re-layout" data-i18n-title="Re-layout"><span data-i18n="Re-layout">Re-layout</span></button>
             <select id="graph-filter-project">
-                <option value="">All Projects</option>
+                <option value="" data-i18n="All Projects">All Projects</option>
             </select>
             <label style="font-size:13px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-                <input type="checkbox" id="graph-show-labels" checked> Labels
+                <input type="checkbox" id="graph-show-labels" checked> <span data-i18n="Labels">Labels</span>
             </label>
             <label style="font-size:13px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
                 <input type="checkbox" id="graph-show-edges" checked> Edges
             </label>
-            <span class="graph-info" id="graph-info">Loading...</span>
+            <span class="graph-info" id="graph-info"><span data-i18n="Loading...">Loading...</span></span>
         </div>
         <div id="graph-controls-row2">
-            <span style="font-size:12px;color:var(--text-dim);font-weight:600;">Cluster:</span>
-            <button class="cluster-active" id="cluster-btn-none">No Clustering</button>
-            <button id="cluster-btn-project">By Project</button>
-            <button id="cluster-btn-type">By Type</button>
+            <span style="font-size:12px;color:var(--text-dim);font-weight:600;"><span data-i18n="Cluster:">Cluster:</span></span>
+            <button class="cluster-active" id="cluster-btn-none"><span data-i18n="No Clustering">No Clustering</span></button>
+            <button id="cluster-btn-project"><span data-i18n="By Project">By Project</span></button>
+            <button id="cluster-btn-type"><span data-i18n="By Type">By Type</span></button>
             <span style="width:1px;height:20px;background:var(--border);margin:0 4px;"></span>
-            <input type="text" id="graph-search" placeholder="Search nodes...">
+            <input type="text" id="graph-search" placeholder="Search nodes..." data-i18n-placeholder="Search nodes...">
             <select id="graph-filter-type">
-                <option value="">All Types</option>
-                <option value="fact">fact</option>
-                <option value="solution">solution</option>
-                <option value="decision">decision</option>
-                <option value="lesson">lesson</option>
-                <option value="convention">convention</option>
+                <option value="" data-i18n="All Types">All Types</option>
+                <option value="fact" data-i18n="fact">fact</option>
+                <option value="solution" data-i18n="solution">solution</option>
+                <option value="decision" data-i18n="decision">decision</option>
+                <option value="lesson" data-i18n="lesson">lesson</option>
+                <option value="convention" data-i18n="convention">convention</option>
             </select>
             <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-                <input type="checkbox" id="graph-show-hulls" checked> Cluster Hulls
+                <input type="checkbox" id="graph-show-hulls" checked> <span data-i18n="Cluster Hulls">Cluster Hulls</span>
             </label>
         </div>
         <div id="graph-cluster-legend"></div>
@@ -1803,8 +1803,8 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
     <!-- Self-Improvement Tab -->
     <div class="tab-content" id="tab-self-improvement">
         <div class="filters">
-            <select id="si-category-filter"><option value="">All categories</option></select>
-            <select id="si-project-filter"><option value="">All projects</option></select>
+            <select id="si-category-filter"><option value="" data-i18n="All categories">All categories</option></select>
+            <select id="si-project-filter"><option value="" data-i18n="All projects">All projects</option></select>
         </div>
 
         <div class="table-wrap">
@@ -1812,36 +1812,36 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
                 <thead>
                     <tr>
                         <th>ID</th>
-                        <th>Category</th>
-                        <th>Severity</th>
-                        <th>Description</th>
-                        <th>Fix</th>
-                        <th>Status</th>
-                        <th>Created</th>
+                        <th><span data-i18n="Category">Category</span></th>
+                        <th><span data-i18n="Severity">Severity</span></th>
+                        <th><span data-i18n="Description">Description</span></th>
+                        <th><span data-i18n="Fix">Fix</span></th>
+                        <th><span data-i18n="Status">Status</span></th>
+                        <th><span data-i18n="Created">Created</span></th>
                     </tr>
                 </thead>
                 <tbody id="errors-body"></tbody>
             </table>
         </div>
         <div class="pagination" id="errors-pagination">
-            <button id="errors-prev-btn" disabled>&laquo; Prev</button>
-            <span class="page-info" id="errors-page-info">Page 1</span>
-            <button id="errors-next-btn">&raquo; Next</button>
+            <button id="errors-prev-btn" disabled><span data-i18n="« Prev">&laquo; Prev</span></button>
+            <span class="page-info" id="errors-page-info"><span data-i18n="Page 1">Page 1</span></span>
+            <button id="errors-next-btn"><span data-i18n="» Next">&raquo; Next</span></button>
         </div>
 
-        <div class="section-divider"><span class="section-icon">&#9670;</span>Insights</div>
+        <div class="section-divider"><span class="section-icon">&#9670;</span><span data-i18n="Insights">Insights</span></div>
 
         <div class="table-wrap">
             <table>
                 <thead>
                     <tr>
                         <th>ID</th>
-                        <th>Content</th>
-                        <th>Category</th>
-                        <th>Importance</th>
-                        <th>Confidence</th>
-                        <th>Status</th>
-                        <th>Promotion</th>
+                        <th><span data-i18n="Content">Content</span></th>
+                        <th><span data-i18n="Category">Category</span></th>
+                        <th><span data-i18n="Importance">Importance</span></th>
+                        <th><span data-i18n="Confidence">Confidence</span></th>
+                        <th><span data-i18n="Status">Status</span></th>
+                        <th><span data-i18n="Promotion">Promotion</span></th>
                     </tr>
                 </thead>
                 <tbody id="insights-body"></tbody>
@@ -1852,20 +1852,20 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
     <!-- Rules Tab -->
     <div class="tab-content" id="tab-rules">
         <div class="filters">
-            <select id="rules-project-filter"><option value="">All projects</option></select>
+            <select id="rules-project-filter"><option value="" data-i18n="All projects">All projects</option></select>
         </div>
         <div class="table-wrap">
             <table>
                 <thead>
                     <tr>
                         <th>ID</th>
-                        <th>Content</th>
-                        <th>Category</th>
-                        <th>Scope</th>
-                        <th>Priority</th>
-                        <th>Fire Count</th>
-                        <th>Success Rate</th>
-                        <th>Status</th>
+                        <th><span data-i18n="Content">Content</span></th>
+                        <th><span data-i18n="Category">Category</span></th>
+                        <th><span data-i18n="Scope">Scope</span></th>
+                        <th><span data-i18n="Priority">Priority</span></th>
+                        <th><span data-i18n="Fire Count">Fire Count</span></th>
+                        <th><span data-i18n="Success Rate">Success Rate</span></th>
+                        <th><span data-i18n="Status">Status</span></th>
                     </tr>
                 </thead>
                 <tbody id="rules-body"></tbody>
@@ -1875,22 +1875,22 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
 
     <!-- Graph v5 Tab -->
     <div class="tab-content" id="tab-v5-graph">
-        <h3 style="margin-bottom:16px;color:var(--accent)">Knowledge Graph</h3>
+        <h3 style="margin-bottom:16px;color:var(--accent)"><span data-i18n="Knowledge Graph">Knowledge Graph</span></h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">
             <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px">
-                <h4 style="color:var(--text-dim);margin-bottom:12px;font-size:13px;text-transform:uppercase">Nodes by Type</h4>
+                <h4 style="color:var(--text-dim);margin-bottom:12px;font-size:13px;text-transform:uppercase"><span data-i18n="Nodes by Type">Nodes by Type</span></h4>
                 <div id="v5-nodes-by-type"></div>
             </div>
             <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px">
-                <h4 style="color:var(--text-dim);margin-bottom:12px;font-size:13px;text-transform:uppercase">Edges by Type</h4>
+                <h4 style="color:var(--text-dim);margin-bottom:12px;font-size:13px;text-transform:uppercase"><span data-i18n="Edges by Type">Edges by Type</span></h4>
                 <div id="v5-edges-by-type"></div>
             </div>
         </div>
-        <h4 style="color:var(--text-dim);margin-bottom:12px;font-size:13px;text-transform:uppercase">Top Nodes by Importance</h4>
+        <h4 style="color:var(--text-dim);margin-bottom:12px;font-size:13px;text-transform:uppercase"><span data-i18n="Top Nodes by Importance">Top Nodes by Importance</span></h4>
         <div class="table-wrap">
             <table>
                 <thead>
-                    <tr><th>Name</th><th>Type</th><th>Importance</th><th>Mentions</th></tr>
+                    <tr><th><span data-i18n="Name">Name</span></th><th><span data-i18n="Type">Type</span></th><th><span data-i18n="Importance">Importance</span></th><th><span data-i18n="Mentions">Mentions</span></th></tr>
                 </thead>
                 <tbody id="v5-top-nodes-body"></tbody>
             </table>
@@ -1899,21 +1899,21 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
 
     <!-- Episodes Tab -->
     <div class="tab-content" id="tab-v5-episodes">
-        <h3 style="margin-bottom:16px;color:var(--solution)">Episodes Timeline</h3>
+        <h3 style="margin-bottom:16px;color:var(--solution)"><span data-i18n="Episodes Timeline">Episodes Timeline</span></h3>
         <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap" id="v5-episode-stats"></div>
         <div id="v5-episodes-list" style="display:flex;flex-direction:column;gap:12px"></div>
     </div>
 
     <!-- Skills Tab -->
     <div class="tab-content" id="tab-v5-skills">
-        <h3 style="margin-bottom:16px;color:var(--decision)">Skills Registry</h3>
+        <h3 style="margin-bottom:16px;color:var(--decision)"><span data-i18n="Skills Registry">Skills Registry</span></h3>
         <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
-            <input type="text" id="v5-skills-search" placeholder="Search skills..." style="flex:1;min-width:200px;padding:8px 14px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px">
+            <input type="text" id="v5-skills-search" placeholder="Search skills..." style="flex:1;min-width:200px;padding:8px 14px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px" data-i18n-placeholder="Search skills...">
             <select id="v5-skills-filter" style="padding:8px 14px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px">
-                <option value="">All types</option>
-                <option value="cmd:">Commands</option>
-                <option value="agent:">Agents</option>
-                <option value="rules:">Rules</option>
+                <option value="" data-i18n="All types">All types</option>
+                <option value="cmd:" data-i18n="Commands">Commands</option>
+                <option value="agent:" data-i18n="Agents">Agents</option>
+                <option value="rules:" data-i18n="Rules">Rules</option>
             </select>
             <span id="v5-skills-count" style="color:var(--text-dim);font-size:13px"></span>
         </div>
@@ -1922,16 +1922,16 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
 
     <!-- Self Model Tab -->
     <div class="tab-content" id="tab-v5-self">
-        <h3 style="margin-bottom:16px;color:var(--convention)">Self Model</h3>
+        <h3 style="margin-bottom:16px;color:var(--convention)"><span data-i18n="Self Model">Self Model</span></h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
             <div>
-                <h4 style="color:var(--text-dim);margin-bottom:12px;font-size:13px;text-transform:uppercase">Competencies</h4>
+                <h4 style="color:var(--text-dim);margin-bottom:12px;font-size:13px;text-transform:uppercase"><span data-i18n="Competencies">Competencies</span></h4>
                 <div id="v5-competencies"></div>
             </div>
             <div>
-                <h4 style="color:var(--text-dim);margin-bottom:12px;font-size:13px;text-transform:uppercase">Blind Spots</h4>
+                <h4 style="color:var(--text-dim);margin-bottom:12px;font-size:13px;text-transform:uppercase"><span data-i18n="Blind Spots">Blind Spots</span></h4>
                 <div id="v5-blind-spots"></div>
-                <h4 style="color:var(--text-dim);margin:20px 0 12px;font-size:13px;text-transform:uppercase">User Model</h4>
+                <h4 style="color:var(--text-dim);margin:20px 0 12px;font-size:13px;text-transform:uppercase"><span data-i18n="User Model">User Model</span></h4>
                 <div id="v5-user-model"></div>
             </div>
         </div>
@@ -1939,9 +1939,9 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
 
     <!-- Reflection Tab -->
     <div class="tab-content" id="tab-v5-reflection">
-        <h3 style="margin-bottom:16px;color:var(--rule-color)">Reflection Reports</h3>
+        <h3 style="margin-bottom:16px;color:var(--rule-color)"><span data-i18n="Reflection Reports">Reflection Reports</span></h3>
         <div id="v5-reports" style="display:flex;flex-direction:column;gap:16px;margin-bottom:24px"></div>
-        <h4 style="color:var(--text-dim);margin-bottom:12px;font-size:13px;text-transform:uppercase">Pending Proposals</h4>
+        <h4 style="color:var(--text-dim);margin-bottom:12px;font-size:13px;text-transform:uppercase"><span data-i18n="Pending Proposals">Pending Proposals</span></h4>
         <div id="v5-proposals" style="display:flex;flex-direction:column;gap:12px"></div>
     </div>
 
@@ -1949,7 +1949,7 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
     <div class="tab-content" id="tab-live-feed">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
             <div id="feed-status" style="width:10px;height:10px;border-radius:50%;background:#ef4444"></div>
-            <span id="feed-status-text" style="color:var(--text-dim);font-size:13px">Disconnected</span>
+            <span id="feed-status-text" style="color:var(--text-dim);font-size:13px"><span data-i18n="Disconnected">Disconnected</span></span>
         </div>
         <div id="feed-list" style="display:flex;flex-direction:column;gap:8px;max-height:70vh;overflow-y:auto"></div>
     </div>
@@ -1959,22 +1959,22 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
 <div class="modal-overlay" id="detail-modal">
     <div class="modal">
         <button class="modal-close" id="modal-close">&times;</button>
-        <h2 id="modal-title">Knowledge Detail</h2>
+        <h2 id="modal-title"><span data-i18n="Knowledge Detail">Knowledge Detail</span></h2>
         <div class="modal-meta" id="modal-meta"></div>
         <div class="modal-section">
-            <div class="section-label">Content</div>
+            <div class="section-label"><span data-i18n="Content">Content</span></div>
             <div class="section-body" id="modal-content"></div>
         </div>
         <div class="modal-section" id="modal-context-section">
-            <div class="section-label">Context</div>
+            <div class="section-label"><span data-i18n="Context">Context</span></div>
             <div class="section-body" id="modal-context"></div>
         </div>
         <div class="modal-section" id="modal-tags-section">
-            <div class="section-label">Tags</div>
+            <div class="section-label"><span data-i18n="Tags">Tags</span></div>
             <div id="modal-tags"></div>
         </div>
         <div class="modal-section" id="modal-history-section">
-            <div class="section-label">Version History</div>
+            <div class="section-label"><span data-i18n="Version History">Version History</span></div>
             <div id="modal-history"></div>
         </div>
     </div>
@@ -2029,8 +2029,8 @@ function formatDate(iso) {
     if (!iso) return '--';
     try {
         const d = new Date(iso);
-        return d.toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' })
-             + ' ' + d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+        return d.toLocaleDateString(TAM_I18N.locale, { day:'2-digit', month:'short', year:'numeric' })
+             + ' ' + d.toLocaleTimeString(TAM_I18N.locale, { hour:'2-digit', minute:'2-digit' });
     } catch { return iso; }
 }
 
@@ -2056,7 +2056,7 @@ async function loadStats() {
         for (const t of Object.keys(s.by_type).sort()) {
             const opt = document.createElement('option');
             opt.value = t;
-            opt.textContent = t + ' (' + s.by_type[t] + ')';
+            opt.textContent = TAM_I18N.t(t) + ' (' + s.by_type[t] + ')';
             typeSelect.appendChild(opt);
         }
         const projSelect = document.getElementById('project-filter');
@@ -2099,7 +2099,7 @@ async function loadKnowledge() {
             tr.onclick = () => openDetail(row.id);
             tr.innerHTML =
                 '<td class="id-col">' + row.id + '</td>' +
-                '<td><span class="' + badgeClass(row.type) + '">' + escapeHtml(row.type) + '</span></td>' +
+                '<td><span class="' + badgeClass(row.type) + '">' + escapeHtml(TAM_I18N.t(row.type)) + '</span></td>' +
                 '<td>' + escapeHtml(row.project) + '</td>' +
                 '<td class="content-col">' + escapeHtml(truncate(row.content, 100)) + '</td>' +
                 '<td class="num-col">' + (row.confidence != null ? row.confidence.toFixed(2) : '--') + '</td>' +
@@ -2110,15 +2110,15 @@ async function loadKnowledge() {
         }
 
         if (data.items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:40px">No knowledge found</td></tr>';
+            tbody.innerHTML = "<tr><td colspan=\"8\" style=\"text-align:center;color:var(--text-dim);padding:40px\"><span data-i18n=\"No knowledge found\">No knowledge found</span></td></tr>";
         }
 
-        document.getElementById('page-info').textContent = 'Page ' + currentPage + ' of ' + totalPages;
+        document.getElementById('page-info').textContent = TAM_I18N.t('Page {page} of {total}', {page: currentPage, total: totalPages});
         document.getElementById('prev-btn').disabled = currentPage <= 1;
         document.getElementById('next-btn').disabled = currentPage >= totalPages;
     } catch (e) {
         document.getElementById('knowledge-body').innerHTML =
-            '<tr><td colspan="8" class="loading">Error loading data</td></tr>';
+            "<tr><td colspan=\"8\" class=\"loading\"><span data-i18n=\"Error loading data\">Error loading data</span></td></tr>";
     }
 }
 
@@ -2130,7 +2130,7 @@ async function openDetail(id) {
         const r = await api('/api/knowledge/' + id);
         if (!r) return;
 
-        document.getElementById('modal-title').textContent = 'Knowledge #' + r.id;
+        document.getElementById('modal-title').textContent = TAM_I18N.t('Knowledge #{id}', {id: r.id});
 
         const meta = document.getElementById('modal-meta');
         meta.innerHTML = [
@@ -2188,7 +2188,7 @@ async function openDetail(id) {
 }
 
 function metaItem(label, value) {
-    return '<div class="meta-item"><div class="meta-label">' + label + '</div><div class="meta-value">' + value + '</div></div>';
+    return '<div class="meta-item"><div class="meta-label">' + escapeHtml(TAM_I18N.t(label)) + '</div><div class="meta-value">' + value + '</div></div>';
 }
 
 function closeModal() {
@@ -2209,16 +2209,16 @@ async function loadSessions() {
                 '<td style="font-family:monospace;font-size:12px;color:var(--text-dim)">' + escapeHtml(truncate(s.id, 36)) + '</td>' +
                 '<td class="date-col">' + formatDate(s.started_at) + '</td>' +
                 '<td>' + escapeHtml(s.project || 'general') + '</td>' +
-                '<td><span class="badge badge-fact">' + escapeHtml(s.status || 'open') + '</span></td>' +
+                '<td><span class="badge badge-fact">' + escapeHtml(TAM_I18N.t(s.status || 'open')) + '</span></td>' +
                 '<td class="num-col">' + (s.knowledge_count || 0) + '</td>';
             tbody.appendChild(tr);
         }
         if (sessions.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-dim);padding:40px">No sessions found</td></tr>';
+            tbody.innerHTML = "<tr><td colspan=\"5\" style=\"text-align:center;color:var(--text-dim);padding:40px\"><span data-i18n=\"No sessions found\">No sessions found</span></td></tr>";
         }
     } catch (e) {
         document.getElementById('sessions-body').innerHTML =
-            '<tr><td colspan="5" class="loading">Error loading sessions</td></tr>';
+            "<tr><td colspan=\"5\" class=\"loading\"><span data-i18n=\"Error loading sessions\">Error loading sessions</span></td></tr>";
     }
 }
 
@@ -2232,14 +2232,14 @@ let siLoaded = false;
 
 function severityBadge(severity) {
     const s = (severity || 'low').toLowerCase();
-    return '<span class="badge badge-' + cssToken(s, 'low') + '">' + escapeHtml(s) + '</span>';
+    return '<span class="badge badge-' + cssToken(s, 'low') + '">' + escapeHtml(TAM_I18N.t(s)) + '</span>';
 }
 
 function statusBadge(status) {
     const s = (status || 'pending').toLowerCase();
     const cls = {active:'active', suspended:'suspended', retired:'retired',
                  resolved:'resolved', pending:'pending', promoted:'active'}[s] || 'fact';
-    return '<span class="badge badge-' + cls + '">' + escapeHtml(s) + '</span>';
+    return '<span class="badge badge-' + cls + '">' + escapeHtml(TAM_I18N.t(s)) + '</span>';
 }
 
 function importanceBadge(val) {
@@ -2294,10 +2294,10 @@ async function loadErrors() {
         }
 
         if (data.items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:40px">No errors recorded</td></tr>';
+            tbody.innerHTML = "<tr><td colspan=\"7\" style=\"text-align:center;color:var(--text-dim);padding:40px\"><span data-i18n=\"No errors recorded\">No errors recorded</span></td></tr>";
         }
 
-        document.getElementById('errors-page-info').textContent = 'Page ' + errorsPage + ' of ' + errorsTotalPages;
+        document.getElementById('errors-page-info').textContent = TAM_I18N.t('Page {page} of {total}', {page: errorsPage, total: errorsTotalPages});
         document.getElementById('errors-prev-btn').disabled = errorsPage <= 1;
         document.getElementById('errors-next-btn').disabled = errorsPage >= errorsTotalPages;
 
@@ -2314,7 +2314,7 @@ async function loadErrors() {
         }
     } catch (e) {
         document.getElementById('errors-body').innerHTML =
-            '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:40px">Errors table not available</td></tr>';
+            "<tr><td colspan=\"7\" style=\"text-align:center;color:var(--text-dim);padding:40px\"><span data-i18n=\"Errors table not available\">Errors table not available</span></td></tr>";
     }
 }
 
@@ -2340,18 +2340,18 @@ async function loadInsights() {
                 '<td>' + statusBadge(row.status) + '</td>' +
                 '<td style="text-align:center">' +
                     (row.promotion_eligible
-                        ? '<span class="promo-eligible" title="Eligible for promotion"></span>'
-                        : '<span class="promo-not-eligible" title="Not eligible"></span>') +
+                        ? "<span class=\"promo-eligible\" title=\"Eligible for promotion\" data-i18n-title=\"Eligible for promotion\"></span>"
+                        : "<span class=\"promo-not-eligible\" title=\"Not eligible\" data-i18n-title=\"Not eligible\"></span>") +
                 '</td>';
             tbody.appendChild(tr);
         }
 
         if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:40px">No insights generated</td></tr>';
+            tbody.innerHTML = "<tr><td colspan=\"7\" style=\"text-align:center;color:var(--text-dim);padding:40px\"><span data-i18n=\"No insights generated\">No insights generated</span></td></tr>";
         }
     } catch (e) {
         document.getElementById('insights-body').innerHTML =
-            '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:40px">Insights table not available</td></tr>';
+            "<tr><td colspan=\"7\" style=\"text-align:center;color:var(--text-dim);padding:40px\"><span data-i18n=\"Insights table not available\">Insights table not available</span></td></tr>";
     }
 }
 
@@ -2393,11 +2393,11 @@ async function loadRules() {
         }
 
         if (data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:40px">No rules defined</td></tr>';
+            tbody.innerHTML = "<tr><td colspan=\"8\" style=\"text-align:center;color:var(--text-dim);padding:40px\"><span data-i18n=\"No rules defined\">No rules defined</span></td></tr>";
         }
     } catch (e) {
         document.getElementById('rules-body').innerHTML =
-            '<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:40px">Rules table not available</td></tr>';
+            "<tr><td colspan=\"8\" style=\"text-align:center;color:var(--text-dim);padding:40px\"><span data-i18n=\"Rules table not available\">Rules table not available</span></td></tr>";
     }
 }
 
@@ -2410,9 +2410,7 @@ async function loadSIStats() {
         const total = (si.error_count || 0) + (si.insight_count || 0) + (si.rule_count || 0);
         document.getElementById('stat-si').textContent = total;
         document.getElementById('stat-si-detail').textContent =
-            (si.error_count || 0) + ' errors, ' +
-            (si.insight_count || 0) + ' insights, ' +
-            (si.rule_count || 0) + ' rules';
+            TAM_I18N.t('{errors} errors, {insights} insights, {rules} rules', {errors: si.error_count || 0, insights: si.insight_count || 0, rules: si.rule_count || 0});
 
         // Populate project filters for SI tabs from stats
         try {
@@ -2431,8 +2429,8 @@ async function loadSIStats() {
             }
         } catch (_) {}
     } catch (e) {
-        document.getElementById('stat-si').textContent = 'N/A';
-        document.getElementById('stat-si-detail').textContent = 'tables not available';
+        document.getElementById('stat-si').textContent = TAM_I18N.t('N/A');
+        document.getElementById('stat-si-detail').textContent = TAM_I18N.t('tables not available');
     }
 }
 
@@ -2608,7 +2606,7 @@ function graphFocusCluster(key) {
 
 function graphUpdateInfo() {
     const vis = G.visibleNodes();
-    let text = vis.length + ' nodes, ' + G.visibleEdges().length + ' edges';
+    let text = TAM_I18N.t('{nodes} nodes, {edges} edges', {nodes: vis.length, edges: G.visibleEdges().length});
     if (G.filterProject) text += ' [' + G.filterProject + ']';
     if (G.filterType) text += ' [' + G.filterType + ']';
     if (G.searchQuery) text += ' (search: "' + G.searchQuery + '")';
@@ -2770,14 +2768,14 @@ function initGraph() {
         while (tsel.options.length > 1) tsel.remove(1);
         [...types].sort().forEach(t => {
             const opt = document.createElement('option');
-            opt.value = t; opt.textContent = t;
+            opt.value = t; opt.textContent = TAM_I18N.t(t);
             tsel.appendChild(opt);
         });
 
         graphUpdateInfo();
         G.runSimulation();
     }).catch(err => {
-        document.getElementById('graph-info').textContent = 'Error loading graph: ' + err.message;
+        document.getElementById('graph-info').textContent = TAM_I18N.t('Error loading graph: ') + err.message;
     });
 
     // Barnes-Hut quad-tree for O(n log n) repulsion
@@ -3303,13 +3301,13 @@ function initGraph() {
             tooltip.style.display = 'block';
             tooltip.style.left = (e.clientX + 14) + 'px';
             tooltip.style.top = (e.clientY + 14) + 'px';
-            tooltip.querySelector('.tt-type').textContent = G.hoveredNode.type;
+            tooltip.querySelector('.tt-type').textContent = TAM_I18N.t(G.hoveredNode.type);
             tooltip.querySelector('.tt-type').style.color = G.hoveredNode.color;
             tooltip.querySelector('.tt-project').textContent = G.hoveredNode.project;
             tooltip.querySelector('.tt-content').textContent = G.hoveredNode.label;
             const ne = getNodeEdges(G.hoveredNode);
             tooltip.querySelector('.tt-edges').textContent = ne.length ?
-                ne.length + ' connection(s): ' + [...new Set(ne.map(x=>x.type))].join(', ') : 'No connections';
+                TAM_I18N.t('{count} connection(s): {names}', {count: ne.length, names: [...new Set(ne.map(x=>TAM_I18N.t(x.type)))].join(', ')}) : TAM_I18N.t('No connections');
         } else {
             canvas.style.cursor = 'grab';
             tooltip.style.display = 'none';
@@ -3474,11 +3472,11 @@ function _setFeedStatus(color, text) {
 function connectSSE() {
     if (feedSource) { try { feedSource.close(); } catch(e) {} }
 
-    _setFeedStatus('#facc15', 'Connecting…');
+    _setFeedStatus('#facc15', TAM_I18N.t('Connecting…'));
     feedSource = new EventSource('/api/events');
 
-    feedSource.onopen = () => _setFeedStatus('#22c55e', 'Connected');
-    feedSource.onerror = () => _setFeedStatus('#ef4444', 'Reconnecting…');
+    feedSource.onopen = () => _setFeedStatus('#22c55e', TAM_I18N.t('Connected'));
+    feedSource.onerror = () => _setFeedStatus('#ef4444', TAM_I18N.t('Reconnecting…'));
 
     feedSource.addEventListener('knowledge', e => {
         addFeedItem('knowledge', JSON.parse(e.data));
@@ -3516,10 +3514,10 @@ async function loadV5Stats() {
     try {
         const gs = await api('/api/graph-stats');
         document.getElementById('stat-graph').textContent = gs.total_nodes;
-        document.getElementById('stat-graph-detail').textContent = gs.total_nodes + ' nodes, ' + gs.total_edges + ' edges';
+        document.getElementById('stat-graph-detail').textContent = TAM_I18N.t('{nodes} nodes, {edges} edges', {nodes: gs.total_nodes, edges: gs.total_edges});
     } catch (_) {
-        document.getElementById('stat-graph').textContent = 'N/A';
-        document.getElementById('stat-graph-detail').textContent = 'tables not available';
+        document.getElementById('stat-graph').textContent = TAM_I18N.t('N/A');
+        document.getElementById('stat-graph-detail').textContent = TAM_I18N.t('tables not available');
     }
 
     try {
@@ -3528,10 +3526,10 @@ async function loadV5Stats() {
         document.getElementById('stat-episodes').textContent = st.total || 0;
         const b = (st.by_outcome || {}).breakthrough || 0;
         const f = (st.by_outcome || {}).failure || 0;
-        document.getElementById('stat-episodes-detail').textContent = b + ' breakthroughs, ' + f + ' failures';
+        document.getElementById('stat-episodes-detail').textContent = TAM_I18N.t('{breakthroughs} breakthroughs, {failures} failures', {breakthroughs: b, failures: f});
     } catch (_) {
-        document.getElementById('stat-episodes').textContent = 'N/A';
-        document.getElementById('stat-episodes-detail').textContent = 'tables not available';
+        document.getElementById('stat-episodes').textContent = TAM_I18N.t('N/A');
+        document.getElementById('stat-episodes-detail').textContent = TAM_I18N.t('tables not available');
     }
 
     try {
@@ -3539,18 +3537,18 @@ async function loadV5Stats() {
         document.getElementById('stat-skills').textContent = sk.total || 0;
         if (sk.skills && sk.skills.length > 0) {
             const avgSr = sk.skills.reduce((a, s) => a + (s.success_rate || 0), 0) / sk.skills.length;
-            document.getElementById('stat-skills-detail').textContent = 'avg success: ' + (avgSr * 100).toFixed(0) + '%';
+            document.getElementById('stat-skills-detail').textContent = TAM_I18N.t('avg success: {rate}%', {rate: (avgSr * 100).toFixed(0)});
         }
     } catch (_) {
-        document.getElementById('stat-skills').textContent = 'N/A';
-        document.getElementById('stat-skills-detail').textContent = 'tables not available';
+        document.getElementById('stat-skills').textContent = TAM_I18N.t('N/A');
+        document.getElementById('stat-skills-detail').textContent = TAM_I18N.t('tables not available');
     }
 
     try {
         const sm = await api('/api/self-model');
         document.getElementById('stat-blind-spots').textContent = (sm.blind_spots || []).length;
     } catch (_) {
-        document.getElementById('stat-blind-spots').textContent = 'N/A';
+        document.getElementById('stat-blind-spots').textContent = TAM_I18N.t('N/A');
     }
 }
 
@@ -3567,7 +3565,7 @@ async function loadV5Graph() {
             '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">' +
             '<span class="badge badge-' + cssToken(type, 'fact') + '">' + escapeHtml(type) + '</span>' +
             '<span style="font-weight:600;color:var(--accent)">' + count + '</span></div>'
-        ).join('') || '<div style="color:var(--text-dim)">No graph nodes yet</div>';
+        ).join('') || "<div style=\"color:var(--text-dim)\"><span data-i18n=\"No graph nodes yet\">No graph nodes yet</span></div>";
 
         // Edges by type
         const edgesDiv = document.getElementById('v5-edges-by-type');
@@ -3575,18 +3573,18 @@ async function loadV5Graph() {
             '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">' +
             '<span style="color:var(--text)">' + escapeHtml(type) + '</span>' +
             '<span style="font-weight:600;color:var(--decision)">' + count + '</span></div>'
-        ).join('') || '<div style="color:var(--text-dim)">No graph edges yet</div>';
+        ).join('') || "<div style=\"color:var(--text-dim)\"><span data-i18n=\"No graph edges yet\">No graph edges yet</span></div>";
 
         // Top nodes table
         const tbody = document.getElementById('v5-top-nodes-body');
         tbody.innerHTML = (data.top_nodes || []).map(n =>
             '<tr>' +
             '<td>' + escapeHtml(n.name) + '</td>' +
-            '<td><span class="badge badge-' + cssToken(n.type, 'fact') + '">' + escapeHtml(n.type) + '</span></td>' +
+            '<td><span class="badge badge-' + cssToken(n.type, 'fact') + '">' + escapeHtml(TAM_I18N.t(n.type)) + '</span></td>' +
             '<td style="font-weight:600;color:var(--accent)">' + (n.importance || 0).toFixed(1) + '</td>' +
             '<td>' + (n.mention_count || 0) + '</td>' +
             '</tr>'
-        ).join('') || '<tr><td colspan="4" style="color:var(--text-dim)">No graph nodes yet</td></tr>';
+        ).join('') || "<tr><td colspan=\"4\" style=\"color:var(--text-dim)\"><span data-i18n=\"No graph nodes yet\">No graph nodes yet</span></td></tr>";
     } catch (e) {
         document.getElementById('v5-top-nodes-body').innerHTML =
             '<tr><td colspan="4" style="color:var(--text-dim)">Graph tables not available: ' + escapeHtml(e.message) + '</td></tr>';
@@ -3606,8 +3604,8 @@ async function loadV5Episodes() {
         // Stats badges
         const statsDiv = document.getElementById('v5-episode-stats');
         const badges = [
-            { label: 'Total', value: stats.total || 0, color: 'var(--text)' },
-            { label: 'Avg Impact', value: (stats.avg_impact || 0).toFixed(1), color: 'var(--accent)' },
+            { label: TAM_I18N.t('Total'), value: stats.total || 0, color: 'var(--text)' },
+            { label: TAM_I18N.t('Avg Impact'), value: (stats.avg_impact || 0).toFixed(1), color: 'var(--accent)' },
         ];
         Object.entries(stats.by_outcome || {}).forEach(([k, v]) => {
             badges.push({ label: k, value: v, color: outcomeColors[k] || 'var(--text-dim)' });
@@ -3629,10 +3627,10 @@ async function loadV5Episodes() {
                 '<span style="color:var(--text-dim);font-size:12px">' + formatDate(ep.created_at) + '</span></div>' +
                 '<div style="color:var(--text);font-size:14px;margin-bottom:6px">' + escapeHtml(truncate(ep.summary || ep.description || '', 200)) + '</div>' +
                 '<div style="display:flex;gap:12px;color:var(--text-dim);font-size:12px">' +
-                (ep.impact_score != null ? '<span>Impact: <strong style="color:var(--accent)">' + ep.impact_score + '</strong></span>' : '') +
+                (ep.impact_score != null ? "<span><span data-i18n=\"Impact:\">Impact:</span> <strong style=\"color:var(--accent)\">" + ep.impact_score + '</strong></span>' : '') +
                 (ep.project ? '<span>Project: ' + escapeHtml(ep.project) + '</span>' : '') +
                 '</div></div>';
-        }).join('') || '<div style="color:var(--text-dim);padding:20px;text-align:center">No episodes recorded yet</div>';
+        }).join('') || "<div style=\"color:var(--text-dim);padding:20px;text-align:center\"><span data-i18n=\"No episodes recorded yet\">No episodes recorded yet</span></div>";
     } catch (e) {
         document.getElementById('v5-episodes-list').innerHTML =
             '<div style="color:var(--text-dim);padding:20px">Episodes table not available: ' + escapeHtml(e.message) + '</div>';
@@ -3679,7 +3677,7 @@ function renderSkillCard(sk) {
 
     const src = sk.source || '';
     const badgeColor = src === 'claude-commands' ? 'var(--solution)' : src === 'claude-agents' ? 'var(--convention)' : src === 'claude-rules' ? 'var(--decision)' : 'var(--text-dim)';
-    const badgeLabel = src === 'claude-commands' ? 'Command' : src === 'claude-agents' ? 'Agent' : src === 'claude-rules' ? 'Rules' : 'Skill';
+    const badgeLabel = src === 'claude-commands' ? TAM_I18N.t('Command') : src === 'claude-agents' ? TAM_I18N.t('Agent') : src === 'claude-rules' ? TAM_I18N.t('Rules') : TAM_I18N.t('Skill');
 
     let stackHtml = '';
     const stackList = sk.stack_list || (sk.stack ? (() => { try { return JSON.parse(sk.stack); } catch(_) { return []; } })() : []);
@@ -3694,11 +3692,11 @@ function renderSkillCard(sk) {
         '<div style="display:flex;align-items:center;gap:8px">' +
         '<span style="background:' + badgeColor + ';color:#000;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;text-transform:uppercase">' + badgeLabel + '</span>' +
         '<h4 style="color:var(--text);font-size:15px;margin:0">' + escapeHtml((sk.name || '').replace(/^(cmd:|agent:|rules:)/, '')) + '</h4></div>' +
-        '<span style="color:var(--text-dim);font-size:12px">' + (sk.times_used ? 'Used ' + sk.times_used + 'x' : sk.status || '') + '</span></div>' +
+        '<span style="color:var(--text-dim);font-size:12px">' + (sk.times_used ? TAM_I18N.t('Used {count}x', {count: sk.times_used}) : sk.status || '') + '</span></div>' +
         (sk.description ? '<div style="color:var(--text-dim);font-size:13px;margin-bottom:6px">' + escapeHtml(truncate(sk.description, 200)) + '</div>' : '') +
         (sk.trigger_pattern ? '<div style="color:var(--text-dim);font-size:12px;font-family:monospace;margin-bottom:10px;opacity:0.7">' + escapeHtml(sk.trigger_pattern) + '</div>' : '') +
         (sk.times_used > 0 ? '<div style="margin-bottom:4px;display:flex;justify-content:space-between;font-size:12px">' +
-            '<span style="color:var(--text-dim)">Success Rate</span><span style="color:' + barColor + ';font-weight:600">' + srPct + '%</span></div>' +
+            "<span style=\"color:var(--text-dim)\"><span data-i18n=\"Success Rate\">Success Rate</span></span><span style=\"color:" + barColor + ';font-weight:600">' + srPct + '%</span></div>' +
             '<div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden">' +
             '<div style="height:100%;width:' + srPct + '%;background:' + barColor + ';border-radius:3px;transition:width 0.5s"></div></div>' : '') +
         stackHtml + stepsHtml + antiHtml + '</div>';
@@ -3717,9 +3715,9 @@ function filterAndRenderSkills() {
         (sk.trigger_pattern || '').toLowerCase().includes(search)
     );
 
-    document.getElementById('v5-skills-count').textContent = filtered.length + ' of ' + _allSkills.length;
+    document.getElementById('v5-skills-count').textContent = TAM_I18N.t('{count} of {total}', {count: filtered.length, total: _allSkills.length});
     listDiv.innerHTML = filtered.map(renderSkillCard).join('') ||
-        '<div style="color:var(--text-dim);padding:20px;text-align:center">No skills match filter</div>';
+        "<div style=\"color:var(--text-dim);padding:20px;text-align:center\"><span data-i18n=\"No skills match filter\">No skills match filter</span></div>";
 }
 
 async function loadV5Skills() {
@@ -3762,22 +3760,22 @@ async function loadV5SelfModel() {
                 '<span style="color:' + color + ';font-weight:600;font-size:14px">' + pct + '%' + trend + '</span></div>' +
                 '<div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden">' +
                 '<div style="height:100%;width:' + pct + '%;background:' + color + ';border-radius:4px;transition:width 0.5s"></div></div>' +
-                (c.based_on ? '<div style="color:var(--text-dim);font-size:11px;margin-top:2px">' + c.based_on + ' evidence · ' + (c.trend || '') + '</div>' : '') +
+                (c.based_on ? '<div style="color:var(--text-dim);font-size:11px;margin-top:2px">' + TAM_I18N.t('{count} evidence', {count: c.based_on}) + ' · ' + (c.trend || '') + '</div>' : '') +
                 '</div>';
-        }).join('') || '<div style="color:var(--text-dim)">No competency data yet</div>';
+        }).join('') || "<div style=\"color:var(--text-dim)\"><span data-i18n=\"No competency data yet\">No competency data yet</span></div>";
 
         // Blind spots
         const bsDiv = document.getElementById('v5-blind-spots');
         bsDiv.innerHTML = (data.blind_spots || []).map(bs => {
             const isMonitoring = bs.status === 'monitoring';
             const borderColor = isMonitoring ? 'var(--accent)' : 'var(--lesson)';
-            const statusLabel = isMonitoring ? '📚 Learning' : '⚠️ Unknown area';
+            const statusLabel = isMonitoring ? TAM_I18N.t('📚 Learning') : TAM_I18N.t('⚠️ Unknown area');
             const statusColor = isMonitoring ? 'var(--accent)' : 'var(--lesson)';
             return '<div style="background:var(--card);border:1px solid var(--border);border-left:3px solid ' + borderColor + ';border-radius:8px;padding:12px;margin-bottom:8px">' +
             '<div style="color:' + statusColor + ';font-weight:600;font-size:13px;margin-bottom:4px">' + statusLabel + '</div>' +
             '<div style="color:var(--text);font-size:13px">' + escapeHtml(bs.description || '') + '</div>' +
             '</div>';
-        }).join('') || '<div style="color:var(--text-dim)">No blind spots detected</div>';
+        }).join('') || "<div style=\"color:var(--text-dim)\"><span data-i18n=\"No blind spots detected\">No blind spots detected</span></div>";
 
         // User model
         const umDiv = document.getElementById('v5-user-model');
@@ -3788,7 +3786,7 @@ async function loadV5SelfModel() {
             '<div style="display:flex;align-items:center;gap:8px">' +
             '<span style="color:var(--accent);font-size:13px">' + escapeHtml(String(val.value || '')) + '</span>' +
             '<span style="color:var(--text-dim);font-size:11px">(' + ((val.confidence || 0) * 100).toFixed(0) + '%)</span></div></div>'
-        ).join('') || '<div style="color:var(--text-dim)">No user model data yet</div>';
+        ).join('') || "<div style=\"color:var(--text-dim)\"><span data-i18n=\"No user model data yet\">No user model data yet</span></div>";
     } catch (e) {
         document.getElementById('v5-competencies').innerHTML =
             '<div style="color:var(--text-dim)">Self model tables not available: ' + escapeHtml(e.message) + '</div>';
@@ -3807,26 +3805,26 @@ async function loadV5Reflection() {
         reportsDiv.innerHTML = (data.reports || []).map(r =>
             '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px">' +
             '<div style="display:flex;justify-content:space-between;margin-bottom:8px">' +
-            '<span style="color:var(--rule-color);font-weight:600;font-size:14px">' + escapeHtml(r.title || r.type || 'Report') + '</span>' +
+            '<span style="color:var(--rule-color);font-weight:600;font-size:14px">' + escapeHtml(r.title || r.type || TAM_I18N.t('Report')) + '</span>' +
             '<span style="color:var(--text-dim);font-size:12px">' + formatDate(r.created_at) + '</span></div>' +
             '<div style="color:var(--text);font-size:14px;white-space:pre-wrap">' + escapeHtml(truncate(r.content || r.summary || '', 500)) + '</div>' +
             (r.recommendations ? '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);color:var(--text-dim);font-size:13px">' +
-            '<strong>Recommendations:</strong> ' + escapeHtml(truncate(r.recommendations, 200)) + '</div>' : '') +
+            "<strong><span data-i18n=\"Recommendations:\">Recommendations:</span></strong> " + escapeHtml(truncate(r.recommendations, 200)) + '</div>' : '') +
             '</div>'
-        ).join('') || '<div style="color:var(--text-dim);padding:20px;text-align:center">No reflection reports yet</div>';
+        ).join('') || "<div style=\"color:var(--text-dim);padding:20px;text-align:center\"><span data-i18n=\"No reflection reports yet\">No reflection reports yet</span></div>";
 
         // Proposals
         const proposalsDiv = document.getElementById('v5-proposals');
         proposalsDiv.innerHTML = (data.proposals || []).map(p =>
             '<div style="background:var(--card);border:1px solid var(--border);border-left:3px solid var(--decision);border-radius:8px;padding:16px">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
-            '<span style="color:var(--decision);font-weight:600;font-size:13px">' + escapeHtml(p.type || 'Proposal') + '</span>' +
+            '<span style="color:var(--decision);font-weight:600;font-size:13px">' + escapeHtml(p.type || TAM_I18N.t('Proposal')) + '</span>' +
             '<span style="color:var(--text-dim);font-size:12px">' + formatDate(p.created_at) + '</span></div>' +
             '<div style="color:var(--text);font-size:14px;margin-bottom:8px">' + escapeHtml(truncate(p.content || p.description || '', 300)) + '</div>' +
             '<div style="display:flex;gap:8px">' +
             '<span style="color:var(--text-dim);font-size:12px;padding:4px 12px;border:1px solid var(--border);border-radius:4px">Status: ' + escapeHtml(p.status || 'pending') + '</span>' +
             '</div></div>'
-        ).join('') || '<div style="color:var(--text-dim)">No pending proposals</div>';
+        ).join('') || "<div style=\"color:var(--text-dim)\"><span data-i18n=\"No pending proposals\">No pending proposals</span></div>";
     } catch (e) {
         document.getElementById('v5-reports').innerHTML =
             '<div style="color:var(--text-dim)">Reflection tables not available: ' + escapeHtml(e.message) + '</div>';
@@ -3866,7 +3864,7 @@ GRAPH_PAGE = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Knowledge Graph — total-agent-memory</title>
+<title data-i18n="Knowledge Graph — total-agent-memory">Knowledge Graph — total-agent-memory</title>
 <script src="/static/vendor/vis-network-9.1.6/vis-network.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -3930,9 +3928,9 @@ body {
 <body>
 
 <div class="toolbar">
-    <h1>Knowledge Graph</h1>
-    <a href="/">&larr; Dashboard</a>
-    <label>Limit:
+    <h1><span data-i18n="Knowledge Graph">Knowledge Graph</span></h1>
+    <a href="/"><span data-i18n="← Dashboard">&larr; Dashboard</span></a>
+    <label><span data-i18n="Limit:">Limit:</span>
         <select id="node-limit">
             <option value="50">50</option>
             <option value="100" selected>100</option>
@@ -3940,15 +3938,15 @@ body {
             <option value="500">500</option>
         </select>
     </label>
-    <label>Filter type:
+    <label><span data-i18n="Filter type:">Filter type:</span>
         <select id="type-filter">
-            <option value="">All</option>
+            <option value="" data-i18n="All">All</option>
         </select>
     </label>
-    <label>Search: <input id="search-input" type="text" placeholder="node name..." /></label>
+    <label><span data-i18n="Search:">Search:</span> <input id="search-input" type="text" placeholder="node name..." / data-i18n-placeholder="node name..."></label>
     <div class="stats-bar">
-        <span id="stat-nodes">Nodes: ...</span>
-        <span id="stat-edges">Edges: ...</span>
+        <span id="stat-nodes"><span data-i18n="Nodes: ...">Nodes: ...</span></span>
+        <span id="stat-edges"><span data-i18n="Edges: ...">Edges: ...</span></span>
     </div>
 </div>
 
@@ -3999,7 +3997,7 @@ function getColor(type) { return TYPE_COLORS[type] || DEFAULT_COLOR; }
 function buildLegend(types) {
     const el = document.getElementById('legend');
     el.innerHTML = types.map(t =>
-        `<div class="legend-item"><div class="legend-dot" style="background:${getColor(t)}"></div>${t}</div>`
+        `<div class="legend-item"><div class="legend-dot" style="background:${getColor(t)}"></div>${escHtml(TAM_I18N.t(t))}</div>`
     ).join('');
 }
 
@@ -4016,8 +4014,8 @@ async function loadGraph() {
     const types = [...new Set(allNodes.map(n => n.type))].sort();
     const filterSel = document.getElementById('type-filter');
     const curVal = filterSel.value;
-    filterSel.innerHTML = '<option value="">All</option>' +
-        types.map(t => `<option value="${t}">${t} (${allNodes.filter(n=>n.type===t).length})</option>`).join('');
+    filterSel.innerHTML = "<option value=\"\" data-i18n=\"All\">All</option>" +
+        types.map(t => `<option value="${t}">${escHtml(TAM_I18N.t(t))} (${allNodes.filter(n=>n.type===t).length})</option>`).join('');
     filterSel.value = curVal;
 
     buildLegend(types);
@@ -4054,8 +4052,8 @@ function renderGraph(filterType) {
             smooth: { type: 'continuous' },
         }));
 
-    document.getElementById('stat-nodes').textContent = `Nodes: ${visNodes.length}`;
-    document.getElementById('stat-edges').textContent = `Edges: ${visEdges.length}`;
+    document.getElementById('stat-nodes').textContent = TAM_I18N.t('Nodes: {count}', {count: visNodes.length});
+    document.getElementById('stat-edges').textContent = TAM_I18N.t('Edges: {count}', {count: visEdges.length});
 
     nodesDataset = new vis.DataSet(visNodes);
     edgesDataset = new vis.DataSet(visEdges);
@@ -4113,17 +4111,17 @@ async function showDetail(nodeId) {
 
     let html = `<h2>${escHtml(n.name)}</h2>`;
     html += `<div class="detail-section">
-        <span class="badge" style="background:${getColor(n.type)}44;color:${getColor(n.type)}">${n.type}</span>
-        <span class="badge" style="background:#33415588;color:#94a3b8">importance: ${(n.importance||0).toFixed(2)}</span>
-        <span class="badge" style="background:#33415588;color:#94a3b8">mentions: ${n.mention_count||0}</span>
+        <span class="badge" style="background:${getColor(n.type)}44;color:${getColor(n.type)}">${escHtml(TAM_I18N.t(n.type))}</span>
+        <span class="badge" style="background:#33415588;color:#94a3b8">${escHtml(TAM_I18N.t('Importance: {value}', {value: (n.importance||0).toFixed(2)}))}</span>
+        <span class="badge" style="background:#33415588;color:#94a3b8">${escHtml(TAM_I18N.t('Mentions: {count}', {count: n.mention_count||0}))}</span>
     </div>`;
 
     if (n.content) {
-        html += `<div class="detail-section"><h3>Content</h3><p>${escHtml(n.content).slice(0, 500)}</p></div>`;
+        html += `<div class="detail-section"><h3><span data-i18n="Content">Content</span></h3><p>${escHtml(n.content).slice(0, 500)}</p></div>`;
     }
 
     if (data.outgoing && data.outgoing.length) {
-        html += `<div class="detail-section"><h3>Outgoing (${data.outgoing.length})</h3><ul>`;
+        html += `<div class="detail-section"><h3>${escHtml(TAM_I18N.t('Outgoing ({count})', {count: data.outgoing.length}))}</h3><ul>`;
         data.outgoing.forEach(e => {
             html += `<li><span style="color:${getColor(e.type)}">${escHtml(e.name)}</span> <span style="color:#64748b;font-size:11px">[${e.relation_type}]</span></li>`;
         });
@@ -4131,7 +4129,7 @@ async function showDetail(nodeId) {
     }
 
     if (data.incoming && data.incoming.length) {
-        html += `<div class="detail-section"><h3>Incoming (${data.incoming.length})</h3><ul>`;
+        html += `<div class="detail-section"><h3>${escHtml(TAM_I18N.t('Incoming ({count})', {count: data.incoming.length}))}</h3><ul>`;
         data.incoming.forEach(e => {
             html += `<li><span style="color:${getColor(e.type)}">${escHtml(e.name)}</span> <span style="color:#64748b;font-size:11px">[${e.relation_type}]</span></li>`;
         });
@@ -4142,7 +4140,7 @@ async function showDetail(nodeId) {
         try {
             const props = typeof n.properties === 'string' ? JSON.parse(n.properties) : n.properties;
             if (Object.keys(props).length) {
-                html += `<div class="detail-section"><h3>Properties</h3><ul>`;
+                html += `<div class="detail-section"><h3><span data-i18n="Properties">Properties</span></h3><ul>`;
                 Object.entries(props).forEach(([k, v]) => {
                     html += `<li><strong>${escHtml(k)}:</strong> ${escHtml(String(v))}</li>`;
                 });
@@ -4187,7 +4185,7 @@ _KNOWLEDGE_VIEW_HTML = r"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Knowledge __KID__ — total-agent-memory</title>
+<title data-i18n="Knowledge {id} — total-agent-memory" data-i18n-args='{"id":"__KID__"}'>Knowledge __KID__ — total-agent-memory</title>
 <style>
   body { margin:0; background:#0a0a14; color:#ddd;
          font-family:-apple-system,Segoe UI,sans-serif; }
@@ -4213,8 +4211,8 @@ _KNOWLEDGE_VIEW_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a href="/" class="back">← Dashboard</a>
-  <div id="body"><p style="color:#888">Loading knowledge __KID__…</p></div>
+  <a href="/" class="back"><span data-i18n="← Dashboard">← Dashboard</span></a>
+  <div id="body"><p style="color:#888"><span data-i18n="Loading knowledge {id}…" data-i18n-args='{"id":"__KID__"}'>Loading knowledge __KID__…</span></p></div>
 </div>
 <script>
 const KID = "__KID__";
@@ -4227,7 +4225,7 @@ fetch("/api/knowledge/" + KID)
   .then(({ok, data}) => {
     const b = document.getElementById("body");
     if (!ok) {
-      b.innerHTML = '<div class="err">Error: ' + esc(data.message || data.error) + '</div>';
+      b.innerHTML = '<div class="err">' + esc(TAM_I18N.t('Error: ')) + esc(data.message || data.error) + '</div>';
       return;
     }
     const tags = (data.tags || []).map(t =>
@@ -4235,23 +4233,23 @@ fetch("/api/knowledge/" + KID)
     const related = (data.related || []).map(r =>
       '<li class="related"><a href="/knowledge/' + r.id + '">#' + r.id +
       ' ' + esc(r.title) + '</a><span class="via">via ' + esc(r.via) + '</span></li>'
-    ).join("") || '<li style="color:#666">No related records</li>';
+    ).join("") || "<li style=\"color:#666\"><span data-i18n=\"No related records\">No related records</span></li>";
     b.innerHTML =
-      '<h1>Knowledge #' + esc(data.id) + ' — ' + esc(data.type) + '</h1>' +
+      '<h1>' + esc(TAM_I18N.t('Knowledge #{id}', {id: data.id})) + ' — ' + esc(TAM_I18N.t(data.type)) + '</h1>' +
       '<div class="meta">' +
-        '<b>Project:</b> ' + esc(data.project || "–") + ' · ' +
-        '<b>Session:</b> ' + esc(data.session_id || "–") + ' · ' +
-        '<b>Created:</b> ' + esc(data.created_at || "–") +
+        "<b><span data-i18n=\"Project:\">Project:</span></b> " + esc(data.project || "–") + ' · ' +
+        "<b><span data-i18n=\"Session:\">Session:</span></b> " + esc(data.session_id || "–") + ' · ' +
+        "<b><span data-i18n=\"Created:\">Created:</span></b> " + esc(data.created_at || "–") +
       '</div>' +
-      '<div class="section"><h2>Content</h2><pre>' + esc(data.content) + '</pre></div>' +
-      (data.context ? '<div class="section"><h2>Context</h2><pre>' +
+      "<div class=\"section\"><h2><span data-i18n=\"Content\">Content</span></h2><pre>" + esc(data.content) + '</pre></div>' +
+      (data.context ? "<div class=\"section\"><h2><span data-i18n=\"Context\">Context</span></h2><pre>" +
         esc(data.context) + '</pre></div>' : "") +
-      (tags ? '<div class="section"><h2>Tags</h2>' + tags + '</div>' : "") +
-      '<div class="section"><h2>Related</h2><ul>' + related + '</ul></div>';
+      (tags ? "<div class=\"section\"><h2><span data-i18n=\"Tags\">Tags</span></h2>" + tags + '</div>' : "") +
+      "<div class=\"section\"><h2><span data-i18n=\"Related\">Related</span></h2><ul>" + related + '</ul></div>';
   })
   .catch(e => {
     document.getElementById("body").innerHTML =
-      '<div class="err">Fetch failed: ' + esc(e.message) + '</div>';
+      '<div class="err">' + esc(TAM_I18N.t('Fetch failed: ')) + esc(e.message) + '</div>';
   });
 </script>
 </body>
@@ -4286,11 +4284,12 @@ _SESSION_VIEW_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a href="/" class="back">← Dashboard</a>
-  <div id="body"><p style="color:#888">Loading session…</p></div>
+  <a href="/" class="back"><span data-i18n="← Dashboard">← Dashboard</span></a>
+  <div id="body"><p style="color:#888"><span data-i18n="Loading session…">Loading session…</span></p></div>
 </div>
 <script>
 const SID = "__SID__";
+document.title = TAM_I18N.t("Session {id} — total-agent-memory", {id: SID});
 function esc(s) {
   return String(s == null ? "" : s)
     .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -4300,7 +4299,7 @@ fetch("/api/session/" + encodeURIComponent(SID))
   .then(({ok, data}) => {
     const b = document.getElementById("body");
     if (!ok) {
-      b.innerHTML = '<div class="err">Error: ' + esc(data.message || data.error) + '</div>';
+      b.innerHTML = '<div class="err">' + esc(TAM_I18N.t('Error: ')) + esc(data.message || data.error) + '</div>';
       return;
     }
     const list = arr => (arr && arr.length)
@@ -4308,19 +4307,19 @@ fetch("/api/session/" + encodeURIComponent(SID))
       : '<p style="color:#666">–</p>';
     const know = (data.knowledge || []).map(k =>
       '<li><a class="k-link" href="/knowledge/' + k.id + '">#' + k.id + ' ' +
-      esc(k.type) + '</a> — ' + esc(k.title) + '</li>').join("")
-      || '<li style="color:#666">No knowledge linked</li>';
+      esc(TAM_I18N.t(k.type)) + '</a> — ' + esc(k.title) + '</li>').join("")
+      || "<li style=\"color:#666\"><span data-i18n=\"No knowledge linked\">No knowledge linked</span></li>";
     b.innerHTML =
-      '<h1>Session ' + esc(data.session_id) + '</h1>' +
-      '<div class="meta"><b>Created:</b> ' + esc(data.created_at || "–") + '</div>' +
-      '<div class="section"><h2>Summary</h2><pre>' + esc(data.summary || "") + '</pre></div>' +
-      '<div class="section"><h2>Next steps</h2>' + list(data.next_steps) + '</div>' +
-      '<div class="section"><h2>Pitfalls</h2>' + list(data.pitfalls) + '</div>' +
-      '<div class="section"><h2>Knowledge</h2><ul>' + know + '</ul></div>';
+      '<h1>' + esc(TAM_I18N.t('Session {id}', {id: data.session_id})) + '</h1>' +
+      "<div class=\"meta\"><b><span data-i18n=\"Created:\">Created:</span></b> " + esc(data.created_at || "–") + '</div>' +
+      "<div class=\"section\"><h2><span data-i18n=\"Summary\">Summary</span></h2><pre>" + esc(data.summary || "") + '</pre></div>' +
+      "<div class=\"section\"><h2><span data-i18n=\"Next steps\">Next steps</span></h2>" + list(data.next_steps) + '</div>' +
+      "<div class=\"section\"><h2><span data-i18n=\"Pitfalls\">Pitfalls</span></h2>" + list(data.pitfalls) + '</div>' +
+      "<div class=\"section\"><h2><span data-i18n=\"Knowledge\">Knowledge</span></h2><ul>" + know + '</ul></div>';
   })
   .catch(e => {
     document.getElementById("body").innerHTML =
-      '<div class="err">Fetch failed: ' + esc(e.message) + '</div>';
+      '<div class="err">' + esc(TAM_I18N.t('Fetch failed: ')) + esc(e.message) + '</div>';
   });
 </script>
 </body>
@@ -4355,6 +4354,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception:
                 # Marker left in place if import fails — harmless
                 pass
+        from dashboard_i18n import prepare_page
+        html = prepare_page(html)
         nonce = secrets.token_urlsafe(CSP_NONCE_BYTES)
         body = add_script_nonce(html, nonce).encode("utf-8")
         self.send_response(status)
