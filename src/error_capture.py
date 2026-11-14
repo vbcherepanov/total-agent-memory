@@ -135,9 +135,9 @@ class ErrorCapture:
         rule_marker = f"[pattern:{pattern}]"
         existing = cur.execute(
             """SELECT id FROM rules
-               WHERE context LIKE ? AND status = 'active'
+               WHERE context LIKE ? AND project = ? AND status = 'active'
                LIMIT 1""",
-            (f"%{rule_marker}%",),
+            (f"%{rule_marker}%", project),
         ).fetchone()
         if existing:
             return existing[0]
@@ -165,9 +165,9 @@ class ErrorCapture:
                 """INSERT INTO rules (session_id, content, context, category,
                                       scope, priority, project, tags, status,
                                       created_at, updated_at)
-                   VALUES ('auto_consolidate', ?, ?, ?, 'project', 7, ?, ?,
+                   VALUES ('auto_consolidate', ?, ?, ?, ?, 7, ?, ?,
                            'active', ?, ?)""",
-                (rule_content, rule_context, category, project,
+                (rule_content, rule_context, category, f"project:{project}", project,
                  json.dumps(["auto-consolidated", f"pattern:{pattern}"]),
                  now, now),
             )

@@ -153,6 +153,23 @@ def test_rules_context_without_query_keeps_shape(server_store):
     assert rule(store, rid)["shown_count"] == 1 and rule(store, rid)["fire_count"] == 0
 
 
+def test_rules_context_returns_auto_consolidated_rule_of_its_project(server_store):
+    server, _ = server_store
+    learned = {}
+    for project in ("projA", "projB"):
+        for attempt in range(3):
+            learned[project] = call(server, "learn_error", {
+                "file": "cmd/x/main.go", "error": f"dial tcp refused #{attempt}",
+                "root_cause": "service started before the database was ready",
+                "fix": "add a healthcheck", "pattern": "startup-order", "project": project,
+            })["rule_id"]
+    assert learned["projA"] != learned["projB"]
+    for project in ("projA", "projB"):
+        payload = call(server, "self_rules_context", {"project": project})
+        assert [r["id"] for r in payload["rules"]] == [learned[project]]
+        assert payload["rules"][0]["scope"] == f"project:{project}"
+
+
 def test_rules_context_with_query_surfaces_and_followed_roundtrip(server_store):
     server, store = server_store
     target = add_rule(store, "Every SQLite migration needs a PostgreSQL twin")
