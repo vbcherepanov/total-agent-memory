@@ -183,6 +183,19 @@ def test_project_scoped_consolidation(ec, ec_db):
     assert len(rules_b) == 0
 
 
+def test_same_pattern_in_two_projects_gets_a_rule_per_project(ec, ec_db):
+    for _ in range(3):
+        rule_a = ec.learn_error(**_sample(pattern="p1", project="projA"))["rule_id"]
+    for _ in range(3):
+        rule_b = ec.learn_error(**_sample(pattern="p1", project="projB"))["rule_id"]
+    assert rule_a is not None and rule_b is not None and rule_a != rule_b
+    scopes = {
+        r["id"]: r["scope"]
+        for r in ec_db.execute("SELECT id, scope FROM rules WHERE status = 'active'")
+    }
+    assert scopes == {rule_a: "project:projA", rule_b: "project:projB"}
+
+
 # ──────────────────────────────────────────────
 # Queries
 # ──────────────────────────────────────────────
