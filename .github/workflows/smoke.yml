@@ -35,6 +35,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       FASTEMBED_CACHE_PATH: ${{ github.workspace }}/.tam-models
+      TAM_INDEX_MEDIA_MODEL_CACHE: ${{ github.workspace }}/.tam-models/whisper
       TAM_MEMORY_DIR: ${{ github.workspace }}/.tam-test-memory
       MEMORY_LLM_ENABLED: 'false'
       MEMORY_MODE: fast
@@ -55,15 +56,52 @@ jobs:
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.FASTEMBED_CACHE_PATH }}
-          key: tam-minilm-v14-${{ runner.os }}-${{ runner.arch }}
+          key: tam-models-v15-${{ runner.os }}-${{ runner.arch }}
       - name: Install exact candidate wheel
         run: |
-          python -m pip install dist/*.whl pytest
+          for wheel in dist/*.whl; do
+            python -m pip install "${wheel}[media]" pytest
+          done
           python -m pip check
+      - name: Install OCR on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes tesseract-ocr tesseract-ocr-eng
+      - name: Install OCR on macOS
+        if: runner.os == 'macOS'
+        run: brew install tesseract
+      - name: Install OCR on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install tesseract --yes --no-progress
+          if ($LASTEXITCODE -notin @(0, 1641, 3010)) { exit $LASTEXITCODE }
+          $ocrPath = Join-Path $env:ProgramFiles 'Tesseract-OCR'
+          if (-not (Test-Path (Join-Path $ocrPath 'tesseract.exe'))) {
+            throw 'Tesseract installation did not produce tesseract.exe'
+          }
+          $ocrPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Installed package, local and remote MCP, scopes, restart and restore
         run: python tests/smoke/installed_runtime.py
       - name: Native server regressions
         run: python -m pytest tests/test_team_memory.py tests/test_team_lifecycle.py tests/test_team_worker_reuse.py tests/test_windows_installer_runtime.py tests/test_store_windows_encoding.py tests/test_cpu_budget.py tests/test_grounded_answer.py -q --junitxml=native-results.xml
+      - name: Recall concurrency, persistent watcher and real media regressions
+        env:
+          TAM_MEDIA_REQUIRED: '1'
+          TAM_MEDIA_REAL_ASR: '1'
+          TAM_INDEX_MEDIA_OCR_LANGUAGES: eng
+        run: |
+          tesseract --version
+          python -m pytest tests/test_store_owner.py tests/test_recall_staging.py tests/test_rerank_batch.py tests/test_rerank_cache.py tests/test_resource_watcher.py tests/test_resource_media.py -q --junitxml=native-v15-results.xml
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          cases = ET.parse('native-v15-results.xml').getroot().findall('.//testcase')
+          assert cases, 'Native v15 regression suite collected no tests'
+          incomplete = [case.attrib.get('name') for case in cases
+                        if any(case.find(tag) is not None for tag in ('skipped', 'failure', 'error'))]
+          assert not incomplete, f'Native v15 regressions must all execute and pass: {incomplete}'
+          PY
       - name: Full source installation on Unix
         if: runner.os != 'Windows'
         run: bash install.sh --ide cursor
@@ -92,7 +130,9 @@ jobs:
         if: always()
         with:
           name: native-${{ matrix.os }}-py${{ matrix.python }}
-          path: native-results.xml
+          path: |
+            native-results.xml
+            native-v15-results.xml
 
   compose:
     timeout-minutes: 30
@@ -100,10 +140,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build candidate image
-        run: docker build -t tam-compose-candidate:14.10.0 .
+        run: docker build -t tam-compose-candidate:15.0.0 .
       - name: Compose cold start, real MCP, restart and persistence
         env:
-          TAM_TEAM_IMAGE: tam-compose-candidate:14.10.0
+          TAM_TEAM_IMAGE: tam-compose-candidate:15.0.0
         run: bash tests/smoke/compose-candidate.sh
 
   browser:

@@ -82,7 +82,7 @@ def test_search_returns_multi_repr_hits_after_reflection(store, monkeypatch):
         embs = store.embed([text])
         return embs[0] if embs else []
 
-    agent = ReflectionAgent(store.db, embedder=store_embedder)
+    agent = ReflectionAgent(store.db, embedder=store_embedder, embed_identity=store.last_embed_identity)
     report = asyncio.run(agent.run_full())
     assert report["representations"]["processed"] >= 1
 

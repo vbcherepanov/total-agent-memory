@@ -142,3 +142,14 @@ class TestSolutionLookup:
 
     def test_quotes_in_concepts(self, engine):
         assert engine._solutions_matching(['auth"entic'], None) == []
+
+    @pytest.mark.parametrize('project,expected', [('api', {'api'}), (None, {'api', 'web'})])
+    def test_activated_solutions_respect_project(self, engine, db, project, expected):
+        from types import SimpleNamespace
+
+        ids = [row['id'] for row in db.execute("SELECT id FROM knowledge WHERE type='solution'")]
+        engine._activation = SimpleNamespace(get_activated_memories=lambda *_args, **_kwargs:
+                                             [(identity, 1.0) for identity in ids])
+        found = engine._find_solutions(['unmatchedconcept'], project, {'seed': 1.0})
+        assert {item['project'] for item in found} == expected
+        assert not any('retired' in item['content'] for item in found)

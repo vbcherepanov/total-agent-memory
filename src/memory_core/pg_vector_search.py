@@ -8,8 +8,8 @@ by Store._upsert_embedding) and ranks inside the database:
 
 * ``exact`` (default): an exact cosine scan of the rows in scope. Same similarity
   as SQLite's exact pass, and never worse than its binary-prefiltered pass.
-* ``hnsw``: approximate search through a partial HNSW index per dimension
-  (created on first use by tam_db.pg_schema.ensure_hnsw_index) with pgvector's
+* ``hnsw``: approximate search through a pre-provisioned partial HNSW index per dimension
+  (prepared by tam_db.pg_schema.ensure_hnsw_index) with pgvector's
   iterative scan, for workspaces too large for an exact scan.
 
 Scores are cosine similarities, ties broken by the lower knowledge id, like SQLite.
@@ -97,7 +97,6 @@ class PgVectorSearch:
             raise ValueError("HNSW ef_search must be a positive integer")
         self.group_cache: OrderedDict[str | None, tuple[tuple[str, str, int], ...]] = OrderedDict()
         self.revision: int | None = None
-        self.hnsw_ready: set[int] = set()
         self.hnsw_session = False
         self.lock = threading.RLock()
 
@@ -154,7 +153,10 @@ class PgVectorSearch:
         where, params = scope.sql()
         with self.lock, op_timer("vector_lookup_ms"):
             if self.index is VectorIndex.HNSW:
-                return self._search_hnsw(literal, scope.dimension, where, params, limit)
+                from tam_db.pg_schema import hnsw_index_ready
+                if hnsw_index_ready(self.db, scope.dimension):
+                    return self._search_hnsw(literal, scope.dimension, where, params, limit)
+                counters.bump('vector_hnsw_not_ready_fallbacks')
             counters.bump("vector_exact_searches")
             rows = self._native(
                 "SELECT e.knowledge_id, e.embedding <=> CAST(? AS vector) AS distance "
@@ -168,11 +170,6 @@ class PgVectorSearch:
 
     def _search_hnsw(self, literal: str, dimension: int, where: str, params: list, limit: int,
                      ) -> list[tuple[int, float]]:
-        from tam_db import pg_schema
-
-        if dimension not in self.hnsw_ready:
-            pg_schema.ensure_hnsw_index(self.db, dimension)
-            self.hnsw_ready.add(dimension)
         if not self.hnsw_session:
             self.db.execute("SELECT set_config('hnsw.iterative_scan', ?, false), "
                             "set_config('hnsw.ef_search', ?, false)",

@@ -1,9 +1,10 @@
-# What is new in 14.x
+# What is new in 14.x and 15.0
 
-Release summaries for the 14.x series, moved here from the README. The
+Release summaries for the 14.x series and 15.0, moved here from the README. The
 [CHANGELOG](../CHANGELOG.md) is the complete, authoritative record; this page
 keeps the measurements and usage notes that the summaries added.
 
+- [15.0.0](#version-1500--indexed-resources-warm-recall-checked-clients-snapshot-exports)
 - [14.9.0](#version-1490--memory-through-the-hooks-rules-that-are-measured-a-warm-daemon)
 - [14.8.0](#version-1480--every-recall-tier-measured-two-of-them-fixed)
 - [14.7.0](#version-1470--whole-records-fill-the-context-budget)
@@ -15,6 +16,27 @@ keeps the measurements and usage notes that the summaries added.
 - [14.2.0](#version-1420--facts-that-change-over-time)
 - [14.1.0](#version-1410--what-is-new)
 - [14.0.0](#version-1400--what-is-new)
+
+## Version 15.0.0 — indexed resources, warm recall, checked clients, snapshot exports
+
+**Release date: 2026-11-16.** Back up the database before upgrading: SQLite migrations 047–059 and
+PostgreSQL workspace migrations 0011–0022 run on first start (see [UPGRADE_15.md](UPGRADE_15.md)).
+The [CHANGELOG](../CHANGELOG.md) lists every change.
+
+| Change | How you use it |
+|---|---|
+| **Resource index** | `ingest_codebase` indexes a project root incrementally into separate tables: unchanged files are not reparsed, edits and deletions are reconciled, PDF, Office XML and archives are read locally, and `preview`, `search` and `status` actions inspect it. Search is lexical and separate from knowledge recall. Optional `[media]` adds OCR and audio transcription. |
+| **AST for PHP and Vue** | Functions, classes, interfaces, traits, enums and methods in PHP, and the scripts of Vue single-file components, keep their original line numbers. |
+| **Recall under load** | Personal tool calls run on one Store owner thread with a bounded queue, inference runs in a worker pool, and the cross-encoder batches by text length and caches scores. `MEMORY_CROSS_RERANK_BATCH_SIZE=0` and `MEMORY_CROSS_RERANK_CACHE_SCORES=0` restore the old behaviour. |
+| **Model identity** | Vectors from a different model, provider or pooling are never mixed in a search; legacy vectors are re-queued. On PostgreSQL, build the HNSW index with `scripts/prepare_vector_index.py`; until then searches are exact. |
+| **Clients that fail closed (#40)** | `tam-team` and the remote CLI check the server's advertised `capabilities` and refuse a flag an older server would ignore. |
+| **Exports you can verify (#41)** | `memory_export` writes a header, a state per entry and a footer with `complete`; import rejects truncated or duplicated files. |
+| **Incidents, similar records, `as_of` (#42–#44)** | Incidents carry `detection`, `affected` windows and `resolution`; `memory_save` returns `similar` and `revived`; `memory_recall(as_of=...)` chooses the snapshot first. |
+| **One team router (#45)** | Team MCP calls go through the REST router; `?readonly=1` removes write tools. |
+| **Quieter ambient recall (#47)** | Automation prompts get no recall and weak matches are dropped. |
+| **Review fixes (#54–#58)** | Cross-project leak in `expand_context`, tags lost on repeat save, `benchmark` and `memory_eval_locomo` on pip and Docker installs, container health, and six smaller API problems. Auto-consolidated rules now reach `self_rules_context`. |
+
+---
 
 ## Version 14.9.0 — memory through the hooks, rules that are measured, a warm daemon
 
@@ -141,7 +163,7 @@ stricter privacy.
 | **PostgreSQL backend** | `TAM_TEAM_DATABASE_URL` or **Settings → Database**; `tam-team db-migrate` moves an existing server. Same top 10 as SQLite on the parity benchmark, recall p50 485 vs 492 ms at 10k records ([E5](benchmarks/org-memory-v14-20260925/RESULTS.md#e5-postgresql-backend-1460)). |
 | **Continuous backup** | `TAM_TEAM_REPLICA_URL` turns on Litestream replication to S3-compatible storage or a directory; restore to any moment in the retention window. |
 | **Offboarding** | `tam-team user-disable` revokes every token and blocks sign-in without the user's token files; `user-export` and `user-purge` handle the personal area. Team and shared records keep their author. |
-| **Corrections rank above what they correct** | Automatic, in English and Russian, with or without the cross-encoder ("the stand-up moved to 9:30 on Mondays" now outranks the old time). |
+| **Corrections rank above what they correct** | Automatic, in English and Russian, with or without the cross-encoder. An explicit schedule correction such as "The stand-up is at 10:15 on Thursdays." → "The stand-up moved to 9:30 on Mondays." ranks first even when both the day and time change. Events and projects stay separate; negated, tentative and differently qualified schedules are not treated as corrections. Both records remain available, and historical questions retain the older-first ordering. |
 | **`memory_report`** | Activity report for a day, week, month or custom range, with record ids for every item. |
 | **Settings in the browser** | The local dashboard's **Settings** page sets the language model, embeddings, search-answer size and log retention. API keys are stored encrypted; the setup wizard no longer writes them into client configs ([LOCAL_SETTINGS.md](LOCAL_SETTINGS.md)). |
 | **Privacy** | Credentials are redacted from every write path, including the raw call log and the prompt hook. `tam redact-existing` cleans what older versions stored, and `memory_delete(hard=true)` erases a record with every copy of it. |
@@ -296,7 +318,7 @@ LongMemEval knowledge-update rose from 12/78 to 35/78, a Russian + English updat
 
 ## Version 14.0.0 — what is new
 
-**Release date: 2026-09-15 · Status: release candidate; registry publication pending.**
+**Release date: 2026-09-15.**
 At release time v14 was distributed as a prepared wheel and a source checkout. Later 14.x releases are published on PyPI; see [installation](installation.md).
 
 | Change | How you use it |

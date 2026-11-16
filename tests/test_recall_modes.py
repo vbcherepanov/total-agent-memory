@@ -57,6 +57,20 @@ def test_mode_index_returns_only_metadata():
     assert "session_id" not in entry and "tags" not in entry
 
 
+@pytest.mark.parametrize("compact", [False, True])
+def test_modes_preserve_type_from_group_without_mutating_input(compact):
+    from recall_modes import index_response, timeline_response
+
+    field = "title" if compact else "content"
+    original = {"id": 1, field: "Use ClickHouse for analytics", "score": 1.0}
+    raw = {"results": {"decision": [original]}}
+    indexed = index_response(raw)
+    timeline = timeline_response(raw, None, neighbors=0)
+    assert indexed["results"][0]["type"] == "decision"
+    assert timeline["results"][0]["type"] == "decision"
+    assert "type" not in original
+
+
 def test_mode_index_title_truncated_to_80():
     from recall_modes import index_response
 

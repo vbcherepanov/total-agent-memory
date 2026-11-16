@@ -211,7 +211,7 @@ def test_hook_request_validation():
 
 def test_compact_block_ranks_dedupes_and_respects_budget():
     result = {"results": {
-        "fact": [{"id": 1, "content": "low " * 50, "score": 0.1, "project": "p", "created_at": "2026-01-02T00:00Z"}],
+        "fact": [{"id": 1, "content": "low " * 50, "score": 0.3, "project": "p", "created_at": "2026-01-02T00:00Z"}],
         "decision": [{"id": 2, "content": "high\nscore   decision", "score": 0.9, "project": "p"}],
     }}
     req = hook_recall.parse_request(b'{"query": "q", "budget_chars": 200}')
@@ -408,14 +408,18 @@ def test_hook_recall_endpoint_shape(harness):
         second = client.post(url, headers=auth, json=body)
         bad = client.post(url, headers=auth, json={"query": ""})
         unknown = client.post(url, headers=auth, json={"query": "q", "nope": 1})
+        automation = client.post(url, headers=auth, json={
+            "query": "<task-notification><task-id>abc</task-id>credentials rotate</task-notification>"})
     assert first.status_code == 200
     data = first.json()
-    assert set(data) == {"ok", "text", "count", "ids", "skipped_seen", "truncated", "elapsed_ms"}
+    assert set(data) == {"ok", "text", "count", "ids", "skipped_seen", "truncated", "elapsed_ms", "dropped_floor"}
     assert data["ok"] and data["count"] == len(data["ids"]) >= 1
     assert "database credentials rotate every 30 days" in data["text"] and len(data["text"]) <= 500
     assert second.json()["count"] == 0 and second.json()["skipped_seen"] >= 1
     assert bad.status_code == 400 and bad.json()["ok"] is False
     assert unknown.status_code == 400 and "nope" in unknown.json()["error"]
+    assert automation.status_code == 200
+    assert automation.json()["count"] == 0 and automation.json()["text"] == ""
 
 
 # ── integration: proxy ────────────────────────────────────────────────
@@ -570,3 +574,53 @@ def test_register_shared_daemon_points_clients_at_proxy(tmp_path):
         assert Path(expected.args[0]) == ENTRY
     conflicting = ["--client", "cursor", "--shared-daemon", "--command", "x", "--memory-dir", str(memory)]
     assert register_main(conflicting, environ={}, host=host) == 64
+
+
+def test_ambient_relevance_floor_boundary_and_project_label(monkeypatch):
+    monkeypatch.setenv('TAM_HOOK_RECALL_MIN_SCORE', '0.2')
+    monkeypatch.setenv('TAM_HOOK_RECALL_CROSS_PROJECT_MIN_SCORE', '0.6')
+    req = hook_recall.parse_request(b'{"query":"ledger invoices", "project":"alpha"}')
+    result = {'results': {'fact': [
+        {'id': 1, 'project': 'alpha', 'content': 'Below floor', 'score': 0.199},
+        {'id': 2, 'project': 'alpha', 'content': 'At floor', 'score': 0.2},
+        {'id': 3, 'project': 'general', 'content': 'Below cross floor', 'score': 0.599},
+        {'id': 4, 'project': 'general', 'content': 'At cross floor', 'score': 0.6},
+        {'id': 5, 'project': 'alpha', 'content': 'Invalid score', 'score': float('nan')},
+    ]}}
+    block = hook_recall.compact_block(result, req)
+    assert block.ids == [4, 2]
+    assert block.dropped_floor == 3
+    assert '(project alpha)' not in block.text
+    assert '(fact #4, general)' in block.text
+
+
+def test_ambient_below_floor_returns_empty(monkeypatch):
+    monkeypatch.setenv('TAM_HOOK_RECALL_MIN_SCORE', '0.3')
+    req = hook_recall.parse_request(b'{"query":"ledger invoices"}')
+    block = hook_recall.compact_block({'results': {'fact': [{'id': 1, 'score': 0.2}]}}, req)
+    assert block.text == '' and block.ids == [] and block.dropped_floor == 1
+
+
+@pytest.mark.parametrize('raw', ['nan', 'inf', '-1', 'broken'])
+def test_invalid_floor_uses_safe_default(monkeypatch, raw):
+    monkeypatch.setenv('TAM_HOOK_RECALL_MIN_SCORE', raw)
+    req = hook_recall.parse_request(b'{"query":"ledger invoices"}')
+    block = hook_recall.compact_block({'results': {'fact': [{'id': 1, 'score': 0.1}]}}, req)
+    assert block.ids == [] and block.dropped_floor == 1
+
+
+def test_ambient_cross_project_records_name_their_own_project_and_header_claims_none(monkeypatch):
+    monkeypatch.setenv('TAM_HOOK_RECALL_MIN_SCORE', '0.2')
+    monkeypatch.setenv('TAM_HOOK_RECALL_CROSS_PROJECT_MIN_SCORE', '0.6')
+    req = hook_recall.parse_request(b'{"query":"ledger invoices", "project":"alpha"}')
+    own = 'Alpha ledger records are reconciled every night by the batch job.'
+    foreign = 'Beta invoices are exported to the accounting system weekly.'
+    result = {'results': {'fact': [
+        {'id': 1, 'project': 'alpha', 'content': own, 'score': 0.5},
+        {'id': 2, 'project': 'beta', 'content': foreign, 'score': 0.9},
+    ]}}
+    block = hook_recall.compact_block(result, req)
+    lines = {line.split(') ', 1)[1]: line for line in block.text.splitlines()[1:]}
+    assert '(fact #2, beta)' in lines[foreign]
+    assert '(fact #1, alpha)' in lines[own]
+    assert 'project alpha' not in block.text.splitlines()[0]

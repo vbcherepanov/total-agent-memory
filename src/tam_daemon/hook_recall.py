@@ -28,6 +28,7 @@ Response 200::
       "ids":          [integer], their memory ids, in rank order.
       "skipped_seen": integer, records dropped because this session_id
                       already received them.
+      "dropped_floor": integer, records below the relevance floor.
       "truncated":    boolean, true when the budget cut records or content.
       "elapsed_ms":   integer, server-side recall time.
     }
@@ -40,6 +41,10 @@ warming up past ``HOOK_READY_TIMEOUT_SEC``, 500 recall failed.
 from __future__ import annotations
 
 import json
+import logging
+import math
+import os
+import re
 import threading
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping
@@ -63,6 +68,39 @@ ELLIPSIS = "…"
 # A record is only worth including with at least this much of its content.
 MIN_CONTENT_CHARS = 40
 ALLOWED_KEYS = frozenset({"query", "project", "session_id", "budget_chars", "limit", "dedupe"})
+DEFAULT_MIN_SCORE = 0.2
+DEFAULT_CROSS_PROJECT_MIN_SCORE = 0.6
+AUTOMATION_BLOCK = re.compile(
+    r'<(task-notification|local-command-stdout|command-name)\b[^>]*>.*?(?:</\1\s*>|$)',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def user_prompt_text(prompt: str) -> str:
+    return AUTOMATION_BLOCK.sub(' ', prompt).strip()
+
+
+def _score_floor(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+        if math.isfinite(value) and value >= 0:
+            return value
+    except ValueError:
+        logging.getLogger(__name__).warning('Invalid recall score floor', extra={'setting': name})
+        return default
+    logging.getLogger(__name__).warning('Invalid recall score floor', extra={'setting': name})
+    return default
+
+
+def _score(record: Mapping[str, Any]) -> float:
+    try:
+        value = float(record.get('score') or 0)
+    except (ValueError, TypeError):
+        return -math.inf
+    return value if math.isfinite(value) else -math.inf
 
 
 class HookRequestError(ValueError):
@@ -125,7 +163,7 @@ def parse_request(body: bytes) -> HookRecallRequest:
     if not isinstance(dedupe, bool):
         raise HookRequestError("'dedupe' must be a boolean")
     return HookRecallRequest(
-        query=query.strip()[:MAX_QUERY_CHARS],
+        query=user_prompt_text(query)[:MAX_QUERY_CHARS],
         project=_optional_id(data, "project"),
         session_id=_optional_id(data, "session_id"),
         budget_chars=_bounded_int(data, "budget_chars", DEFAULT_BUDGET_CHARS, BUDGET_MIN, BUDGET_MAX),
@@ -170,6 +208,7 @@ class CompactBlock:
     ids: list[int]
     skipped_seen: int
     truncated: bool
+    dropped_floor: int = 0
 
 
 def ranked_records(recall_result: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -180,7 +219,7 @@ def ranked_records(recall_result: Mapping[str, Any]) -> list[dict[str, Any]]:
     records = [dict(item, type=item.get("type") or group)
                for group, items in groups.items() if isinstance(items, list)
                for item in items if isinstance(item, Mapping) and isinstance(item.get("id"), int)]
-    records.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    records.sort(key=_score, reverse=True)
     return records
 
 
@@ -205,11 +244,19 @@ def compact_block(recall_result: Mapping[str, Any], request: HookRecallRequest,
                   seen: frozenset[int] = frozenset()) -> CompactBlock:
     """Render memory_recall output as one prompt-ready block of at most `request.budget_chars`."""
     records = ranked_records(recall_result)
+    floor = _score_floor('TAM_HOOK_RECALL_MIN_SCORE', DEFAULT_MIN_SCORE)
+    cross_floor = max(floor, _score_floor('TAM_HOOK_RECALL_CROSS_PROJECT_MIN_SCORE',
+                                         DEFAULT_CROSS_PROJECT_MIN_SCORE))
+    eligible = [r for r in records if _score(r) >= (
+        cross_floor if request.project and r.get('project') != request.project else floor)]
+    dropped_floor = len(records) - len(eligible)
+    records = eligible
     fresh = [r for r in records if r["id"] not in seen] if request.dedupe else records
     skipped = len(records) - len(fresh)
+    fresh = fresh[:request.limit]
     if not fresh:
-        return CompactBlock("", [], skipped, False)
-    header = f"[TAM memory: records relevant to this prompt{f' (project {request.project})' if request.project else ''}]"
+        return CompactBlock("", [], skipped, False, dropped_floor)
+    header = "[TAM memory: records relevant to this prompt]"
     lines = [header]
     used = len(header)
     ids: list[int] = []
@@ -227,5 +274,5 @@ def compact_block(recall_result: Mapping[str, Any], request: HookRecallRequest,
         used += len(line) + 1
         ids.append(record["id"])
     if not ids:
-        return CompactBlock("", [], skipped, True)
-    return CompactBlock("\n".join(lines), ids, skipped, truncated)
+        return CompactBlock("", [], skipped, True, dropped_floor)
+    return CompactBlock("\n".join(lines), ids, skipped, truncated, dropped_floor)

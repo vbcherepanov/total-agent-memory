@@ -7,7 +7,7 @@ and language. Chunks are higher-quality than line-based splitting because
 each chunk is a coherent semantic unit.
 
 Supported languages: python, typescript, javascript, go, rust, cpp, java,
-ruby, csharp.
+ruby, csharp, php, vue.
 
 Fallback: if tree-sitter is unavailable or the language is unsupported, the
 file is returned as one whole-file chunk.
@@ -19,7 +19,9 @@ import os
 import sys
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, get_args
+
+from memory_core.telemetry import counters, op_timer
 
 LOG = lambda msg: sys.stderr.write(f"[ast-ingest] {msg}\n")
 
@@ -41,9 +43,15 @@ EXTENSION_LANG: dict[str, str] = {
     ".java": "java",
     ".rb": "ruby",
     ".cs": "csharp",
+    ".php": "php",
+    ".vue": "vue",
 }
 
-SUPPORTED_LANGUAGES = tuple(sorted(set(EXTENSION_LANG.values())))
+try:
+    from tree_sitter_language_pack import SupportedLanguage
+    SUPPORTED_LANGUAGES = tuple(sorted(set(EXTENSION_LANG.values()) | set(get_args(SupportedLanguage))))
+except ImportError:
+    SUPPORTED_LANGUAGES = tuple(sorted(set(EXTENSION_LANG.values())))
 
 
 # Node type → category (per language). We keep this intentionally broad.
@@ -106,7 +114,22 @@ CHUNK_NODE_TYPES: dict[str, dict[str, str]] = {
         "interface_declaration": "interface",
         "struct_declaration": "struct",
     },
+    "php": {
+        "function_definition": "function",
+        "method_declaration": "method",
+        "class_declaration": "class",
+        "interface_declaration": "interface",
+        "trait_declaration": "trait",
+        "enum_declaration": "enum",
+    },
 }
+
+VUE_SCRIPT_LANGUAGES = {
+    "js": "javascript", "javascript": "javascript", "jsx": "javascript",
+    "ts": "typescript", "typescript": "typescript", "tsx": "tsx",
+}
+SCRIPT_LANGUAGES = frozenset(VUE_SCRIPT_LANGUAGES.values())
+FUNCTION_VALUE_NODES = frozenset({"arrow_function", "function_expression", "generator_function"})
 
 
 @dataclass
@@ -134,7 +157,15 @@ class Chunk:
 
 def lang_for_path(path: str | os.PathLike) -> str | None:
     ext = Path(path).suffix.lower()
-    return EXTENSION_LANG.get(ext)
+    if ext in {".txt", ".log", ".csv", ".tsv"}:
+        return None
+    if ext in EXTENSION_LANG:
+        return EXTENSION_LANG[ext]
+    try:
+        from tree_sitter_language_pack import detect_language
+    except ImportError:
+        return None
+    return detect_language(str(path))
 
 
 # ──────────────────────────────────────────────
@@ -261,29 +292,81 @@ class ASTIngester:
             LOG(f"skipping file nested too deeply to parse: {p}")
             return []
 
+    @op_timer("ast_parse_source_ms")
     def parse_source(self, file: str, language: str, source: bytes) -> list[Chunk]:
         """Parse raw bytes of known `language`."""
-        if language not in CHUNK_NODE_TYPES:
-            return self._fallback_chunk(file, language, source)
-
+        counters.bump("ast_parse_source_calls")
         try:
             parser = _get_parser(language)
-        except RuntimeError as e:
+        except Exception as e:
             LOG(f"parser unavailable for {language}: {e}")
-            return self._fallback_chunk(file, language, source)
+            chunks = self._fallback_chunk(file, language, source)
+            for chunk in chunks:
+                chunk.extras["parse_status"] = "parser_unavailable"
+            return chunks
 
         tree = parser.parse(source)
         root = tree.root_node
-        node_types = CHUNK_NODE_TYPES[language]
-
-        chunks: list[Chunk] = []
-        self._walk(
-            root, source=source, file=file, language=language,
-            node_types=node_types, parent_name=None, out=chunks,
-        )
-
+        if language == "vue":
+            chunks = self._vue_chunks(file, source, root)
+        elif language not in CHUNK_NODE_TYPES:
+            chunks = []
+            for node in root.named_children:
+                if not source[node.start_byte:node.end_byte].strip():
+                    continue
+                chunk = self._make_chunk(node, source=source, file=file, language=language,
+                                         kind=node.type, parent_name=None)
+                chunk.extras["parse_status"] = "partial" if root.has_error else "parsed"
+                chunks.append(chunk)
+        else:
+            chunks = []
+            self._walk(
+                root, source=source, file=file, language=language,
+                node_types=CHUNK_NODE_TYPES[language], parent_name=None, out=chunks,
+            )
         if not chunks and self.fallback_to_file:
-            return self._fallback_chunk(file, language, source)
+            chunks = self._fallback_chunk(file, language, source)
+        for chunk in chunks:
+            if root.has_error:
+                chunk.extras["parse_status"] = "partial"
+            else:
+                chunk.extras.setdefault("parse_status", "parsed")
+        return chunks
+
+    def _vue_chunks(self, file: str, source: bytes, root) -> list[Chunk]:
+        name = Path(file).stem
+        chunks = [Chunk(
+            file=file, language="vue", kind="component", name=name,
+            signature=Path(file).name, content=source.decode("utf-8", errors="replace"),
+            docstring=None, start_line=1, end_line=source.count(b"\n") + 1 if source else 0,
+        )]
+        for element in root.named_children:
+            if element.type != "script_element":
+                continue
+            language = "javascript"
+            for tag in element.named_children:
+                if tag.type != "start_tag":
+                    continue
+                for attribute in tag.named_children:
+                    parts = attribute.named_children
+                    if attribute.type == "attribute" and len(parts) == 2:
+                        if _node_text(source, parts[0]).lower() == "lang":
+                            raw = _node_text(source, parts[1]).strip("\"'").strip().lower()
+                            language = VUE_SCRIPT_LANGUAGES.get(raw, raw)
+            for body in element.named_children:
+                if body.type != "raw_text":
+                    continue
+                content = source[body.start_byte:body.end_byte]
+                if not content.strip():
+                    continue
+                embedded = (self.parse_source(file, language, content) if language in SCRIPT_LANGUAGES
+                            else self._fallback_chunk(file, language, content))
+                for chunk in embedded:
+                    chunk.start_line += body.start_point[0]
+                    chunk.end_line += body.start_point[0]
+                    if chunk.parent is None:
+                        chunk.parent = name
+                chunks.extend(embedded)
         return chunks
 
     def parse_directory(
@@ -341,6 +424,10 @@ class ASTIngester:
         out: list[Chunk],
     ) -> None:
         kind = node_types.get(node.type)
+        if language in SCRIPT_LANGUAGES and node.type == "variable_declarator":
+            value = node.child_by_field_name("value")
+            if value is not None and value.type in FUNCTION_VALUE_NODES:
+                kind = "function"
         if kind is not None:
             chunk = self._make_chunk(
                 node, source=source, file=file, language=language,
@@ -349,7 +436,7 @@ class ASTIngester:
             if chunk is not None:
                 out.append(chunk)
                 # For classes/impls, recurse so methods are also captured
-                if kind in ("class", "interface", "impl", "struct", "module", "trait"):
+                if kind in ("class", "interface", "impl", "struct", "module", "trait", "enum"):
                     for child in node.children:
                         self._walk(
                             child, source=source, file=file, language=language,

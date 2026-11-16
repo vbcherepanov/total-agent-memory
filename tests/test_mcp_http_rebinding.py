@@ -101,15 +101,17 @@ def post_initialize(port: int, host: str | None, origin: str | None = None) -> t
 async def list_tools(url: str, token: str | None = None) -> list[str]:
     from mcp import ClientSession
 
-    client = httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"}) if token else None
+    client = httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"}, follow_redirects=True) if token else None
     async with streamable_http.streamable_http_client(url, http_client=client) as (read, write), \
             ClientSession(read, write) as session:
         await session.initialize()
         return [tool.name for tool in (await session.list_tools()).tools]
 
 
-def test_healthz_reports_only_status_and_version(loopback: int) -> None:
-    assert httpx.get(f"http://127.0.0.1:{loopback}/healthz", timeout=5).json() == {"status": "ok", "version": VERSION}
+def test_healthz_reports_status_version_and_capabilities(loopback: int) -> None:
+    from server_capabilities import PERSONAL_CAPABILITIES
+    assert httpx.get(f"http://127.0.0.1:{loopback}/healthz", timeout=5).json() == {
+        "status": "ok", "version": VERSION, "capabilities": list(PERSONAL_CAPABILITIES)}
 
 
 @pytest.mark.parametrize("host", ("127.0.0.1:{port}", "localhost:{port}", "127.0.0.1"))

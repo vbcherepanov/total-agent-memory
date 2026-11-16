@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+import sqlite3
 
 import pytest
 
@@ -239,3 +240,94 @@ def test_cached_results_are_private_copies(store):
     assert "injected" not in second
     third = recall.search("billing database", project="p", limit=5, record_usage=False)
     assert third == second and third is not second
+
+
+def test_telemetry_write_does_not_repeat_identical_encoder_work(store, monkeypatch):
+    from memory_core import cross_rerank
+    from tests.test_cross_rerank import KeywordEncoder, ready
+    from tool_telemetry import ToolTelemetry, sqlite_connector
+
+    encoder = KeywordEncoder()
+    reranker = ready(encoder)
+    store.db.execute("UPDATE knowledge SET content='billing database deploys use helm' WHERE id=2")
+    store.db.commit()
+    monkeypatch.setattr(cross_rerank, 'shared_reranker', lambda: reranker)
+    recall = server.Recall(store)
+    telemetry = ToolTelemetry(sqlite_connector(store.db_path), profile='test')
+    try:
+        first = recall.search('billing database', project='p', record_usage=False)
+        count = encoder.calls
+        assert count > 0
+        revision = recall._data_revision()
+        telemetry.record('memory_recall', duration_ms=1, ok=True, error_class=None, args_bytes=1, result_bytes=1)
+        telemetry.flush()
+        assert recall._data_revision() != revision
+        second = recall.search('billing database', project='p', record_usage=False)
+        assert second['results'] == first['results']
+        assert encoder.calls == count
+        store.db.execute("UPDATE knowledge SET content='billing database is sqlite' WHERE id=1")
+        store.db.commit()
+        recall.search('billing database', project='p', record_usage=False)
+        assert encoder.calls > count
+    finally:
+        telemetry.close()
+        recall.close()
+
+
+@pytest.mark.parametrize("external_write", [False, True])
+def test_busy_usage_connection_bypasses_cache_without_losing_verified_entries(store, monkeypatch, external_write):
+    recall = server.Recall(store)
+    hits = []
+    original_get = store.cache.get
+
+    def spy(key):
+        value = original_get(key)
+        hits.append(value is not None)
+        return value
+
+    monkeypatch.setattr(store.cache, "get", spy)
+    try:
+        recall.search("billing database", project="p", record_usage=False)
+        with recall.usage_buffer()._io_lock:
+            if external_write:
+                path = store.db.execute("PRAGMA database_list").fetchone()[2]
+                with sqlite3.connect(path) as writer:
+                    writer.execute("UPDATE knowledge SET status='archived' WHERE id=1")
+                writer.close()
+            recall.search("deploys helm", project="p", record_usage=False)
+            assert hits == [False], "an unknown revision must bypass cache reads"
+        result = recall.search("billing database", project="p", record_usage=False)
+        assert hits == [False, not external_write]
+        if external_write:
+            assert all(item["id"] != 1 for group in result["results"].values() for item in group)
+    finally:
+        recall.close()
+
+
+@pytest.mark.parametrize("commit", [False, True])
+def test_transaction_results_never_enter_recall_cache(store, monkeypatch, commit):
+    recall = server.Recall(store)
+    hits = []
+    original_get = store.cache.get
+
+    def spy(key):
+        value = original_get(key)
+        hits.append(value is not None)
+        return value
+
+    monkeypatch.setattr(store.cache, "get", spy)
+    try:
+        recall.search("billing database", project="p", record_usage=False)
+        store.db.execute("UPDATE knowledge SET status='archived' WHERE id=1")
+        recall.search("billing database", project="p", record_usage=False)
+        assert hits == [False]
+        if commit:
+            store.db.commit()
+        else:
+            store.db.rollback()
+        result = recall.search("billing database", project="p", record_usage=False)
+        assert hits == [False, False]
+        ids = {item["id"] for group in result["results"].values() for item in group}
+        assert (1 in ids) is not commit
+    finally:
+        recall.close()

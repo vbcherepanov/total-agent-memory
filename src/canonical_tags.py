@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -164,7 +165,7 @@ def _substring_match(tag: str, vocab: Vocabulary) -> str | None:
     return None
 
 
-def _levenshtein_ratio(a: str, b: str) -> float:
+def _levenshtein_ratio(a: str, b: str, *, max_distance: int | None = None) -> float:
     """Pure-Python ratio in [0,1]. We don't have python-Levenshtein in deps."""
     if not a or not b:
         return 0.0
@@ -174,6 +175,43 @@ def _levenshtein_ratio(a: str, b: str) -> float:
     if abs(m - n) / max(m, n) > 0.5:
         # Length too different — short-circuit cheap reject.
         return 0.0
+    if max_distance is not None:
+        if type(max_distance) is not int or max_distance < 0:
+            raise ValueError('max_distance must be a non-negative integer')
+        if abs(m - n) > max_distance:
+            return 0.0
+        denominator = max(m, n)
+        start = 0
+        while start < min(m, n) and a[start] == b[start]:
+            start += 1
+        a, b = a[start:], b[start:]
+        end = 0
+        while end < min(len(a), len(b)) and a[-end - 1] == b[-end - 1]:
+            end += 1
+        if end:
+            a, b = a[:-end], b[:-end]
+        m, n = len(a), len(b)
+        if not m or not n:
+            distance = max(m, n)
+            return 1.0 - distance / denominator if distance <= max_distance else 0.0
+        balance = Counter(a)
+        balance.subtract(b)
+        # One substitution changes two counts; insert/delete changes one and the length.
+        if sum(abs(count) for count in balance.values()) + abs(m - n) > 2 * max_distance:
+            return 0.0
+        unreachable = max_distance + 1
+        previous = {j: j for j in range(min(n, max_distance) + 1)}
+        for i in range(1, m + 1):
+            current = {0: i} if i <= max_distance else {}
+            for j in range(max(1, i - max_distance), min(n, i + max_distance) + 1):
+                current[j] = min(previous.get(j, unreachable) + 1,
+                                 current.get(j - 1, unreachable) + 1,
+                                 previous.get(j - 1, unreachable) + (a[i - 1] != b[j - 1]))
+            if min(current.values(), default=unreachable) > max_distance:
+                return 0.0
+            previous = current
+        distance = previous.get(n, unreachable)
+        return 1.0 - distance / denominator if distance <= max_distance else 0.0
     # Iterative DP — O(m*n) but tags are tiny.
     prev = list(range(n + 1))
     for i in range(1, m + 1):

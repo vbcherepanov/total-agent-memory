@@ -235,3 +235,13 @@ def test_graph_search_empty_when_no_match(gdb):
 
 def test_graph_search_no_entities():
     assert qr.graph_search(None, entities=[]) == []  # type: ignore[arg-type]
+
+
+def test_graph_search_intersects_entities_before_candidate_limit(gdb):
+    event = _seed_event(gdb, 1, "Bob maintains Postgres", ["Postgres", "Bob"])
+    assert event is not None
+    gdb.execute("UPDATE graph_nodes SET last_seen_at='2000-01-01T00:00:00Z' WHERE id=?", (event.node_id,))
+    for kid in range(2, 203):
+        _seed_event(gdb, kid, f"Postgres standalone event {kid}", ["Postgres"])
+    rows = qr.graph_search(gdb, entities=["Postgres", "Bob"], project="vito", limit=1)
+    assert [row["id"] for row in rows] == [1]

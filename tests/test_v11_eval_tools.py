@@ -132,25 +132,9 @@ REQUIRED_KEYS = {
 def test_memory_eval_locomo_returns_structured_payload(wired_server, tmp_path):
     """memory_eval_locomo must return every required key with the right type
     even when the scenario suite is small."""
-    # Build a tiny scenario file so the eval is fast and deterministic.
+    from tests.test_locomo_dataset import sample
     scen = tmp_path / "tiny.json"
-    scen.write_text(json.dumps([
-        {
-            "name": "tiny_recall",
-            "type": "recall",
-            "query": "tachyon-eval marker zzqq",
-            "project": "memory_eval_test",
-            "must_contain": ["tachyon-eval"],
-            "k": 5,
-        },
-    ]), encoding="utf-8")
-
-    # Seed the store so the scenario can pass.
-    wired_server.store.save_knowledge(
-        sid="s1",
-        content="record with tachyon-eval marker zzqq for retrieval",
-        ktype="fact", project="memory_eval_test",
-    )
+    scen.write_text(json.dumps([sample()]), encoding="utf-8")
 
     payload = _call(wired_server, "memory_eval_locomo", {
         "limit": 2,
@@ -270,3 +254,15 @@ def test_eval_entity_consistency_is_stable(wired_server):
     assert payload["scenarios_passed"] == 3, payload
     assert payload["llm_calls_during_eval"] == 0
     assert payload["network_calls_during_eval"] == 0
+
+
+def test_locomo_without_dataset_reports_error(wired_server):
+    result = _call(wired_server, 'memory_eval_locomo', {'limit': 1})
+    assert result['status'] == 'error' and 'dataset_path' in result['reason']
+
+
+def test_default_benchmark_does_not_require_owner_records(wired_server):
+    before = wired_server.store.db.execute('SELECT COUNT(*) FROM knowledge').fetchone()[0]
+    result = _call(wired_server, 'benchmark', {})
+    assert result['total'] == result['passed'] == 5, result
+    assert wired_server.store.db.execute('SELECT COUNT(*) FROM knowledge').fetchone()[0] == before

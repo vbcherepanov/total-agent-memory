@@ -25,6 +25,8 @@ from unittest.mock import patch
 
 import pytest
 
+from memory_core.embedding_identity import EmbedIdentity
+
 
 # ─────────────────────────── fixtures ───────────────────────────
 
@@ -105,7 +107,7 @@ def test_flag_off_matches_v8_behavior(flag_off, mrs_db):
     k1, k2, k3 = _seed_rich(mrs_db)
     q_emb = _det_emb("alpha summary phrase")
 
-    result = search(mrs_db, q_emb, top_n=5)
+    result = search(mrs_db, q_emb, top_n=5, query_identity=EmbedIdentity("fake", "declared"))
     assert result, "expected at least one hit"
     # k1 has the matching 'alpha' representation on all 4 tiers -> top rank.
     assert result[0][0] == k1
@@ -119,9 +121,9 @@ def test_flag_on_returns_same_result_set_as_flag_off(mrs_db):
     q_emb = _det_emb("alpha summary phrase")
 
     with patch.dict(os.environ, {"V9_PARALLEL_RETRIEVAL": "0"}):
-        seq = search(mrs_db, q_emb, top_n=10)
+        seq = search(mrs_db, q_emb, top_n=10, query_identity=EmbedIdentity("fake", "declared"))
     with patch.dict(os.environ, {"V9_PARALLEL_RETRIEVAL": "1"}):
-        par = search(mrs_db, q_emb, top_n=10)
+        par = search(mrs_db, q_emb, top_n=10, query_identity=EmbedIdentity("fake", "declared"))
 
     # RRF fuse is deterministic given identical per-repr ranked lists, so the
     # ids AND fused scores should match exactly.
@@ -150,7 +152,7 @@ def test_flag_on_single_tier_failure_survives(flag_on, mrs_db):
         return real_score(rows, query_embedding, top_n)
 
     with patch.object(mrs_mod, "_score_rows", side_effect=flaky):
-        result = search(mrs_db, q_emb, top_n=5)
+        result = search(mrs_db, q_emb, top_n=5, query_identity=EmbedIdentity("fake", "declared"))
 
     # Three healthy tiers out of four — result must not be empty.
     assert result, "result should not be empty when only one tier fails"
@@ -174,7 +176,7 @@ def test_flag_on_multiple_tier_failures_no_crash(flag_on, mrs_db):
         return real_score(rows, query_embedding, top_n)
 
     with patch.object(mrs_mod, "_score_rows", side_effect=flakier):
-        result = search(mrs_db, q_emb, top_n=5)
+        result = search(mrs_db, q_emb, top_n=5, query_identity=EmbedIdentity("fake", "declared"))
 
     # Two healthy tiers still alive -> must yield something.
     assert result, "remaining tiers should still return results"
@@ -212,7 +214,7 @@ def test_flag_on_parallel_is_faster_than_sequential(mrs_db):
         state.update(active=0, peak=0)
         with patch.dict(os.environ, {"V9_PARALLEL_RETRIEVAL": flag}):
             with patch.object(mrs_mod, "_score_rows", side_effect=slow_score):
-                assert search(mrs_db, q_emb, top_n=5)
+                assert search(mrs_db, q_emb, top_n=5, query_identity=EmbedIdentity("fake", "declared"))
         return state["peak"]
 
     assert peak_concurrency("0") == 1, "flag off must score one representation at a time"
@@ -224,7 +226,7 @@ def test_flag_on_empty_corpus_returns_empty(flag_on, mrs_db):
     from multi_repr_search import search
 
     q_emb = _det_emb("anything")
-    assert search(mrs_db, q_emb, top_n=5) == []
+    assert search(mrs_db, q_emb, top_n=5, query_identity=EmbedIdentity("fake", "declared")) == []
 
 
 def test_flag_on_respects_top_n(flag_on, mrs_db):
@@ -240,7 +242,7 @@ def test_flag_on_respects_top_n(flag_on, mrs_db):
         ids.append(k)
 
     q_emb = _det_emb("alpha phrase")
-    result = search(mrs_db, q_emb, top_n=2)
+    result = search(mrs_db, q_emb, top_n=2, query_identity=EmbedIdentity("fake", "declared"))
     assert len(result) <= 2
 
 
@@ -255,7 +257,7 @@ def test_flag_on_works_from_running_event_loop(flag_on, mrs_db):
         # Call the sync `search()` from inside a running loop. The internal
         # _run_coroutine helper must detect the running loop and bounce to a
         # worker-thread loop instead of raising RuntimeError.
-        return search(mrs_db, q_emb, top_n=5)
+        return search(mrs_db, q_emb, top_n=5, query_identity=EmbedIdentity("fake", "declared"))
 
     result = asyncio.run(caller())
     assert result, "search() must work from inside a running event loop"

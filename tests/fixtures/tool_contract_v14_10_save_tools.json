@@ -1,0 +1,208 @@
+{
+  "memory_save": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "agent_id": {
+          "description": "Optional Claude Code subagent ID (x-claude-code-agent-id header / OTEL agent_id attribute, v2.1.139+). Lets recall trace which subagent produced this knowledge.",
+          "type": "string"
+        },
+        "branch": {
+          "description": "Git branch this knowledge relates to",
+          "type": "string"
+        },
+        "content": {
+          "description": "The knowledge to save",
+          "type": "string"
+        },
+        "context": {
+          "description": "Additional context, WHY for decisions",
+          "type": "string"
+        },
+        "coref": {
+          "description": "Opt into v10 coreference rewrite — expand pronouns ('after this it broke') into self-contained text using recent session history. Costs ~1s LLM round-trip; default off.",
+          "type": "boolean"
+        },
+        "filter": {
+          "description": "Optional content filter (pytest|cargo|git_status|docker_ps|generic_logs). Trims noisy CLI output while preserving URLs/paths/code.",
+          "type": "string"
+        },
+        "importance": {
+          "default": "medium",
+          "description": "Recall-time boost: critical x1.5, high x1.2, medium x1.0, low x0.8. Reserve `critical` for migration-blocking decisions and security incidents.",
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ],
+          "type": "string"
+        },
+        "parent_agent_id": {
+          "description": "Optional parent agent ID (the dispatching Agent tool / parent span). Together with agent_id forms the subagent lineage tree.",
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "source_format": {
+          "default": "auto",
+          "description": "Conversation preserves dialogue structure and bypasses automatic CLI filters.",
+          "enum": [
+            "auto",
+            "conversation"
+          ],
+          "type": "string"
+        },
+        "supersede": {
+          "default": false,
+          "description": "Retire active records of the same project and type that this one gives a new value for: same opening words, different trailing value (\"X's citizenship is Argentina\" -> \"... is Armenia\"). Use for single-valued facts only; \"likes jazz\" would retire \"likes rock\". The retired ids are returned as `superseded`.",
+          "type": "boolean"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "decision",
+            "fact",
+            "solution",
+            "lesson",
+            "convention"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_save_fast": {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "agent_id": {
+          "description": "Optional Claude Code subagent ID (v2.1.139+)",
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "filter": {
+          "type": "string"
+        },
+        "importance": {
+          "default": "medium",
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ],
+          "type": "string"
+        },
+        "parent_agent_id": {
+          "description": "Optional parent agent ID (the dispatching span)",
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "type": "string"
+        },
+        "source_format": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "conversation"
+          ],
+          "type": "string"
+        },
+        "supersede": {
+          "default": false,
+          "description": "Same as memory_save.supersede: retire records this one gives a new value for.",
+          "type": "boolean"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "decision",
+            "fact",
+            "solution",
+            "lesson",
+            "convention"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "content",
+        "type"
+      ],
+      "type": "object"
+    }
+  },
+  "memory_update": {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "inputSchema": {
+      "properties": {
+        "find": {
+          "description": "Search query to find the old knowledge (when no id)",
+          "type": "string"
+        },
+        "id": {
+          "description": "Exact record to replace; takes precedence over find",
+          "type": "integer"
+        },
+        "new_content": {
+          "description": "New content to replace with",
+          "type": "string"
+        },
+        "project": {
+          "description": "Limit the find search to this project",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why updating",
+          "type": "string"
+        }
+      },
+      "required": [
+        "new_content"
+      ],
+      "type": "object"
+    }
+  }
+}

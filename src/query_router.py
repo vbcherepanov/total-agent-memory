@@ -32,6 +32,8 @@ import sys
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from memory_core.retrieval import SearchScope, fetch_active_records
+
 LOG = lambda msg: sys.stderr.write(f"[query-router] {msg}\n")
 
 
@@ -225,6 +227,7 @@ def graph_search(
     entities: list[str],
     project: str | None = None,
     limit: int = 10,
+    scope: SearchScope | None = None,
 ) -> list[dict]:
     """Walk the graph for the given entity names and return knowledge
     rows referenced by their Events. Newest-first.
@@ -237,16 +240,17 @@ def graph_search(
     """
     if not entities:
         return []
+    scope = scope or SearchScope(project=project)
     try:
         import episodic as _ep
         if len(entities) >= 2:
             hits = _ep.find_co_mentioned_events(
                 db, entity_a=entities[0], entity_b=entities[1],
-                project=project, limit=limit,
+                project=project, limit=limit, scope=scope,
             )
         else:
             hits = _ep.find_events_for_entity(
-                db, entity_name=entities[0], project=project, limit=limit,
+                db, entity_name=entities[0], project=project, limit=limit, scope=scope,
             )
     except Exception as exc:
         LOG(f"graph_search failed: {exc}")
@@ -256,29 +260,19 @@ def graph_search(
     if not knowledge_ids:
         return []
 
-    placeholders = ",".join("?" * len(knowledge_ids))
     try:
-        rows = db.execute(
-            f"""SELECT id, type, content, project, tags, status, created_at,
-                       last_confirmed, recall_count
-                  FROM knowledge
-                 WHERE id IN ({placeholders}) AND status = 'active'""",
-            knowledge_ids,
-        ).fetchall()
+        by_id = fetch_active_records(db, knowledge_ids, scope=scope)
     except Exception as exc:
         LOG(f"graph_search knowledge fetch failed: {exc}")
         return []
 
     # Preserve newest-first ordering from the graph hits.
-    by_id = {r["id"] if hasattr(r, "keys") else r[0]: r for r in rows}
     out: list[dict] = []
     for h in hits:
         row = by_id.get(h.knowledge_id)
         if row is None:
             continue
-        d = dict(row) if hasattr(row, "keys") else dict(zip(
-            ("id", "type", "content", "project", "tags", "status",
-             "created_at", "last_confirmed", "recall_count"), row))
+        d = dict(row)
         d["_via"] = "graph_router"
         d["_event_node_id"] = h.event_node_id
         out.append(d)

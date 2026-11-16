@@ -41,8 +41,8 @@ PS7_ONLY = {
         r"""Join-Path\s+(?:\([^()]*\)|[^\s()]+)\s+(?!-)(?:"[^"]*"|'[^']*'|[^\s()|;]+)\s+(?:["'$]|[A-Za-z])"""),
 }
 # Every .ps1 the project ships, not only the ones exercised below.
-SHIPPED = sorted(path for path in ROOT.rglob("*.ps1")
-                 if not {".venv", ".claude", "node_modules"} & set(path.relative_to(ROOT).parts))
+SHIPPED = sorted([*ROOT.glob("*.ps1"), *(path for directory in ("hooks", "scripts", "tests")
+                                     for path in (ROOT / directory).rglob("*.ps1"))])
 
 
 def _code_lines(path: Path) -> list[tuple[int, str]]:

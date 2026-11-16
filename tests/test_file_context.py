@@ -249,3 +249,38 @@ def test_no_errors_table_does_not_crash():
     result = g.get_file_warnings("any.py")
     assert result["warnings"] == []
     conn.close()
+
+
+@pytest.mark.parametrize("source", ["knowledge", "errors", "rules"])
+def test_old_file_match_survives_more_recent_unrelated_rows(fcdb, guard, source):
+    path = "USA/tools/metrics/collect.py"
+    if source == "knowledge":
+        _add_knowledge(fcdb, content="Decision for " + path, type="decision", project="USA")
+        for _ in range(25):
+            _add_knowledge(fcdb, content="Unrelated decision", project="USA")
+        fcdb.execute("UPDATE knowledge SET confidence=0.1 WHERE id=1")
+    elif source == "errors":
+        _add_error(fcdb, desc="Failure in " + path, project="USA")
+        for _ in range(25):
+            _add_error(fcdb, desc="Unrelated failure", project="USA")
+        fcdb.execute("UPDATE errors SET created_at='2000-01-01' WHERE id=1")
+    else:
+        _add_rule(fcdb, content="Check " + path)
+        for _ in range(25):
+            _add_rule(fcdb, content="Unrelated rule")
+        fcdb.execute("UPDATE rules SET priority=0 WHERE id=1")
+    result = guard.get_file_warnings(path, project="USA", limit=1)
+    if source == "rules":
+        assert [row["rule_id"] for row in result["related_rules"]] == [1]
+    else:
+        assert len(result["warnings"]) == 1
+        assert result["warnings"][0]["source"] == ("error" if source == "errors" else source)
+        assert result["risk_score"] > 0
+
+
+@pytest.mark.parametrize("path", ["src/сборщик.py", "src/a_b%!.py", "src/collect.py"])
+def test_file_candidates_keep_json_tags_and_project_scope(fcdb, guard, path):
+    _add_knowledge(fcdb, content="Relevant decision", tags=[path], project="USA")
+    _add_knowledge(fcdb, content="Foreign decision", tags=[path], project="other")
+    result = guard.get_file_warnings(path, project="USA", limit=1)
+    assert [row["knowledge_id"] for row in result["warnings"]] == [1]

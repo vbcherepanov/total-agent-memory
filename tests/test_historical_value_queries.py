@@ -181,3 +181,62 @@ def test_search_orders_values_by_question(store, query, first):
     assert len(contents) == 2
     assert contents[0].endswith(first)
     assert result["_explain"]["historical_query"] is (first == "MySQL")
+
+
+@pytest.mark.parametrize("limit", [1, 2])
+@pytest.mark.parametrize("historical", [False, True])
+def test_explicit_rerank_preserves_value_policy_before_limit(store, monkeypatch, limit, historical):
+    monkeypatch.setattr(server, "HAS_RERANKER", True)
+    monkeypatch.setenv("MEMORY_BOUNDED_RERANK", "false")
+    preferred = "PostgreSQL" if historical else "MySQL"
+
+    def biased_rerank(query, ranked, top_k):
+        return sorted(ranked, key=lambda item: preferred not in item["r"]["content"])[:top_k]
+
+    monkeypatch.setattr(server, "rerank_results", biased_rerank, raising=False)
+    query = "What was the database of the billing service before?" if historical else (
+        "What is the database of the billing service?")
+    recall = server.Recall(store)
+    try:
+        result = recall.search(query, project="infra", limit=limit, rerank=True, record_usage=False)
+    finally:
+        recall.close()
+    assert _contents(result)[0].endswith("MySQL" if historical else "PostgreSQL")
+
+
+@pytest.mark.parametrize("cross_encoder", [False, True])
+def test_personal_value_order_does_not_cross_projects(store, monkeypatch, cross_encoder):
+    store.db.execute("UPDATE knowledge SET project='another-project' WHERE content LIKE '%PostgreSQL'")
+    store.db.commit()
+    if cross_encoder:
+        from tests.test_cross_rerank import WorldKnowledgeEncoder, ready
+        monkeypatch.setattr(cross_rerank, "shared_reranker",
+                            lambda: ready(WorldKnowledgeEncoder(("MySQL",)), weight=4.0))
+    recall = server.Recall(store)
+    try:
+        result = recall.search("What is the MySQL database of the billing service?", limit=2,
+                               record_usage=False)
+    finally:
+        recall.close()
+    assert len(_contents(result)) == 2
+    assert _contents(result)[0].endswith("MySQL")
+
+
+def test_diversity_cannot_reverse_historical_values(store, monkeypatch):
+    monkeypatch.setattr(server, "HAS_RERANKER", True)
+    monkeypatch.setattr(store, "embed", lambda texts: [[1.0, 0.0] for _ in texts])
+    calls = []
+
+    def reverse_values(ranked, embeddings, top_k):
+        calls.append(len(embeddings))
+        return list(reversed(ranked))[:top_k]
+
+    monkeypatch.setattr(server, "mmr_diversify", reverse_values, raising=False)
+    recall = server.Recall(store)
+    try:
+        result = recall.search("What was the database of the billing service before?", project="infra",
+                               limit=2, diverse=True, record_usage=False)
+    finally:
+        recall.close()
+    assert calls == [2]
+    assert _contents(result)[0].endswith("MySQL")

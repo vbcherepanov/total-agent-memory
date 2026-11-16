@@ -11,6 +11,9 @@ dispatches to `run_quick`/`run_full`/`run_weekly` based on scope.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+from memory_core.embedding_identity import EmbedIdentity
 from reflection.agent import ReflectionAgent  # noqa: F401  (re-export)
 
 
@@ -18,13 +21,14 @@ async def run_full(
     db,
     *,
     embedder=None,
+    embed_identity: Callable[[], EmbedIdentity | None] | None = None,
 ):
     """Convenience wrapper: build a ReflectionAgent and call `run_full`.
 
     Mirrors `ReflectionAgent(db, embedder).run_full()` so callers that
     only need a one-shot full pass can do a single import.
     """
-    return await ReflectionAgent(db, embedder=embedder).run_full()
+    return await ReflectionAgent(db, embedder=embedder, embed_identity=embed_identity).run_full()
 
 
 __all__ = ["ReflectionAgent", "run_full"]

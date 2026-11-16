@@ -477,6 +477,25 @@ def test_ingest_codebase_accepts_a_listed_root(live, monkeypatch, tmp_path_facto
     assert not is_error and "total_chunks" in result
 
 
+def test_ingest_php_vue_reports_symbols_without_storing_knowledge(live, monkeypatch, tmp_path_factory):
+    server, store, _ = live
+    root = tmp_path_factory.mktemp("php-vue")
+    (root / "Invoice.php").write_text("<?php function total() { return 42; }", encoding="utf-8")
+    (root / "Invoice.vue").write_text('<script setup lang="ts">const submit = () => 42;</script>', encoding="utf-8")
+    monkeypatch.setenv(server.ALLOWED_ROOTS_ENV, str(root))
+    before = store.db.execute("SELECT count(*) FROM knowledge").fetchone()[0]
+    result, is_error = call(server, "ingest_codebase", path=str(root), sample_limit=10)
+    assert not is_error
+    assert result["persisted"] and result["total_files"] == 2
+    assert {(item["name"], item["language"]) for item in result["sample"]
+            if item["kind"] not in {"metadata", "text"}} == {
+        ("total", "php"), ("Invoice", "vue"), ("submit", "typescript")}
+    assert store.db.execute("SELECT count(*) FROM knowledge").fetchone()[0] == before
+    assert store.db.execute("SELECT count(*) FROM resource_files").fetchone()[0] == 2
+    found, error = call(server, "ingest_codebase", path=str(root), action="search", query="submit")
+    assert not error and found["count"] > 0
+
+
 def test_benchmark_scenarios_path_is_restricted(live):
     server, _, _ = live
     _, is_error = call(server, "benchmark", scenarios_path="/etc/passwd")
@@ -575,14 +594,20 @@ def test_ingest_codebase_sample_is_redacted(live, monkeypatch, tmp_path_factory)
 # ── cognitive additional_solutions honour the recall noise filter ────────────
 
 def test_cognitive_additional_solutions_skip_excluded_tags(live, monkeypatch):
-    server, _, _ = live
+    server, store, _ = live
     solutions = [
         {"id": 9001, "content": "noise", "tags": '["recovery"]'},
         {"id": 9002, "content": "kept", "tags": '["disaster-recovery"]'},
     ]
+    for solution in solutions:
+        store.db.execute(
+            "INSERT INTO knowledge(id,session_id,type,content,project,tags,status,created_at) VALUES (?,?,'solution',?,'p',?,'active',?)",
+            (solution["id"], server.SID, solution["content"], solution["tags"], server.utc_now()))
+    store.db.commit()
+    solutions.append({"id": 99999, "content": "missing record", "tags": '[]'})
 
     class FakeEngine:
-        def on_query(self, query, project):
+        def on_query(self, query, project, *, scope=None):
             return {"available_solutions": solutions}
 
     monkeypatch.setattr(server, "_get_v5", lambda name, db: FakeEngine())
@@ -590,3 +615,25 @@ def test_cognitive_additional_solutions_skip_excluded_tags(live, monkeypatch):
     out, _ = call(server, "memory_recall", query="nginx workers alpha-4", project="p")
     ids = [s["id"] for s in out.get("cognitive", {}).get("additional_solutions", [])]
     assert ids == [9002]
+
+
+def test_resource_index_mcp_actions_and_scope(live, monkeypatch, tmp_path_factory):
+    server, store, _ = live
+    root = tmp_path_factory.mktemp('universal-index')
+    (root / 'notes.new_format').write_text('UniversalResourceNeedle', encoding='utf-8')
+    monkeypatch.setenv(server.ALLOWED_ROOTS_ENV, str(root))
+    preview, error = call(server, 'ingest_codebase', path=str(root), action='preview', project='alpha')
+    assert not error and not preview['persisted']
+    assert store.db.execute('SELECT COUNT(*) FROM resource_roots').fetchone()[0] == 0
+    result, error = call(server, 'ingest_codebase', path=str(root), project='alpha')
+    assert not error and result['persisted']
+    result, error = call(server, 'ingest_codebase', path=str(root), action='search',
+                         query='UniversalResourceNeedle', project='alpha')
+    assert not error and result['count'] > 0
+    result, error = call(server, 'ingest_codebase', path=str(root), action='search',
+                         query='UniversalResourceNeedle', project='beta')
+    assert not error and result['count'] == 0
+    result, error = call(server, 'ingest_codebase', path=str(root), action='status', project='alpha')
+    assert not error and result['total_files'] == 1
+    _, error = call(server, 'ingest_codebase', path=str(root), action='search', limit=-1)
+    assert error

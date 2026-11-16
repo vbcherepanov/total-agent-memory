@@ -1088,3 +1088,43 @@ def test_prompt_hook_drafts_a_correction_in_docker(mem, tmp_path):
     off = {**other, "session_id": "C3", "cwd": "/w/third", "prompt": "how many times: rebase before merge"}
     assert run_hook("user-prompt-submit.sh", off, {**docker_env, "TAM_CORRECTION_CAPTURE": "false"}).returncode == 0
     assert [row[6] for row in drafts(mem)] == ["other"]
+
+
+@pytest.mark.parametrize('wrapper', ['task-notification', 'local-command-stdout', 'command-name'])
+def test_automation_prompt_does_not_recall(mem, wrapper):
+    prompt = f'<{wrapper}><task-id>abc</task-id><summary>Deploy pipeline finished</summary></{wrapper}>'
+    add_record(mem, 'Deploy pipeline finished with canary checks')
+    result = build(mem, prompt, warm=lambda *args: pytest.fail('automation must not call daemon'))
+    assert result.text == '' and result.record_ids == ()
+
+
+def test_mixed_automation_passes_only_user_text(mem):
+    calls = []
+    def warm(body, timeout):
+        calls.append(body['query'])
+        return {'ok': True, 'text': '', 'ids': []}
+    build(mem, '<task-notification>Deploy pipeline finished</task-notification> Explain database rotation', warm=warm)
+    assert calls == ['Explain database rotation']
+
+
+def test_cold_floor_drops_unrelated_general_records(mem, monkeypatch):
+    monkeypatch.setenv('TAM_HOOK_RECALL_MIN_SCORE', '0.2')
+    monkeypatch.setenv('TAM_HOOK_RECALL_CROSS_PROJECT_MIN_SCORE', '0.6')
+    wanted = add_record(mem, 'ledger invoice payroll reconciliation', project='general')
+    for content in ('ledger book excerpts', 'invoice book excerpts', 'payroll book excerpts'):
+        add_record(mem, content, project='general')
+    result = build(mem, 'ledger invoice payroll')
+    assert result.record_ids == (wanted,)
+    assert result.dropped_floor == 3
+    assert 'general' in result.text and '(project proj)' not in result.text
+
+
+def test_ambient_log_reports_floor_drops(mem, monkeypatch):
+    from ambient import hooks
+    events = []
+    monkeypatch.setattr(hooks, 'log_event', lambda event, **fields: events.append((event, fields)))
+    monkeypatch.setattr(prompt_context, 'daemon_recall', lambda memory_dir: lambda *args: {
+        'ok': True, 'text': '', 'ids': [], 'dropped_floor': 7})
+    hooks.prompt_context(hooks.HookCall({'prompt': 'explain ledger invoice payroll'}, 'proj', 'S1'), mem)
+    event, fields = events[-1]
+    assert event == 'ambient_prompt_context' and fields['dropped_floor'] == 7

@@ -13,7 +13,9 @@ import sqlite3
 import sys
 import tempfile
 from datetime import UTC, datetime
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 from secret_redaction import redact_secrets, redact_value
 
@@ -29,6 +31,33 @@ CHROMA_TABLES = frozenset(("embeddings_queue", "embedding_metadata", "embedding_
 
 class _Text(bytes):
     """TEXT cells arrive as raw bytes: older rows hold invalid UTF-8 that a str factory refuses."""
+
+
+SqlValue = str | bytes | int | float | None
+
+
+@dataclass(frozen=True)
+class RowChange:
+    key_columns: tuple[str, ...]
+    key_values: tuple[SqlValue, ...]
+    changes: dict[str, bytes]
+
+
+def _identifier(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _key_columns(db: sqlite3.Connection, table: str) -> tuple[str, ...]:
+    columns = list(db.execute(f'PRAGMA table_info({_identifier(table)})'))
+    primary = sorted((row for row in columns if row[5]), key=lambda row: row[5])
+    # WITHOUT ROWID keys are always NOT NULL; ordinary nullable keys are not unique for NULL.
+    if primary and all(row[3] for row in primary):
+        return tuple(_name(row[1]) for row in primary)
+    names = {_name(row[1]).casefold() for row in columns}
+    for alias in ('rowid', '_rowid_', 'oid'):
+        if alias not in names:
+            return (alias,)
+    raise ValueError(f'Table {table!r} has no unambiguous row key')
 
 
 def _name(value) -> str:
@@ -81,20 +110,21 @@ def _redact_cell(value: str) -> tuple[str, bool]:
     return redact_secrets(value)
 
 
-def _dirty_rows(db: sqlite3.Connection, table: str):
+def _dirty_rows(db: sqlite3.Connection, table: str) -> Iterator[RowChange]:
     columns = _text_columns(db, table)
     if not columns:
         return
-    select = ", ".join(f'"{c}"' for c in columns)
-    for row in db.execute(f'SELECT rowid, {select} FROM "{table}"'):
+    keys = _key_columns(db, table)
+    select = ", ".join(_identifier(column) for column in (*keys, *columns))
+    for row in db.execute(f'SELECT {select} FROM {_identifier(table)}'):
         changes = {}
-        for column, value in zip(columns, row[1:], strict=True):
+        for column, value in zip(columns, row[len(keys):], strict=True):
             if isinstance(value, _Text):
                 cleaned, changed = _redact_cell(value.decode("utf-8", "surrogateescape"))
                 if changed:
                     changes[column] = cleaned.encode("utf-8", "surrogateescape")
         if changes:
-            yield row[0], changes
+            yield RowChange(keys, tuple(row[:len(keys)]), changes)
 
 
 def _raw_line(line: str) -> str:
@@ -154,9 +184,13 @@ def _redact_database(path: Path, backup: Path, only: frozenset[str] | None) -> d
         with db:
             for table in _tables(db, only):
                 updates = list(_dirty_rows(db, table))
-                for rowid, changes in updates:
-                    assignments = ", ".join(f'"{column}"=CAST(? AS TEXT)' for column in changes)
-                    db.execute(f'UPDATE "{table}" SET {assignments} WHERE rowid=?', (*changes.values(), rowid))
+                for update in updates:
+                    assignments = ", ".join(f'{_identifier(column)}=CAST(? AS TEXT)' for column in update.changes)
+                    where = ' AND '.join(_identifier(column) + ' IS ' +
+                                         ('CAST(? AS TEXT)' if isinstance(value, _Text) else '?')
+                                         for column, value in zip(update.key_columns, update.key_values, strict=True))
+                    db.execute(f'UPDATE {_identifier(table)} SET {assignments} WHERE {where}',
+                               (*update.changes.values(), *update.key_values))
                 if updates:
                     tables[table] = len(updates)
             for fts, kind in _fts_kinds(db).items():

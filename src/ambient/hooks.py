@@ -115,6 +115,7 @@ def prompt_context(call: HookCall, memory_dir: Path) -> str:
                                   session_id=call.session_id, settings=AmbientSettings.load(memory_dir))
     log_event("ambient_prompt_context", background=result.background, rules=len(result.rule_ids),
               records=len(result.record_ids), correction_id=result.correction_id,
+              dropped_floor=result.dropped_floor,
               elapsed_ms=result.elapsed_ms)
     return result.text
 

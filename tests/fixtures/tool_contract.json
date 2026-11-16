@@ -114,6 +114,23 @@
     },
     "inputSchema": {
       "properties": {
+        "action": {
+          "default": "index",
+          "enum": [
+            "index",
+            "preview",
+            "search",
+            "status"
+          ],
+          "type": "string"
+        },
+        "exclude": {
+          "description": "Override excluded directory/file glob patterns; [] includes dependency directories. Sensitive files remain protected.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "include": {
           "description": "Extension allowlist e.g. ['.py','.go']",
           "items": {
@@ -121,12 +138,37 @@
           },
           "type": "array"
         },
+        "limit": {
+          "default": 10,
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
         "path": {
+          "type": "string"
+        },
+        "project": {
+          "default": "general",
+          "minLength": 1,
+          "type": "string"
+        },
+        "query": {
+          "default": "",
           "type": "string"
         },
         "sample_limit": {
           "default": 5,
           "type": "integer"
+        },
+        "watch": {
+          "default": true,
+          "description": "Automatically refresh this index while the personal server runs.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -773,25 +815,29 @@
     },
     "inputSchema": {
       "properties": {
+        "dataset_path": {
+          "description": "Path to LoCoMo locomo10.json.",
+          "type": "string"
+        },
         "limit": {
-          "description": "Cap how many scenarios to run.",
+          "description": "Maximum questions to evaluate.",
+          "minimum": 1,
           "type": "integer"
         },
         "mode": {
           "default": "fast",
           "enum": [
-            "fast",
-            "balanced",
-            "deep"
+            "fast"
           ],
           "type": "string"
         },
         "scenarios_path": {
-          "description": "Optional override path.",
+          "description": "Deprecated alias for dataset_path; requires LoCoMo format.",
           "type": "string"
         },
         "top_k": {
           "default": 5,
+          "minimum": 1,
           "type": "integer"
         }
       },
@@ -918,6 +964,7 @@
             "solution",
             "lesson",
             "convention",
+            "incident",
             "all"
           ],
           "type": "string"
@@ -1063,6 +1110,25 @@
     },
     "inputSchema": {
       "properties": {
+        "cursor": {
+          "description": "Opaque next_cursor from the previous page's end line",
+          "type": "string"
+        },
+        "format": {
+          "default": "json",
+          "description": "JSON includes sessions and relations; JSONL streams knowledge with a header and completeness footer.",
+          "enum": [
+            "json",
+            "jsonl"
+          ],
+          "type": "string"
+        },
+        "limit": {
+          "description": "Records per page; omit for one unpaged export. Default with a cursor: 1000.",
+          "maximum": 5000,
+          "minimum": 1,
+          "type": "integer"
+        },
         "project": {
           "description": "Export only this project (optional)",
           "type": "string"
@@ -1391,7 +1457,7 @@
     "inputSchema": {
       "properties": {
         "as_of": {
-          "description": "ISO date or datetime that relative dates in the query ('last month', 'three weeks ago', 'yesterday') are counted from. Default: now.",
+          "description": "ISO date or datetime selecting records active at that instant before search; also anchors relative dates in the query. Omit for current active records. See docs/SNAPSHOT_RETRIEVAL.md for replacement, deletion and metadata semantics.",
           "type": "string"
         },
         "branch": {
@@ -1460,6 +1526,67 @@
             "legacy"
           ],
           "type": "string"
+        },
+        "incident": {
+          "additionalProperties": false,
+          "description": "Filter incident records by status, exact affected scope and overlapping half-open UTC interval. Uses scoped full-text retrieval.",
+          "properties": {
+            "from": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "From"
+            },
+            "scope": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Scope"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "open",
+                    "closed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Status"
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "To"
+            }
+          },
+          "title": "IncidentFilter",
+          "type": "object"
         },
         "intent": {
           "description": "Filter by classified intent (question|procedural|fact|decision|problem|solution|incident|plan)",
@@ -1534,6 +1661,7 @@
             "solution",
             "lesson",
             "convention",
+            "incident",
             "all"
           ],
           "type": "string"
@@ -1775,6 +1903,42 @@
     },
     "inputSchema": {
       "properties": {
+        "affected": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "title": "From",
+                "type": "string"
+              },
+              "scope": {
+                "minLength": 1,
+                "title": "Scope",
+                "type": "string"
+              },
+              "to": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "To"
+              }
+            },
+            "required": [
+              "scope",
+              "from"
+            ],
+            "title": "AffectedWindow",
+            "type": "object"
+          },
+          "title": "Affected",
+          "type": "array"
+        },
         "agent_id": {
           "description": "Optional Claude Code subagent ID (x-claude-code-agent-id header / OTEL agent_id attribute, v2.1.139+). Lets recall trace which subagent produced this knowledge.",
           "type": "string"
@@ -1795,6 +1959,35 @@
           "description": "Opt into v10 coreference rewrite — expand pronouns ('after this it broke') into self-contained text using recent session history. Costs ~1s LLM round-trip; default off.",
           "type": "boolean"
         },
+        "detection": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "check": {
+                  "minLength": 1,
+                  "title": "Check",
+                  "type": "string"
+                },
+                "healthy_result": {
+                  "minLength": 1,
+                  "title": "Healthy Result",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "check",
+                "healthy_result"
+              ],
+              "title": "Detection",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "filter": {
           "description": "Optional content filter (pytest|cargo|git_status|docker_ps|generic_logs). Trims noisy CLI output while preserving URLs/paths/code.",
           "type": "string"
@@ -1810,6 +2003,15 @@
           ],
           "type": "string"
         },
+        "incident_status": {
+          "default": "open",
+          "enum": [
+            "open",
+            "closed"
+          ],
+          "title": "Incident Status",
+          "type": "string"
+        },
         "parent_agent_id": {
           "description": "Optional parent agent ID (the dispatching Agent tool / parent span). Together with agent_id forms the subagent lineage tree.",
           "type": "string"
@@ -1817,6 +2019,18 @@
         "project": {
           "default": "general",
           "type": "string"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolution"
         },
         "source_format": {
           "default": "auto",
@@ -1844,7 +2058,8 @@
             "fact",
             "solution",
             "lesson",
-            "convention"
+            "convention",
+            "incident"
           ],
           "type": "string"
         }
@@ -1865,6 +2080,42 @@
     },
     "inputSchema": {
       "properties": {
+        "affected": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "title": "From",
+                "type": "string"
+              },
+              "scope": {
+                "minLength": 1,
+                "title": "Scope",
+                "type": "string"
+              },
+              "to": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "To"
+              }
+            },
+            "required": [
+              "scope",
+              "from"
+            ],
+            "title": "AffectedWindow",
+            "type": "object"
+          },
+          "title": "Affected",
+          "type": "array"
+        },
         "agent_id": {
           "description": "Optional Claude Code subagent ID (v2.1.139+)",
           "type": "string"
@@ -1877,6 +2128,35 @@
         },
         "context": {
           "type": "string"
+        },
+        "detection": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "check": {
+                  "minLength": 1,
+                  "title": "Check",
+                  "type": "string"
+                },
+                "healthy_result": {
+                  "minLength": 1,
+                  "title": "Healthy Result",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "check",
+                "healthy_result"
+              ],
+              "title": "Detection",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "filter": {
           "type": "string"
@@ -1891,6 +2171,15 @@
           ],
           "type": "string"
         },
+        "incident_status": {
+          "default": "open",
+          "enum": [
+            "open",
+            "closed"
+          ],
+          "title": "Incident Status",
+          "type": "string"
+        },
         "parent_agent_id": {
           "description": "Optional parent agent ID (the dispatching span)",
           "type": "string"
@@ -1898,6 +2187,18 @@
         "project": {
           "default": "general",
           "type": "string"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolution"
         },
         "source_format": {
           "default": "auto",
@@ -1924,7 +2225,8 @@
             "fact",
             "solution",
             "lesson",
-            "convention"
+            "convention",
+            "incident"
           ],
           "type": "string"
         }
@@ -2014,6 +2316,7 @@
             "solution",
             "lesson",
             "convention",
+            "incident",
             "all"
           ],
           "type": "string"
@@ -2134,6 +2437,23 @@
       "readOnlyHint": true
     },
     "inputSchema": {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "op": {
+                "const": "snapshot"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "query",
+              "as_of"
+            ]
+          }
+        }
+      ],
       "properties": {
         "a": {
           "description": "ISO datetime — duration_between",
@@ -2148,6 +2468,11 @@
         },
         "anchor": {
           "description": "ISO datetime anchor for relative phrases",
+          "type": "string"
+        },
+        "as_of": {
+          "description": "ISO snapshot timestamp",
+          "minLength": 1,
           "type": "string"
         },
         "b": {
@@ -2168,16 +2493,31 @@
           ],
           "type": "string"
         },
+        "limit": {
+          "default": 10,
+          "minimum": 1,
+          "type": "integer"
+        },
         "op": {
           "enum": [
             "relation",
             "duration_between",
-            "normalize"
+            "normalize",
+            "snapshot"
           ],
           "type": "string"
         },
         "phrase": {
           "description": "Natural-language date — normalize",
+          "type": "string"
+        },
+        "project": {
+          "description": "Project filter — snapshot only",
+          "type": "string"
+        },
+        "query": {
+          "description": "Search query — snapshot only",
+          "minLength": 1,
           "type": "string"
         }
       },
@@ -2232,7 +2572,84 @@
       "readOnlyHint": false
     },
     "inputSchema": {
+      "anyOf": [
+        {
+          "required": [
+            "id"
+          ]
+        },
+        {
+          "required": [
+            "find"
+          ]
+        }
+      ],
       "properties": {
+        "affected": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "title": "From",
+                "type": "string"
+              },
+              "scope": {
+                "minLength": 1,
+                "title": "Scope",
+                "type": "string"
+              },
+              "to": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "To"
+              }
+            },
+            "required": [
+              "scope",
+              "from"
+            ],
+            "title": "AffectedWindow",
+            "type": "object"
+          },
+          "title": "Affected",
+          "type": "array"
+        },
+        "detection": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "check": {
+                  "minLength": 1,
+                  "title": "Check",
+                  "type": "string"
+                },
+                "healthy_result": {
+                  "minLength": 1,
+                  "title": "Healthy Result",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "check",
+                "healthy_result"
+              ],
+              "title": "Detection",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "find": {
           "description": "Search query to find the old knowledge (when no id)",
           "type": "string"
@@ -2240,6 +2657,15 @@
         "id": {
           "description": "Exact record to replace; takes precedence over find",
           "type": "integer"
+        },
+        "incident_status": {
+          "default": "open",
+          "enum": [
+            "open",
+            "closed"
+          ],
+          "title": "Incident Status",
+          "type": "string"
         },
         "new_content": {
           "description": "New content to replace with",
@@ -2252,6 +2678,18 @@
         "reason": {
           "description": "Why updating",
           "type": "string"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolution"
         }
       },
       "required": [

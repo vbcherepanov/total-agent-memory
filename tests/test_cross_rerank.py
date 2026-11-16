@@ -80,6 +80,35 @@ def test_multilingual_model_reranks_non_latin_queries():
     assert encoder.calls == 1
 
 
+def test_english_encoder_preserves_non_latin_candidate_positions():
+    class EnglishOnly(KeywordEncoder):
+        def rerank(self, query, documents):
+            assert all(latin_share(text) >= cross_rerank.LATIN_SHARE_REQUIRED for text in documents)
+            return super().rerank(query, documents)
+
+    encoder = EnglishOnly()
+    candidates = items("Очередь уведомлений обрабатывает сто событий", "irrelevant text", "notification throughput")
+    result = ready(encoder).rerank("notification throughput", candidates, lambda i: i['r']['content'], wait=False,
+                                  context_of=lambda window: [i['r']['content'] + ' context' for i in window])
+    assert order(result) == [0, 2, 1]
+    assert encoder.calls == 2
+
+
+def test_english_encoder_skips_window_with_one_supported_candidate():
+    encoder = KeywordEncoder()
+    candidates = items("Очередь уведомлений", "notification throughput", "Число событий")
+    result = ready(encoder).rerank("notification throughput", candidates, lambda i: i['r']['content'], wait=False)
+    assert order(result) == [0, 1, 2]
+    assert encoder.calls == 0
+
+
+def test_multilingual_encoder_can_reorder_mixed_script_candidates():
+    candidates = items("Очередь уведомлений", "irrelevant text", "notification throughput")
+    result = ready(multilingual=True).rerank("notification throughput", candidates,
+                                           lambda i: i['r']['content'], wait=False)
+    assert order(result)[0] == 2
+
+
 def test_auto_mode_keeps_order_until_the_model_is_loaded():
     gate = __import__("threading").Event()
 
@@ -262,3 +291,20 @@ def test_search_widens_the_pool_and_returns_the_limit(store, monkeypatch):
     encoder = KeywordEncoder()
     assert any("Lean Startup" in text for text in top_ten(ready(encoder, window=40, context_chars=200)))
     assert encoder.calls == 2
+
+
+def test_cached_rerank_is_identical_and_never_infers_missing_view():
+    from memory_core.rerank_cache import ScoreCacheMiss
+    encoder = KeywordEncoder()
+    cross = ready(encoder)
+    candidates = items('billing database', 'billing fallback')
+    with pytest.raises(ScoreCacheMiss):
+        cross.rerank('billing', candidates, lambda item: item['r']['content'], wait=False, cache_only=True)
+    assert encoder.calls == 0
+    expected = cross.rerank('billing', candidates, lambda item: item['r']['content'], wait=False)
+    assert cross.rerank('billing', candidates, lambda item: item['r']['content'], wait=False,
+                        cache_only=True) == expected
+    with pytest.raises(ScoreCacheMiss):
+        cross.rerank('billing', candidates, lambda item: item['r']['content'], wait=False,
+                     context_of=lambda window: ['neighbour one', 'neighbour two'], cache_only=True)
+    assert encoder.calls == 1

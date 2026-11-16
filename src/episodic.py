@@ -34,7 +34,8 @@ import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+
+from memory_core.retrieval import SearchScope
 
 LOG = lambda msg: sys.stderr.write(f"[episodic] {msg}\n")
 
@@ -253,27 +254,38 @@ def find_events_for_entity(
     entity_name: str,
     project: str | None = None,
     limit: int = 20,
+    scope: SearchScope | None = None,
 ) -> list[EventHit]:
     """Return Events that mention an entity, newest-first."""
     if not entity_name:
         return []
-    name_norm = entity_name.strip().lower()
+    return _find_events_for_entities(db, [entity_name], project=project, limit=limit, scope=scope)
+
+
+def _find_events_for_entities(
+    db, entity_names: list[str], *, project: str | None, limit: int,
+    scope: SearchScope | None,
+) -> list[EventHit]:
     sql = (
-        f"""SELECT n.id, n.name, n.properties, n.last_seen_at
-              FROM graph_edges e
-              JOIN graph_nodes src ON src.id = e.source_id
-              JOIN graph_nodes n   ON n.id   = e.target_id
-             WHERE e.relation_type = ?
-               AND n.type = ?
-               AND n.status = 'active'
-               AND lower(src.name) = ?"""
+        """SELECT n.id, n.name, n.properties, n.last_seen_at
+              FROM graph_nodes n
+             WHERE n.type = ? AND n.status = 'active'"""
     )
-    params: list[Any] = [MENTIONED_IN, EVENT_NODE_TYPE, name_norm]
+    params: list[str | int] = [EVENT_NODE_TYPE]
+    for name in dict.fromkeys(name.strip().lower() for name in entity_names):
+        sql += """ AND EXISTS (SELECT 1 FROM graph_edges e
+            JOIN graph_nodes src ON src.id=e.source_id
+            WHERE e.target_id=n.id AND e.relation_type=? AND lower(src.name)=?)"""
+        params.extend([MENTIONED_IN, name])
     if project:
         # Project filter applies via the JSON properties — cheap because
         # we already filtered down to event-typed nodes.
         sql += " AND json_extract(n.properties, '$.project') = ?"
         params.append(project)
+    if scope is not None:
+        predicates, scope_params = scope.sql()
+        sql += " AND EXISTS (SELECT 1 FROM knowledge k WHERE k.id=CAST(json_extract(n.properties, '$.knowledge_id') AS BIGINT) AND " + " AND ".join(predicates) + ")"
+        params.extend(scope_params)
     sql += " ORDER BY n.last_seen_at DESC LIMIT ?"
     params.append(limit)
     try:
@@ -291,19 +303,12 @@ def find_co_mentioned_events(
     entity_b: str,
     project: str | None = None,
     limit: int = 20,
+    scope: SearchScope | None = None,
 ) -> list[EventHit]:
     """Events where BOTH `entity_a` and `entity_b` are mentioned."""
     if not entity_a or not entity_b:
         return []
-    a_events = {h.event_node_id: h for h in find_events_for_entity(
-        db, entity_name=entity_a, project=project, limit=200)}
-    if not a_events:
-        return []
-    b_events = find_events_for_entity(
-        db, entity_name=entity_b, project=project, limit=200)
-    intersection = [h for h in b_events if h.event_node_id in a_events]
-    intersection.sort(key=lambda h: h.timestamp or "", reverse=True)
-    return intersection[:limit]
+    return _find_events_for_entities(db, [entity_a, entity_b], project=project, limit=limit, scope=scope)
 
 
 def get_event_for_knowledge(db, knowledge_id: int) -> EventHit | None:

@@ -22,6 +22,7 @@
 
 x-memory-env: &memory-env
   TAM_MEMORY_DIR: /data
+  TAM_WORKER_HEALTH_TTL_SECONDS: ${TAM_WORKER_HEALTH_TTL_SECONDS:-90}
   OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
   MEMORY_LLM_PROVIDER: ${MEMORY_LLM_PROVIDER:-ollama}
   MEMORY_LLM_API_BASE: ${MEMORY_LLM_API_BASE:-}
@@ -163,6 +164,12 @@ services:
       dashboard:
         condition: service_started
     command: ["reflection"]
+    healthcheck:
+      test: ["CMD", "python", "/app/docker/worker_health.py", "reflection"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     environment:
       <<: *memory-env
       REFLECT_DEBOUNCE_SEC: "5"
@@ -184,6 +191,12 @@ services:
       dashboard:
         condition: service_started
     command: ["scheduler"]
+    healthcheck:
+      test: ["CMD", "python", "/app/docker/worker_health.py", "scheduler"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     environment:
       <<: *memory-env
     volumes:

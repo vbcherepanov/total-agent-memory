@@ -39,6 +39,7 @@ class ImportRecord:
     tags: tuple[str, ...] = ()
     source_format: str = "auto"
     knowledge_type: str = "fact"
+    preserved_identity: str | None = None
 
 
 @dataclass(slots=True)

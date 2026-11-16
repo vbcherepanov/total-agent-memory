@@ -21,6 +21,10 @@ class Forbidden(DomainError):
     code = "forbidden"
 
 
+class ReadOnly(DomainError):
+    code = "readonly"
+
+
 class Conflict(DomainError):
     code = "conflict"
 

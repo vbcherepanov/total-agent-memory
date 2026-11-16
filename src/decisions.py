@@ -251,7 +251,6 @@ def _add_multi_repr_views(store: Any, knowledge_id: int, decision: Decision) -> 
         return
 
     repr_store = MultiReprStore(store.db)
-    model_name = _resolve_model_name(store)
 
     texts: list[tuple[str, str]] = []
     summary_text = decision.summary_repr_content()
@@ -271,28 +270,13 @@ def _add_multi_repr_views(store: Any, knowledge_id: int, decision: Decision) -> 
             # Embedder unavailable — skip silently.
             continue
         try:
-            repr_store.upsert(knowledge_id, repr_type, text, embeddings[0], model_name)
+            identity = store.last_embed_identity()
+            if identity is None:
+                raise ValueError("Decision embedding identity is unavailable")
+            repr_store.upsert(knowledge_id, repr_type, text, embeddings[0], identity.model,
+                              identity=identity)
         except Exception as exc:  # noqa: BLE001
             LOG(f"multi_repr upsert failed for {repr_type} on kid={knowledge_id}: {exc}")
-
-
-def _resolve_model_name(store: Any) -> str:
-    """Pick a reasonable embedding model label for multi_repr rows."""
-    try:
-        mode = getattr(store, "_embed_mode", None)
-        if mode == "fastembed":
-            from server import FASTEMBED_MODEL  # type: ignore
-
-            return FASTEMBED_MODEL
-        if mode == "ollama":
-            from server import OLLAMA_EMBED_MODEL  # type: ignore
-
-            return OLLAMA_EMBED_MODEL
-        from server import EMBEDDING_MODEL  # type: ignore
-
-        return EMBEDDING_MODEL
-    except Exception:
-        return "unknown"
 
 
 # ─────────────────────────────────────────────────────────────

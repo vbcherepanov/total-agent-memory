@@ -17,6 +17,7 @@ import json
 import re
 import sqlite3
 import sys
+import unicodedata
 from typing import Any, Iterable
 
 LOG = lambda msg: sys.stderr.write(f"[analogy] {msg}\n")
@@ -34,7 +35,7 @@ _STOP = frozenset({
 def _tokenize(text: str | None) -> set[str]:
     if not text:
         return set()
-    tokens = re.findall(r"[A-Za-z][A-Za-z0-9_]{3,}", text.lower())
+    tokens = re.findall(r"[^\W\d_]\w{3,}", unicodedata.normalize("NFC", text).casefold())
     return {t for t in tokens if t not in _STOP}
 
 

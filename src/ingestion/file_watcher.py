@@ -20,6 +20,7 @@ Dependencies:
 """
 
 import os
+import hashlib
 import shutil
 import sqlite3
 import stat
@@ -285,23 +286,24 @@ class FileProcessor:
         import re
 
         content = read_text_capped(file_path).strip()
+        identity = f"{file_path.absolute()}\0{file_path.stat().st_mtime_ns}\0{content}"
+        idempotency_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         # Extract URL from .url or .webloc files
-        if file_path.suffix == ".webloc":
+        if file_path.suffix.lower() == ".webloc":
             match = re.search(r'<string>(https?://[^<]+)</string>', content)
             if match:
                 content = match.group(1)
-        elif file_path.suffix == ".url":
+        elif file_path.suffix.lower() == ".url":
             match = re.search(r'URL=(.+)', content)
             if match:
                 content = match.group(1).strip()
 
-        if content.startswith("http"):
-            try:
-                from ingestion.gateway import IngestGateway
-                gw = IngestGateway(db)
-                gw.ingest_url(content)
-            except Exception as e:
-                LOG(f"URL fetch error: {e}")
+        from ingestion.gateway import IngestGateway
+        gw = IngestGateway(db)
+        gw.ingest_url(content, idempotency_key=idempotency_key)
+        current = f"{file_path.absolute()}\0{file_path.stat().st_mtime_ns}\0{read_text_capped(file_path).strip()}"
+        if hashlib.sha256(current.encode('utf-8')).hexdigest() != idempotency_key:
+            raise ValueError('URL file changed during ingestion; retry the new contents')
 
 
 class FileWatcher:

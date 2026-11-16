@@ -85,7 +85,9 @@ def test_run_drain_only_runs_phases_3_5_6(drain_db, monkeypatch):
     monkeypatch.setattr(DigestPhase, "run", lambda self: digest_calls.append(1) or {})
     monkeypatch.setattr(SynthesizePhase, "run", lambda self, days=7: synth_calls.append(1) or {})
 
-    agent = ReflectionAgent(drain_db, embedder=lambda t: [0.1] * 8)
+    from memory_core.embedding_identity import EmbedIdentity
+    agent = ReflectionAgent(drain_db, embedder=lambda t: [0.1] * 8,
+                            embed_identity=lambda: EmbedIdentity("fake", "declared"))
     report = asyncio.run(agent.run_drain())
 
     assert report["scope"] == "drain"
@@ -106,3 +108,69 @@ def test_pick_scope_auto_prefers_drain():
     assert pick_scope({"a": 100, "b": 100, "c": 100}) == "drain"  # always drain
     assert pick_scope({"a": 0}, override="full") == "full"
     assert pick_scope({"a": 99}, override="quick") == "quick"
+
+
+def test_standalone_runner_propagates_embedding_identity(drain_db, tmp_path, monkeypatch):
+    import sqlite3
+    import sys
+    import server
+    import representations
+    from tools import run_reflection
+    from representations_queue import RepresentationsQueue
+    from memory_core.embedding_identity import EmbedIdentity
+
+    kid = drain_db.execute("INSERT INTO knowledge(content,type,project,created_at) VALUES ('Identity regression','fact','demo','2026-11-16')").lastrowid
+    drain_db.commit()
+    RepresentationsQueue(drain_db).enqueue(kid)
+    with sqlite3.connect(tmp_path / 'memory.db') as saved:
+        drain_db.backup(saved)
+
+    class EmbedStore:
+        def __init__(self):
+            self.identity = None
+
+        def embed(self, texts):
+            self.identity = EmbedIdentity('fixture-model', 'fastembed')
+            return [[0.1] * 8 for _ in texts]
+
+        def last_embed_identity(self):
+            return self.identity
+
+    monkeypatch.setattr(server, 'Store', EmbedStore)
+    monkeypatch.setattr(server, 'MEMORY_DIR', tmp_path)
+    monkeypatch.setattr(run_reflection, '_resolve_memory_dir', lambda: tmp_path)
+    monkeypatch.setattr(run_reflection, '_run_embedding_backfill', lambda store: None)
+    monkeypatch.setattr(run_reflection, '_run_consolidation_sweep', lambda *args: None)
+    monkeypatch.setattr(representations, 'generate_representations', lambda *args: {})
+    monkeypatch.setattr(sys, 'argv', ['run_reflection', '--scope=drain', '--debounce=0'])
+    assert run_reflection.main() == 0
+    with sqlite3.connect(tmp_path / 'memory.db') as db:
+        assert db.execute('SELECT status,attempts FROM representations_queue WHERE knowledge_id=?', (kid,)).fetchone() == ('done', 0)
+        row = db.execute('SELECT embed_model,embed_identity_key FROM knowledge_representations WHERE knowledge_id=?', (kid,)).fetchone()
+        assert row == ('fixture-model', EmbedIdentity('fixture-model', 'fastembed').key(8))
+
+
+def test_missing_injected_identity_keeps_queue_retry_budget(drain_db):
+    from reflection.agent import ReflectionAgent
+    from representations_queue import RepresentationsQueue
+    kid = drain_db.execute("INSERT INTO knowledge(content,type,project) VALUES ('Identity guard','fact','demo')").lastrowid
+    drain_db.commit()
+    RepresentationsQueue(drain_db).enqueue(kid)
+    result = ReflectionAgent(drain_db, embedder=lambda text: [0.1] * 8)._run_representations()
+    assert 'identity' in result['error']
+    assert drain_db.execute('SELECT status,attempts FROM representations_queue WHERE knowledge_id=?', (kid,)).fetchone()[:] == ('pending', 0)
+
+
+def test_ai_layer_wrapper_forwards_injected_identity(monkeypatch):
+    from ai_layer import reflection
+    from memory_core.embedding_identity import EmbedIdentity
+    from reflection.agent import ReflectionAgent
+    identity = lambda: EmbedIdentity('fixture-model', 'fastembed')
+
+    async def run(agent):
+        assert agent._embed_identity is identity
+        return {'verified': True}
+
+    monkeypatch.setattr(ReflectionAgent, 'run_full', run)
+    result = asyncio.run(reflection.run_full(None, embedder=lambda text: [0.1] * 8, embed_identity=identity))
+    assert result == {'verified': True}

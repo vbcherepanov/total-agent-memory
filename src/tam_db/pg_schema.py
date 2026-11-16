@@ -33,6 +33,7 @@ LEDGER_TABLE = "pg_migrations"
 # Advisory lock keys follow team_memory.pg_provision: namespace "TAM\0" + n as int4.
 # +0..+2 are the server, provisioning and workspace leases; +3 is workspace migrations.
 LOCK_NAMESPACE_WORKSPACE_MIGRATIONS = 0x54414D00 + 3
+LOCK_NAMESPACE_VECTOR_INDEXES = 0x54414D00 + 4
 LOCK_DIGEST_BYTES = 4
 # Attribute of tam_db.pg_connection.PgConnection exposing its psycopg connection.
 NATIVE_ATTRIBUTE = "raw"
@@ -209,21 +210,61 @@ def ensure_hnsw_index(connection: Any, dimension: int) -> None:
     """Partial HNSW cosine index over embeddings of one dimension (idempotent).
 
     pgvector indexes need a fixed dimension; ``embedding`` has none, so the index is
-    on ``embedding::vector(n)`` for the rows with ``embed_dim = n``. Building it
-    blocks writes to embeddings for the duration, like any CREATE INDEX.
+    on ``embedding::vector(n)`` for the rows with ``embed_dim = n``. Run from
+    an administrative connection in autocommit mode, outside any transaction.
     """
     from psycopg import sql
+    from psycopg.pq import TransactionStatus
 
     native = native_connection(connection)
     schema = current_workspace_schema(native)
     size = _dimension(dimension)
+    if not native.autocommit or native.info.transaction_status is not TransactionStatus.IDLE:
+        raise WorkspaceSchemaError('Concurrent HNSW provisioning requires an idle autocommit connection')
     statement = sql.SQL(
-        "CREATE INDEX IF NOT EXISTS {name} ON {table} USING hnsw ((embedding::vector({size})) vector_cosine_ops) "
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} ON {table} USING hnsw ((embedding::vector({size})) vector_cosine_ops) "
         "WHERE embed_dim = {size}").format(name=sql.Identifier(hnsw_index_name(size)),
                                            table=sql.Identifier(schema, "embeddings"), size=sql.Literal(size))
-    with native.transaction():
-        native.execute(statement)
+    acquired = native.execute('SELECT pg_try_advisory_lock(%s,%s)',
+                              (LOCK_NAMESPACE_VECTOR_INDEXES, lock_object(schema))).fetchone()[0]
+    if not acquired:
+        raise WorkspaceSchemaError('Another vector index provisioning operation is running')
+    try:
+        state = _hnsw_index_state(connection, size)
+        if state == 'invalid':
+            native.execute(sql.SQL('REINDEX INDEX CONCURRENTLY {}').format(
+                sql.Identifier(schema, hnsw_index_name(size))))
+        elif state == 'missing':
+            native.execute(statement)
+        if not hnsw_index_ready(connection, size):
+            raise WorkspaceSchemaError('HNSW index is not ready after provisioning')
+    finally:
+        native.execute('SELECT pg_advisory_unlock(%s,%s)', (LOCK_NAMESPACE_VECTOR_INDEXES, lock_object(schema)))
     LOGGER.info(json.dumps({"event": "workspace_hnsw_index_ready", "schema": schema, "dimension": size}))
+
+
+def _hnsw_index_state(connection: Any, dimension: int) -> str:
+    native = native_connection(connection)
+    schema = current_workspace_schema(native)
+    size = _dimension(dimension)
+    row = native.execute(
+        "SELECT i.indisvalid, i.indisready, t.relname, a.amname, pg_get_indexdef(c.oid), "
+        "pg_get_expr(i.indpred,i.indrelid) FROM pg_class c "
+        "JOIN pg_namespace n ON n.oid=c.relnamespace "
+        "LEFT JOIN pg_index i ON i.indexrelid=c.oid LEFT JOIN pg_class t ON t.oid=i.indrelid "
+        "LEFT JOIN pg_am a ON a.oid=c.relam WHERE n.nspname=%s AND c.relname=%s",
+        (schema, hnsw_index_name(size)),
+    ).fetchone()
+    if row is None:
+        return 'missing'
+    if (row[2] != 'embeddings' or row[3] != 'hnsw' or f'vector({size})' not in (row[4] or '')
+            or 'vector_cosine_ops' not in (row[4] or '') or row[5] != f'(embed_dim = {size})'):
+        raise WorkspaceSchemaError('Existing HNSW index name has an incompatible definition')
+    return 'ready' if row[0] and row[1] else 'invalid'
+
+
+def hnsw_index_ready(connection: Any, dimension: int) -> bool:
+    return _hnsw_index_state(connection, dimension) == 'ready'
 
 
 __all__ = [

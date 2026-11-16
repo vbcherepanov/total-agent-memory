@@ -160,7 +160,9 @@ memory_stats()
 
 **Reflection / consolidation (4):** `memory_reflect_now`, `memory_consolidate`, `memory_forget`, `memory_observe`
 
-**Stats / export (5):** `memory_stats`, `memory_export`, `memory_self_assess`, `memory_context_build`, `benchmark`
+**Stats / export (5):** `memory_stats`, `memory_export` (optional `limit`/`cursor` paging with signed cursors; pages import only as one complete, contiguous sequence), `memory_self_assess`, `memory_context_build`, `benchmark`
+
+`benchmark` runs the packaged 5-scenario fixture (`src/evaluation/fixtures.json`) in an isolated throwaway store, so your memory is neither read nor modified; pass `scenarios_path` to run your own scenarios against the live store. Evaluation errors come back as `{"status": "error", "reason": ...}`.
 
 **Reports (1):** `memory_report` — day / week / month / all-time / custom activity report, see [docs/REPORTS.md](REPORTS.md)
 
@@ -231,7 +233,7 @@ When you only know the topic but not which records matter, use progressive discl
 <details>
 <summary><b>Pre-flight guards & automation (8)</b></summary>
 
-`file_context` (pre-edit risk scoring) · `learn_error` (auto-consolidating error capture) · `session_init` / `session_end` · `ingest_codebase` (AST, 9 languages) · `analogize` (cross-project analogy) · `benchmark` (regression gate)
+`file_context` (pre-edit risk scoring) · `learn_error` (auto-consolidating error capture) · `session_init` / `session_end` · `ingest_codebase` (AST, 9 languages) · `analogize` (cross-project analogy) · `benchmark` (regression gate: packaged 5-scenario fixture in an isolated store)
 
 </details>
 

@@ -260,10 +260,11 @@ def test_rows_without_a_pgvector_copy_are_skipped(engines):
 
 
 @pytest.mark.postgres
-def test_hnsw_search_builds_its_index_and_finds_the_neighbours(engines):
+def test_hnsw_search_uses_prepared_index_and_finds_the_neighbours(engines):
     from tam_db import pg_schema
 
     db, pg = engines
+    pg_schema.ensure_hnsw_index(pg, DIMENSION)
     sqlite_search = VectorSearch(db)
     pg_search = PgVectorSearch(pg, index=VectorIndex.HNSW, ef_search=200)
     scope = VectorScope(dimension=DIMENSION, project="alpha")
@@ -280,3 +281,63 @@ def test_hnsw_search_builds_its_index_and_finds_the_neighbours(engines):
     pg_schema.ensure_hnsw_index(pg, DIMENSION)
     with pytest.raises(ValueError):
         pg_schema.ensure_hnsw_index(pg, 0)
+
+
+@pytest.mark.postgres
+def test_unprepared_hnsw_falls_back_without_ddl(engines, monkeypatch):
+    from tam_db import pg_schema
+
+    _, pg = engines
+    scope = VectorScope(dimension=OTHER_DIMENSION, project='alpha')
+    query = next(iter(_queries(OTHER_DIMENSION)))
+    exact = PgVectorSearch(pg, index=VectorIndex.EXACT).search(query, scope, candidates=LIMIT, limit=LIMIT)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('A search must not provision indexes')
+
+    monkeypatch.setattr(pg_schema, 'ensure_hnsw_index', forbidden)
+    result = PgVectorSearch(pg, index=VectorIndex.HNSW).search(query, scope, candidates=LIMIT, limit=LIMIT)
+    assert result == exact
+    assert pg_schema.hnsw_index_ready(pg, OTHER_DIMENSION) is False
+
+
+@pytest.mark.postgres
+def test_provisioning_repairs_failed_concurrent_index(engines):
+    import psycopg
+    from tam_db import pg_schema
+
+    _, pg = engines
+    kid = pg.execute("SELECT knowledge_id FROM embeddings WHERE embed_dim=? LIMIT 1",
+                     (DIMENSION,)).fetchone()[0]
+    pg.execute("UPDATE embeddings SET embed_dim=? WHERE knowledge_id=?", (OTHER_DIMENSION, kid))
+    pg.commit()
+    try:
+        with pytest.raises(psycopg.Error):
+            pg_schema.ensure_hnsw_index(pg, OTHER_DIMENSION)
+        assert pg_schema._hnsw_index_state(pg, OTHER_DIMENSION) == 'invalid'
+        assert not pg_schema.hnsw_index_ready(pg, OTHER_DIMENSION)
+    finally:
+        pg.execute("UPDATE embeddings SET embed_dim=? WHERE knowledge_id=?", (DIMENSION, kid))
+        pg.commit()
+    pg_schema.ensure_hnsw_index(pg, OTHER_DIMENSION)
+    assert pg_schema.hnsw_index_ready(pg, OTHER_DIMENSION)
+
+
+@pytest.mark.postgres
+def test_provisioning_refuses_an_existing_incompatible_index(engines):
+    from psycopg import sql
+    from tam_db import pg_schema
+
+    _, pg = engines
+    unused_dimension = DIMENSION + OTHER_DIMENSION
+    name = pg_schema.hnsw_index_name(unused_dimension)
+    native = pg_schema.native_connection(pg)
+    native.execute(sql.SQL('CREATE INDEX {} ON embeddings(knowledge_id)').format(sql.Identifier(name)))
+    try:
+        with pytest.raises(pg_schema.WorkspaceSchemaError, match='incompatible definition'):
+            pg_schema.ensure_hnsw_index(pg, unused_dimension)
+        index = native.execute('SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() '
+                               'AND indexname=%s', (name,)).fetchone()
+        assert 'btree' in index[0]
+    finally:
+        native.execute(sql.SQL('DROP INDEX {}').format(sql.Identifier(name)))

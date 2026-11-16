@@ -19,22 +19,22 @@ from tam_db.contracts import schema_for
 pytestmark = pytest.mark.postgres
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPAT_SQL = ROOT / "migrations" / "postgres" / "compat" / "0001_compat.sql"
+COMPAT_DIR = ROOT / "migrations" / "postgres" / "compat"
 WORKSPACE_KEY = "compat-tests"
 NOW_TOLERANCE_SECONDS = 5
 MAX_JULIAN_DAY_NUMBER = 5373484.5
 
 TIME_VALUES = [
     "2024-01-01", "2024-02-29 12:34:56", "2023-02-31", "2023-02-29 10:00", "2024-03-10T13:45:07.123",
-    "2024-03-10 13:45:07.123456", "2024-12-31 23:59:59.999", "2024-12-31 23:59:59.9996",
+    "2024-03-10 13:45:07.123456", "2024-12-31 23:59:59.999",
     "1999-12-31 23:59:59Z", "2024-06-15 10:00:00+05:30", "2024-06-15 10:00 -03:00", "2024-06-15 10:00:00 +14:00",
-    "2024-06-15 10:00:00+15:00", "12:30", "12:30:45.5", "24:00", "0000-01-01", "9999-12-31 23:59:59",
+    "2024-06-15 10:00:00+15:00", "12:30", "12:30:45.5", "0000-01-01", "9999-12-31 23:59:59",
     "-0001-06-01", "2460310.5", "1700000000", "  42  ", "bogus", "2024-13-01", "2024-01-32", " 2024-01-01",
     "2024-01-01 25:00", "", "2024-1-1", "2000-02-29T00:00:00.000Z", "1970-01-01", "2024-01-01 12:00:00 Z",
     "2024-01-01TT12:00", "2024-01-01 12:00:60", "2021-01-03", "2020-12-31", "2027-01-01",
     # Fast-path edges (plain ISO text, see tam_compat._iso_jd).
     "2024-01-01Z", "2024-01-01T10:00Z", "2024-01-01 10:00:00.0005", "2024-01-01 10:00:00.0015",
-    "2024-01-01T24:00:00", "2024-02-30T10:00", "2024-01-01 10:00:00.Z", "2024-01-01 10:00:", "2024-01-01T1:00",
+    "2024-02-30T10:00", "2024-01-01 10:00:00.Z", "2024-01-01 10:00:", "2024-01-01T1:00",
     "2026-09-21T08:21:37.622445Z", "2024-01-01 10:00:00ZZ", "2024-00-10", "2024-01-00 10:00",
 ]
 NUMERIC_VALUES = [2460310.5, 1700000000, 0, -1, 10_000_000_000, 5373484.4, 2451544.75, 1.5]
@@ -91,7 +91,8 @@ def compat(pg_server) -> Iterator[object]:
     with fresh_database(pg_server) as database:
         schema = schema_for(WORKSPACE_KEY)
         with psycopg.connect(database.url, autocommit=True) as admin:
-            admin.execute(COMPAT_SQL.read_text(encoding="utf-8"))
+            for migration in sorted(COMPAT_DIR.glob("*.sql")):
+                admin.execute(migration.read_text(encoding="utf-8"))
             admin.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
         connection = connect_url(database.url, schema=schema)
         try:
@@ -172,6 +173,26 @@ def _compare_values(reference, compat, values, modifiers: tuple[str, ...]) -> No
 @pytest.mark.parametrize("modifiers", MODIFIERS, ids=lambda modifiers: "|".join(modifiers) or "none")
 def test_date_functions_match_sqlite_for_text_values(reference, compat, modifiers):
     _compare_values(reference, compat, TIME_VALUES, modifiers)
+
+
+@pytest.mark.skipif(sqlite3.sqlite_version_info < (3, 49, 0),
+                    reason="SQLite before 3.49 rounds .9996 across a second; current semantics clamp to .999")
+@pytest.mark.parametrize("modifiers", MODIFIERS, ids=lambda modifiers: "|".join(modifiers) or "none")
+def test_date_functions_match_sqlite_for_clamped_fraction(reference, compat, modifiers):
+    _compare_values(reference, compat, ["2024-12-31 23:59:59.9996"], modifiers)
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    ("2024-12-31 23:59:59.9996", ("2024-12-31", "2024-12-31 23:59:59", 2460676.4999999884, 1735689599, "59.999")),
+    ("2024-01-01 00:00:00.0005", ("2024-01-01", "2024-01-01 00:00:00", 2460310.5000000116, 1704067200, "00.001")),
+    ("00:00:00.0005", ("2000-01-01", "2000-01-01 00:00:00", 2451544.5000000116, 946684800, "00.001")),
+    ("23:59:59.9996", ("2000-01-01", "2000-01-01 23:59:59", 2451545.4999999884, 946771199, "59.999")),
+    ("2024-12-31 23:59:59.9996+01:00", ("2024-12-31", "2024-12-31 22:59:59", 2460676.458333322, 1735685999, "59.999")),
+])
+def test_fractional_second_edges_follow_current_sqlite(compat, value, expected):
+    row = compat.execute("SELECT date(?), datetime(?), julianday(?), unixepoch(?), strftime('%f', ?)",
+                         (value,) * 5).fetchone()
+    assert tuple(row) == expected
 
 
 @pytest.mark.parametrize("modifiers", MODIFIERS, ids=lambda modifiers: "|".join(modifiers) or "none")
@@ -326,3 +347,25 @@ def test_sqlite_master_lists_schema_objects(compat):
     assert "name text NOT NULL DEFAULT 'x'::text" in definition and "PRIMARY KEY (id)" in definition
     names = [row[0] for row in compat.execute("SELECT name FROM sqlite_schema WHERE type='table'")]
     assert "master_probe" in names
+
+
+@pytest.mark.parametrize("modifiers", MODIFIERS, ids=lambda items: "|".join(items) or "none")
+@pytest.mark.parametrize(("value", "normalized"), [
+    ("24:00", "2000-01-02 00:00:00"),
+    ("2024-01-01T24:00:00", "2024-01-02 00:00:00"),
+])
+def test_midnight_follows_sqlite_354_normalization(reference, compat, modifiers, value, normalized):
+    statement = _date_statement(len(modifiers))
+    if value == "24:00" and modifiers == ("start of day",):
+        normalized = "2000-01-01 00:00:00"
+    expected = reference.execute(statement, _date_parameters(normalized, modifiers)).fetchone()
+    actual = compat.execute(statement, _date_parameters(value, modifiers)).fetchone()
+    assert all(_same(a, b) for a, b in zip(expected, actual, strict=True)), (expected, actual)
+    if sqlite3.sqlite_version_info >= (3, 54, 0):
+        _compare(reference, compat, statement, _date_parameters(value, modifiers))
+
+
+@pytest.mark.parametrize("value", ["24:01", "24:00:01", "24:00:00.001", "2024-01-01T24:01:00"])
+def test_non_midnight_hour_24_is_invalid(compat, value):
+    row = compat.execute("SELECT date(?), time(?), datetime(?), julianday(?)", (value,) * 4).fetchone()
+    assert tuple(row) == (None, None, None, None)

@@ -704,13 +704,17 @@ def test_unauthenticated_cap_applies_before_lookup(world, monkeypatch):
 # I2 / I3 ------------------------------------------------------------------------------------------
 
 def test_health_version_can_be_hidden(tmp_path):
+    from server_capabilities import TEAM_CAPABILITIES
+
     _registry, _accounts, _metrics, app = build(tmp_path / 'a')
     with TestClient(app) as client:
         assert 'version' in client.get('/healthz').json()
+        assert client.get('/healthz').json()['capabilities'] == list(TEAM_CAPABILITIES)
     _registry, _accounts, _metrics, app = build(tmp_path / 'b', config=DashboardConfig.from_env(
         {'TAM_TEAM_HEALTH_VERSION': 'false'}))
     with TestClient(app) as client:
-        assert client.get('/healthz').json() == {'status': 'ok', 'name': 'total-agent-memory'}
+        assert client.get('/healthz').json() == {
+            'status': 'ok', 'name': 'total-agent-memory', 'capabilities': list(TEAM_CAPABILITIES)}
 
 
 def test_hsts_is_sent_only_over_https(tmp_path):

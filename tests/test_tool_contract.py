@@ -95,6 +95,8 @@ def test_pinned_tool_keeps_its_schema_and_hints(name, contract, pinned):
     live_schema, pinned_schema = live["inputSchema"], pinned[name]["inputSchema"]
     live_props = live_schema.get("properties", {})
     pinned_props = pinned_schema.get("properties", {})
+    for selector in ("anyOf", "oneOf", "allOf"):
+        assert live_schema.get(selector) == pinned_schema.get(selector), f"{name}: {selector} changed"
 
     dropped = sorted(set(pinned_props) - set(live_props))
     assert not dropped, f"{name}: parameters removed: {dropped}"

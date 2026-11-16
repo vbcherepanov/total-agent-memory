@@ -127,3 +127,40 @@ def test_expand_ranks_by_overlap_count(db, graph_store):
     result = ex.expand(seed_ids=[seed], budget=2)
     assert result[0] == cand2
     assert cand1 in result
+
+
+@pytest.mark.parametrize('restricted', ['project', 'branch', 'tags', 'type'])
+def test_expansion_filters_before_budget(db, graph_store, restricted):
+    from context_expander import ContextExpander
+    from memory_core.retrieval import SearchScope
+
+    hub = graph_store.add_node('concept', 'ledger')
+    seed = _add_k(db, 'Alpha invoices', 'alpha')
+    hidden = _add_k(db, 'Restricted ledger', 'alpha')
+    allowed = _add_k(db, 'Alpha ledger details', 'alpha')
+    db.execute("UPDATE knowledge SET type='fact',branch='main'")
+    if restricted == 'project':
+        db.execute("UPDATE knowledge SET project='beta' WHERE id=?", (hidden,))
+    elif restricted == 'branch':
+        db.execute("UPDATE knowledge SET branch='private' WHERE id=?", (hidden,))
+    elif restricted == 'tags':
+        db.execute("UPDATE knowledge SET tags='[\"recovery\"]' WHERE id=?", (hidden,))
+    else:
+        db.execute("UPDATE knowledge SET type='solution' WHERE id=?", (hidden,))
+    for kid in (seed, hidden, allowed):
+        _link(db, kid, hub)
+    scope = SearchScope(project='alpha', branch='main', kind='fact')
+    assert ContextExpander(db).expand([seed], budget=1, scope=scope,
+                                     excluded_tags=('recovery',)) == [allowed]
+
+
+def test_expansion_without_project_keeps_cross_project_results(db, graph_store):
+    from context_expander import ContextExpander
+    from memory_core.retrieval import SearchScope
+
+    hub = graph_store.add_node('concept', 'ledger')
+    seed = _add_k(db, 'Alpha invoices', 'alpha')
+    other = _add_k(db, 'Beta ledger', 'beta')
+    for kid in (seed, other):
+        _link(db, kid, hub)
+    assert ContextExpander(db).expand([seed], scope=SearchScope()) == [other]

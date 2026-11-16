@@ -97,13 +97,8 @@ VOLUME ["/data"]
 #   docker run -p 127.0.0.1:3737:3737 -p 127.0.0.1:37737:37737 -v ~/.tam:/data <image>
 EXPOSE 3737 37737
 
-# Healthcheck: both /healthz endpoints must answer. They're DB-independent
-# (don't depend on migrations finishing) so the container is reported
-# healthy as soon as both servers are listening — typically <15s.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:37737/healthz >/dev/null \
-        && curl -fsS http://127.0.0.1:3737/healthz >/dev/null \
-        || exit 1
+    CMD ["python", "/app/docker/worker_health.py"]
 
 # tini PID 1 → supervisor → mcp + dashboard + reflection + scheduler
 ENTRYPOINT ["/usr/bin/tini", "--", "tam-entrypoint"]

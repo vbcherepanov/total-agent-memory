@@ -17,6 +17,8 @@ name. This module keeps three things honest:
 from __future__ import annotations
 
 import math
+import hashlib
+import json
 import struct
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -49,6 +51,12 @@ class EmbedIdentity:
     provider: str
     pooling: str = ""
     library: str = ""
+
+    def key(self, dimension: int) -> str:
+        if not self.model or self.model == 'auto' or not self.provider or dimension <= 0:
+            raise ValueError('Embedding identity requires a concrete model, provider and dimension')
+        payload = [self.model, self.provider, self.pooling, self.library, dimension]
+        return hashlib.sha256(json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
 
 
 def fastembed_pooling(version: str) -> str:
@@ -94,6 +102,55 @@ def stale_ids(db: Any, expected: Mapping[str, str], limit: int = MAX_STALE_ENQUE
     return [int(row[0]) for row in rows]
 
 
+def reconciliation_ids(db: Any, expected: Mapping[str, str], limit: int = MAX_STALE_ENQUEUE) -> list[int]:
+    if not expected or limit <= 0:
+        return []
+    clause, params = _mismatch_clause(expected)
+    rows = db.execute(
+        "SELECT k.id FROM knowledge k LEFT JOIN embeddings e ON e.knowledge_id=k.id "
+        "LEFT JOIN embedding_pending p ON p.knowledge_id=k.id "
+        "WHERE k.status='active' AND p.knowledge_id IS NULL AND (e.knowledge_id IS NULL "
+        f"OR e.embed_model IS NULL OR e.embed_model IN ('','auto') OR ({clause})) "
+        "ORDER BY k.id LIMIT ?", (*params, int(limit)),
+    ).fetchall()
+    return [int(row[0]) for row in rows]
+
+
+@dataclass(frozen=True)
+class EmbeddingCoverage:
+    active: int
+    missing: int
+    unknown: int
+    stale: int
+    pending: int
+    failed: int
+    unqueued: int
+
+
+def embedding_coverage(db: Any, expected: Mapping[str, str]) -> EmbeddingCoverage:
+    clause, params = _mismatch_clause(expected)
+    stale = f"e.embed_model NOT IN ('','auto') AND ({clause})" if clause else "1=0"
+    rows = db.execute(
+        "SELECT gap, COALESCE(queue_status,''), COUNT(*) FROM (SELECT "
+        "CASE WHEN e.knowledge_id IS NULL THEN 'missing' "
+        "WHEN e.embed_model IS NULL OR e.embed_model IN ('','auto') THEN 'unknown' "
+        f"WHEN {stale} THEN 'stale' ELSE 'compatible' END AS gap, p.status AS queue_status "
+        "FROM knowledge k LEFT JOIN embeddings e ON e.knowledge_id=k.id "
+        "LEFT JOIN embedding_pending p ON p.knowledge_id=k.id WHERE k.status='active') coverage "
+        "GROUP BY gap, queue_status", params,
+    ).fetchall()
+    counts = {name: 0 for name in EmbeddingCoverage.__dataclass_fields__}
+    for gap, status, count in rows:
+        counts['active'] += count
+        if gap != 'compatible':
+            counts[gap] += count
+            if not status:
+                counts['unqueued'] += count
+        if status in {'pending', 'failed'}:
+            counts[status] += count
+    return EmbeddingCoverage(**counts)
+
+
 def count_stale(db: Any, space: str, model: str, dimension: int, project: str | None = None) -> int:
     """Active records with a vector in the group ``(space, model, dimension)``."""
     sql = (
@@ -134,5 +191,8 @@ def retire_group(db: Any, space: str, model: str) -> int:
         "UPDATE embeddings SET embed_model=? WHERE COALESCE(embedding_space,'text')=? AND embed_model=?",
         (model + STALE_MODEL_SUFFIX, space, model),
     )
+    if space == DEFAULT_SPACE:
+        db.execute("UPDATE knowledge_representations SET embed_model=? WHERE embed_model=?",
+                   (model + STALE_MODEL_SUFFIX, model))
     db.commit()
     return int(cursor.rowcount or 0)

@@ -12,11 +12,16 @@ Uses lazy imports to avoid circular dependencies.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import sys
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+from memory_core.retrieval import SearchScope, fetch_active_records
+from tam_db.contracts import Backend
 
 # Ensure src/ is in path for sibling package imports
 _src = str(Path(__file__).parent.parent)
@@ -194,7 +199,7 @@ class CognitiveEngine:
 
         return result
 
-    def on_query(self, query: str, project: str | None = None) -> dict:
+    def on_query(self, query: str, project: str | None = None, *, scope: SearchScope | None = None) -> dict:
         """
         Called on every user message. Returns relevant context
         by activating concepts in the knowledge graph and finding
@@ -233,7 +238,7 @@ class CognitiveEngine:
         # Find rules from graph nodes
         try:
             result["relevant_rules"] = self._find_relevant_rules(
-                concepts, project, activated
+                concepts, project, activated, scope=scope
             )
         except Exception as e:
             LOG(f"on_query relevant_rules error: {e}")
@@ -241,7 +246,7 @@ class CognitiveEngine:
         # Find past failures with similar concepts
         try:
             result["past_failures"] = self._find_past_failures(
-                concepts, project
+                concepts, project, scope=scope
             )
         except Exception as e:
             LOG(f"on_query past_failures error: {e}")
@@ -249,7 +254,7 @@ class CognitiveEngine:
         # Find available solutions
         try:
             result["available_solutions"] = self._find_solutions(
-                concepts, project, activated
+                concepts, project, activated, scope=scope
             )
         except Exception as e:
             LOG(f"on_query available_solutions error: {e}")
@@ -628,9 +633,12 @@ class CognitiveEngine:
         concepts: list[str],
         project: str | None,
         activated: dict[str, float],
+        scope: SearchScope | None = None,
     ) -> list[dict]:
         """Find rules relevant to the given concepts."""
         rules: list[dict] = []
+        scope = scope or SearchScope(project=project)
+        project = scope.project
 
         # From rules table
         if concepts:
@@ -655,21 +663,23 @@ class CognitiveEngine:
             activated_node_ids = list(activated.keys())[:20]
             if activated_node_ids:
                 placeholders = ",".join("?" * len(activated_node_ids))
+                graph_filter = ""
+                scope_params = []
+                if scope.as_of is not None or scope.project or scope.branch or scope.spaces or scope.kind != "all":
+                    predicates, scope_params = scope.sql()
+                    graph_filter = " AND EXISTS (SELECT 1 FROM knowledge_nodes kn JOIN knowledge k ON k.id=kn.knowledge_id WHERE kn.node_id=gn.id AND " + " AND ".join(predicates) + ")"
                 rows = self.db.execute(
-                    f"""SELECT DISTINCT gn.id, gn.name, gn.content, gn.type
-                        FROM graph_edges ge
-                        JOIN graph_nodes gn ON (
-                            (ge.source_id IN ({placeholders}) AND ge.target_id = gn.id)
-                            OR (ge.target_id IN ({placeholders}) AND ge.source_id = gn.id)
-                        )
+                    f"""SELECT gn.id, gn.name, gn.content, gn.type
+                        FROM graph_nodes gn
                         WHERE gn.type IN ('rule', 'prohibition', 'convention')
                           AND gn.status = 'active'
-                          AND (? IS NULL OR EXISTS (
-                              SELECT 1 FROM knowledge_nodes kn JOIN knowledge k ON k.id=kn.knowledge_id
-                              WHERE kn.node_id=gn.id AND k.project=? AND k.status='active'))
+                          AND EXISTS (SELECT 1 FROM graph_edges ge WHERE
+                            (ge.source_id IN ({placeholders}) AND ge.target_id = gn.id)
+                            OR (ge.target_id IN ({placeholders}) AND ge.source_id = gn.id))
+                          {graph_filter}
                         ORDER BY gn.importance DESC
                         LIMIT 5""",
-                    [*activated_node_ids, *activated_node_ids, project, project],
+                    [*activated_node_ids, *activated_node_ids, *scope_params],
                 ).fetchall()
                 for row in rows:
                     r = dict(row)
@@ -679,11 +689,13 @@ class CognitiveEngine:
         return rules
 
     def _find_past_failures(
-        self, concepts: list[str], project: str | None
+        self, concepts: list[str], project: str | None, scope: SearchScope | None = None,
     ) -> list[dict]:
         """Find past failure episodes with similar concepts."""
         if not concepts:
             return []
+        scope = scope or SearchScope(project=project)
+        project = scope.project
 
         # Search episodes with matching concepts and failure outcome
         like_clauses = " OR ".join(["concepts LIKE ?" for _ in concepts[:5]])
@@ -693,6 +705,11 @@ class CognitiveEngine:
         if project:
             project_filter = " AND project = ?"
             params.append(project)
+        if scope.as_of is not None:
+            from memory_core.snapshot import Snapshot
+            instant = Snapshot.at(scope.as_of).instant
+            project_filter += " AND julianday(timestamp)<=julianday(?) AND julianday(created_at)<=julianday(?)"
+            params.extend([instant, instant])
 
         rows = self.db.execute(
             f"""SELECT id, narrative, key_insight, impact_score, timestamp
@@ -707,42 +724,48 @@ class CognitiveEngine:
 
         return [dict(r) for r in rows]
 
-    def _solutions_matching(self, concepts: list[str], project: str | None) -> list:
+    def _solutions_matching(self, concepts: list[str], project: str | None,
+                            scope: SearchScope | None = None) -> list:
         """Active solutions whose content has a word starting with one of `concepts`.
 
         Uses the full-text index: a `LIKE '%concept%'` scan reads every
         solution in the store, which took 850 ms at 1M records. Falls back to
         that scan on databases without `knowledge_fts`.
         """
-        project_filter = " AND k.project = ?" if project else ""
-        project_params = [project] if project else []
+        scope = scope or SearchScope(project=project)
+        if not concepts or scope.kind not in ("all", "solution"):
+            return []
+        predicates, params = replace(scope, kind="solution").sql()
+        where = " AND ".join(predicates)
         terms = " OR ".join('"' + c.replace('"', '""') + '"*' for c in concepts)
         match = f"content : ({terms})"
-        if project:
+        if scope.project:
             from memory_core.fts_schema import project_token
-            match += f" AND fts_project : {project_token(project)}"
+            match += f" AND fts_project : {project_token(scope.project)}"
         try:
+            source = "SELECT rowid AS id FROM knowledge_fts WHERE knowledge_fts MATCH ?"
+            source_params = [match]
+            if getattr(self.db, "backend", None) is Backend.POSTGRES:
+                from memory_core.pg_fts import match_source
+                source, source_params = match_source("knowledge_fts", match)
             return self.db.execute(
-                f"""WITH f AS MATERIALIZED (
-                        SELECT rowid AS id FROM knowledge_fts WHERE knowledge_fts MATCH ?
-                    )
+                f"""WITH f AS MATERIALIZED ({source})
                     SELECT k.id, k.content, k.project, k.tags, k.confidence
                     FROM f JOIN knowledge k ON k.id = f.id
-                    WHERE k.type = 'solution' AND k.status = 'active'{project_filter}
+                    WHERE {where}
                     ORDER BY k.confidence DESC, k.recall_count DESC
                     LIMIT 10""",
-                [match, *project_params],
+                [*source_params, *params],
             ).fetchall()
         except sqlite3.OperationalError:
             like_clauses = " OR ".join("k.content LIKE ?" for _ in concepts)
             return self.db.execute(
                 f"""SELECT k.id, k.content, k.project, k.tags, k.confidence
                     FROM knowledge k
-                    WHERE k.type = 'solution' AND k.status = 'active'
-                      AND ({like_clauses}){project_filter}
+                    WHERE ({like_clauses}) AND {where}
                     ORDER BY k.confidence DESC, k.recall_count DESC
                     LIMIT 10""",
-                [f"%{c}%" for c in concepts] + project_params,
+                [f"%{c}%" for c in concepts] + params,
             ).fetchall()
 
     def _find_solutions(
@@ -750,15 +773,18 @@ class CognitiveEngine:
         concepts: list[str],
         project: str | None,
         activated: dict[str, float],
+        scope: SearchScope | None = None,
     ) -> list[dict]:
         """Find available solutions matching the concepts."""
         solutions: list[dict] = []
 
-        if not concepts:
+        scope = scope or SearchScope(project=project)
+        if not concepts or scope.kind not in ("all", "solution"):
             return solutions
+        scope = replace(scope, kind="solution")
 
         # From knowledge table
-        rows = self._solutions_matching(concepts[:5], project)
+        rows = self._solutions_matching(concepts[:5], project, scope=scope)
 
         solutions.extend(dict(r) for r in rows)
 
@@ -766,7 +792,7 @@ class CognitiveEngine:
         if activated and self.activation:
             try:
                 memory_scores = self.activation.get_activated_memories(
-                    activated, top_k=10
+                    activated, top_k=10, scope=scope
                 )
                 if memory_scores:
                     existing_ids = {s["id"] for s in solutions}
@@ -774,17 +800,13 @@ class CognitiveEngine:
                         kid for kid, _ in memory_scores if kid not in existing_ids
                     ]
                     if kid_list:
-                        placeholders = ",".join("?" * len(kid_list))
-                        rows = self.db.execute(
-                            f"""SELECT id, content, project, tags, confidence
-                                FROM knowledge
-                                WHERE id IN ({placeholders})
-                                  AND type = 'solution' AND status = 'active'""",
-                            kid_list,
-                        ).fetchall()
-                        solutions.extend(dict(r) for r in rows)
+                        records = fetch_active_records(self.db, kid_list, scope=scope)
+                        solutions.extend(
+                            {key: records[kid][key] for key in ("id", "content", "project", "tags", "confidence")}
+                            for kid in kid_list if kid in records)
             except Exception:
-                pass
+                logging.getLogger(__name__).exception('Activated solution lookup failed',
+                                                      extra={'project': project})
 
         return solutions[:10]
 
@@ -799,6 +821,9 @@ class CognitiveEngine:
             ["trigger_pattern LIKE ?" for _ in concepts[:5]]
         )
         params: list = [f"%{c}%" for c in concepts[:5]]
+        project_values = "json_each(skills.projects)"
+        if getattr(self.db, "backend", None) is Backend.POSTGRES:
+            project_values = "jsonb_array_elements_text(CAST(skills.projects AS JSONB)) AS allowed(value)"
 
         rows = self.db.execute(
             f"""SELECT id, name, trigger_pattern, steps, success_rate,
@@ -806,8 +831,8 @@ class CognitiveEngine:
                 FROM skills
                 WHERE status IN ('active', 'mastered')
                   AND ({like_clauses})
-                  AND (? IS NULL OR projects IS NULL OR projects = '[]'
-                       OR EXISTS (SELECT 1 FROM json_each(skills.projects) WHERE value=?))
+                  AND (CAST(? AS TEXT) IS NULL OR projects IS NULL OR projects = '[]'
+                       OR EXISTS (SELECT 1 FROM {project_values} WHERE value=?))
                 ORDER BY success_rate DESC, times_used DESC
                 LIMIT 5""",
             [*params, project, project],

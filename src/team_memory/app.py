@@ -7,7 +7,6 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
-from contextvars import ContextVar
 from urllib.parse import urlsplit
 
 from mcp.server import Server
@@ -21,6 +20,7 @@ from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Mount, Route
 
 from team_memory.accounts import AccountPolicy, Accounts
+from team_memory.call_router import READONLY, TOKEN, TeamCallRouter
 from team_memory.contracts import DomainError, Unauthorized
 from team_memory.dashboard import (
     COOKIE,
@@ -45,7 +45,7 @@ from team_memory.database_contracts import (
 from team_memory.learning import api as learning_api
 from team_memory.metrics import Metrics, RequestMetrics
 from team_memory.reports import api as reports_api
-from team_memory.service import TOOLS, MemoryService
+from team_memory.service import READ_ONLY_TOOLS, TOOLS, MemoryService
 from team_memory.settings import SettingsStore, load_cipher
 from team_memory.setup import SetupPolicy, SetupService
 from team_memory.setup_database import SetupDatabaseService
@@ -78,7 +78,6 @@ PUBLIC_PER_CLIENT_ENV = "TAM_TEAM_MAX_PUBLIC_PER_CLIENT"
 REQUEST_READ_TIMEOUT_SECONDS = 15
 # Anonymous bodies (a password, an invite code) are tiny; a client that cannot send one in this long is not a user.
 PUBLIC_READ_TIMEOUT_SECONDS = 4
-TOKEN: ContextVar[str] = ContextVar("team_memory_token", default="")
 PUBLIC_PATHS = ("/", "/healthz")
 # The dashboard shell and its assets: bodyless reads of files that need no credential. A browser fetches a dozen
 # of them at once, so they bypass the request pools (which guard slow bodies and credential lookups).
@@ -393,22 +392,24 @@ def create_app(service: MemoryService, dashboard: DashboardService | None = None
     setup_database = SetupDatabaseService(setup, service.registry, dashboard.database, dashboard.migration,
                                           setup_checker)
     server = Server("total-agent-memory", version=VERSION)
+    calls = TeamCallRouter(service)
 
     async def list_tools():
         return [Tool(name=name, description=description, inputSchema=model.model_json_schema())
-                for name, (model, description) in TOOLS.items()]
+                for name, (model, description) in TOOLS.items() if not READONLY.get() or name in READ_ONLY_TOOLS]
 
     async def call_tool(name, arguments):
         try:
-            data = await service.call(TOKEN.get(), name, arguments or {})
-            return CallToolResult(content=[TextContent(type="text", text=json.dumps(data, ensure_ascii=False))])
+            reply = await calls.replay(name, arguments or {})
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps(reply.payload, ensure_ascii=False))],
+                                  isError=reply.status >= 400)
         except (DomainError, ValidationError) as exc:
             return CallToolResult(content=[TextContent(type="text", text=json.dumps(
                 {"error": str(exc), "code": getattr(exc, "code", "invalid_request")}))], isError=True)
 
     if hasattr(server, "list_tools"):
         server.list_tools()(list_tools)
-        server.call_tool()(call_tool)
+        server.call_tool(validate_input=False)(call_tool)
     else:
         from mcp.types import (
             CallToolRequestParams,
@@ -427,21 +428,22 @@ def create_app(service: MemoryService, dashboard: DashboardService | None = None
     manager = StreamableHTTPSessionManager(app=server, event_store=None, json_response=True, stateless=True)
 
     async def mcp(scope, receive, send):
-        await manager.handle_request(scope, receive, send)
+        values = Request(scope).query_params.getlist("readonly")
+        if values and values not in (["0"], ["1"]):
+            await JSONResponse({"error": "readonly must be 0 or 1", "code": "invalid_request"}, status_code=400)(scope, receive, send)
+            return
+        policy = READONLY.set(values == ["1"])
+        try:
+            await manager.handle_request(scope, receive, send)
+        finally:
+            READONLY.reset(policy)
 
     async def health(_request):
+        from server_capabilities import TEAM_CAPABILITIES
         if not config.health_version:
-            return JSONResponse({"status": "ok", "name": "total-agent-memory"})
+            return JSONResponse({"status": "ok", "name": "total-agent-memory", "capabilities": list(TEAM_CAPABILITIES)})
         return JSONResponse({"status": "ok", "name": "total-agent-memory", "version": VERSION,
-                             "release_date": RELEASE_DATE})
-
-    async def invoke(request: Request):
-        try:
-            payload = await request.json()
-            result = await service.call(TOKEN.get(), payload["name"], payload.get("arguments", {}))
-            return JSONResponse(result)
-        except (DomainError, ValidationError, ValueError, KeyError, TypeError) as exc:
-            return JSONResponse({"error": str(exc), "code": getattr(exc, "code", "invalid_request")}, status_code=400)
+                             "release_date": RELEASE_DATE, "capabilities": list(TEAM_CAPABILITIES)})
 
     async def index(_request):
         from team_memory.ui import PAGE
@@ -467,7 +469,7 @@ def create_app(service: MemoryService, dashboard: DashboardService | None = None
     reports_api.register_section()
     app = Starlette(routes=[Route("/", index), Route("/healthz", health), *dashboard_routes(), *setup_routes(),
                             *learning_api.routes(service), *reports_api.routes(service),
-                            Route("/api/call", invoke, methods=["POST"]), Mount("/mcp", app=mcp)], lifespan=lifespan,
+                            calls.route, Mount("/mcp", app=mcp)], lifespan=lifespan,
                     middleware=[Middleware(Maintenance, gate=maintenance, metrics=metrics)])
     app.state.dashboard = dashboard
     app.state.setup = setup

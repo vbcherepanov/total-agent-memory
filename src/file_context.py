@@ -100,6 +100,15 @@ def _path_appears_in_text(path: str, *texts: str | None) -> bool:
     return False
 
 
+def _candidate_filter(path: str, columns: tuple[str, ...]) -> tuple[str, list[str]]:
+    needle = os.path.basename(path) or path
+    variants = sorted({needle, json.dumps(needle, ensure_ascii=True)[1:-1]})
+    patterns = ["%" + value.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+                for value in variants]
+    clauses = [f"COALESCE({column}, '') LIKE ? ESCAPE '!'" for column in columns for _ in patterns]
+    return "(" + " OR ".join(clauses) + ")", patterns * len(columns)
+
+
 class FileContextGuard:
     """Surface warnings relevant to a specific file path."""
 
@@ -158,8 +167,8 @@ class FileContextGuard:
         if not self._table_exists("errors"):
             return []
 
-        conditions: list[str] = []
-        params: list[Any] = []
+        candidate, params = _candidate_filter(path, ("tags", "description", "context", "fix"))
+        conditions = [candidate]
         if project:
             conditions.append("project = ?")
             params.append(project)
@@ -171,9 +180,9 @@ class FileContextGuard:
             f"""SELECT id, category, severity, description, context, fix,
                        tags, status, created_at, resolved_at
                 FROM errors {where}
-                ORDER BY created_at DESC LIMIT ?""",
-            [*params, limit * 10],
-        ).fetchall()
+                ORDER BY created_at DESC, id DESC""",
+            params,
+        )
 
         matches: list[dict[str, Any]] = []
         for r in rows:
@@ -209,8 +218,8 @@ class FileContextGuard:
         if not self._table_exists("knowledge"):
             return []
 
-        conditions = ["status = 'active'"]
-        params: list[Any] = []
+        candidate, params = _candidate_filter(path, ("tags", "content", "context"))
+        conditions = ["status = 'active'", candidate]
         if project:
             conditions.append("project = ?")
             params.append(project)
@@ -223,9 +232,9 @@ class FileContextGuard:
             f"""SELECT id, type, content, context, tags, confidence,
                        created_at, recall_count
                 FROM knowledge {where}
-                ORDER BY confidence DESC, created_at DESC LIMIT ?""",
-            [*params, limit * 10],
-        ).fetchall()
+                ORDER BY confidence DESC, created_at DESC, id DESC""",
+            params,
+        )
 
         matches: list[dict[str, Any]] = []
         for r in rows:
@@ -264,12 +273,13 @@ class FileContextGuard:
             return []
         cur = self.db.cursor()
         cur.row_factory = sqlite3.Row
+        candidate, params = _candidate_filter(path, ("content", "context"))
         rows = cur.execute(
-            """SELECT id, content, context, category, priority, success_rate
-               FROM rules WHERE status = 'active'
-               ORDER BY priority DESC, success_rate DESC LIMIT ?""",
-            [limit * 5],
-        ).fetchall()
+            f"""SELECT id, content, context, category, priority, success_rate
+               FROM rules WHERE status = 'active' AND {candidate}
+               ORDER BY priority DESC, success_rate DESC, id DESC""",
+            params,
+        )
         matches: list[dict[str, Any]] = []
         for r in rows:
             if _path_appears_in_text(path, r["content"], r["context"]):

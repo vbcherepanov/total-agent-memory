@@ -267,6 +267,11 @@ def test_save_decision_enqueues_representations(store):
 def test_save_decision_generates_criterion_multi_repr(store, monkeypatch):
     """When embed() returns a vector, both summary+criterion repr rows land."""
     import server as _srv
+    from memory_core.embedding_identity import EmbedIdentity
+    from multi_repr_search import search_with_winners
+
+    identity = EmbedIdentity("actual-fallback", "fallback-provider", "mean", "test-version")
+    monkeypatch.setattr(store, "last_embed_identity", lambda: identity)
 
     # Stub embed() so multi_repr upsert exercises the criterion path.
     def fake_embed(self, texts):
@@ -289,6 +294,14 @@ def test_save_decision_generates_criterion_multi_repr(store, monkeypatch):
     assert "criterion" in reprs
     for crit in ("performance", "ecosystem", "type-safety"):
         assert crit in reprs["criterion"]
+    identities = store.db.execute(
+        "SELECT embed_model, embed_identity_key FROM knowledge_representations WHERE knowledge_id=?",
+        (rid,),
+    ).fetchall()
+    assert all(row["embed_model"] == identity.model and row["embed_identity_key"] == identity.key(4)
+               for row in identities)
+    hits, _ = search_with_winners(store.db, [0.1, 0.2, 0.3, 0.4], query_identity=identity)
+    assert rid in [kid for kid, _ in hits]
 
 
 def test_save_decision_without_embedder_still_succeeds(store, monkeypatch):

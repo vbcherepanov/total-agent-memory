@@ -1,0 +1,16 @@
+{
+  "records": [
+    {"type":"fact","content":"Binary quantization compresses vector search representations.","tags":[]},
+    {"type":"fact","content":"Temporal knowledge graphs preserve point-in-time relationships.","tags":[]},
+    {"type":"solution","content":"Procedural memory stores workflow steps and outcomes.","tags":[]},
+    {"type":"lesson","content":"Avoid SQLite locking while editing database.py; keep write transactions short.","tags":["database.py"]},
+    {"type":"lesson","content":"Rebuild FTS indexes after repairing search.py corruption.","tags":["search.py"]}
+  ],
+  "scenarios": [
+    {"name":"binary_quantization","type":"recall","query":"binary quantization vector search","must_contain":["binary quantization"]},
+    {"name":"temporal_graph","type":"recall","query":"temporal knowledge graph point-in-time","must_contain":["temporal"]},
+    {"name":"procedural_memory","type":"recall","query":"procedural memory workflow outcome","must_contain":["workflow"]},
+    {"name":"sqlite_prevention","type":"prevention","file":"database.py","must_warn_about":["sqlite"]},
+    {"name":"fts_prevention","type":"prevention","file":"search.py","must_warn_about":["fts"]}
+  ]
+}

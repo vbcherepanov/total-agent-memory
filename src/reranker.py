@@ -28,6 +28,7 @@ import numpy as np
 import config
 from llm_provider import make_provider
 from memory_core.evidence_excerpt import excerpt
+from memory_core.retrieval import SearchScope
 
 MODEL_RERANK_EXCERPT_CHARS = 1024
 LLM_RERANK_EXCERPT_CHARS = 1024
@@ -661,7 +662,8 @@ def analyze_query(query: str) -> dict:
 # Multi-hop graph traversal
 # =============================================================================
 
-def multi_hop_expand(store, seed_ids: list, results: dict, depth: int = 2) -> dict:
+def multi_hop_expand(store, seed_ids: list, results: dict, depth: int = 2,
+                     *, scope: SearchScope | None = None) -> dict:
     """
     Expand graph relations to depth N (default 2 hops).
     Current system does 1 hop — this does 2+ for architecture queries.
@@ -671,6 +673,7 @@ def multi_hop_expand(store, seed_ids: list, results: dict, depth: int = 2) -> di
     """
     visited = set(results.keys())
     current_layer = seed_ids
+    predicates, params = (scope or SearchScope()).sql()
 
     for hop in range(depth):
         next_layer = []
@@ -681,11 +684,11 @@ def multi_hop_expand(store, seed_ids: list, results: dict, depth: int = 2) -> di
                 continue
             parent_score = results[kid]["score"]
 
-            for r in store.q("""
+            for r in store.q(f"""
                 SELECT k.* FROM relations rel
                 JOIN knowledge k ON k.id = CASE WHEN rel.from_id=? THEN rel.to_id ELSE rel.from_id END
-                WHERE (rel.from_id=? OR rel.to_id=?) AND k.status='active'
-            """, (kid, kid, kid)):
+                WHERE (rel.from_id=? OR rel.to_id=?) AND {' AND '.join(predicates)}
+            """, [kid, kid, kid, *params]):
                 rid = r["id"]
                 if rid not in visited:
                     visited.add(rid)

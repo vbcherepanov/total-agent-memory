@@ -30,6 +30,8 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 from memory_core.episodes.schema import EpisodeHit  # noqa: E402
+from memory_core.retrieval import SearchScope  # noqa: E402
+from memory_core.telemetry import counters, op_timer  # noqa: E402
 from tam_db.contracts import Backend  # noqa: E402
 
 
@@ -41,6 +43,7 @@ CANDIDATE_MULTIPLIER: int = 5    # pull this many per channel before fusion
 # ─── public API ─────────────────────────────────────────────────────────
 
 
+@op_timer("retrieval_episodes_ms")
 def retrieve_episodes(
     conn: sqlite3.Connection,
     query: str,
@@ -48,6 +51,7 @@ def retrieve_episodes(
     *,
     k: int = DEFAULT_K,
     embed_fn: Callable[[str], Sequence[float]],
+    scope: SearchScope | None = None,
 ) -> list[EpisodeHit]:
     """Return the top-k episodes for ``query``, fused across BM25 and cosine.
 
@@ -72,8 +76,8 @@ def retrieve_episodes(
         return []
     candidate_n = max(k * CANDIDATE_MULTIPLIER, 25)
 
-    bm25_ranked = _bm25_search(conn, query, project, candidate_n)
-    cosine_ranked = _cosine_search(conn, query, project, candidate_n, embed_fn)
+    bm25_ranked = _bm25_search(conn, query, project, candidate_n, scope=scope)
+    cosine_ranked = _cosine_search(conn, query, project, candidate_n, embed_fn, scope=scope)
 
     fused = _rrf_fuse(
         {"bm25": bm25_ranked, "cosine": cosine_ranked},
@@ -110,7 +114,23 @@ def retrieve_episodes(
                 cosine_rank=cos_rank.get(eid),
             )
         )
+    counters.bump("retrieval_episode_hits", len(out))
     return out
+
+
+def _episode_scope(scope: SearchScope | None) -> tuple[str, list[str]]:
+    if scope is None:
+        return "1=1", []
+    predicates, params = scope.sql()
+    sql = ("EXISTS (SELECT 1 FROM episode_facts ef WHERE ef.episode_id=e.id) "
+           "AND NOT EXISTS (SELECT 1 FROM episode_facts ef WHERE ef.episode_id=e.id "
+           "AND NOT EXISTS (SELECT 1 FROM knowledge k WHERE k.id=ef.knowledge_id AND "
+           + " AND ".join(predicates) + "))")
+    if scope.as_of is not None:
+        from memory_core.snapshot import Snapshot
+        sql += " AND julianday(e.ended_at)<=julianday(?)"
+        params.append(Snapshot.at(scope.as_of).instant)
+    return sql, params
 
 
 # ─── BM25 channel ───────────────────────────────────────────────────────
@@ -121,10 +141,11 @@ def _bm25_search(
     query: str,
     project: str | None,
     n: int,
+    *, scope: SearchScope | None = None,
 ) -> list[tuple[int, float]]:
     if _fts_available(conn):
-        return _bm25_fts(conn, query, project, n)
-    return _bm25_like(conn, query, project, n)
+        return _bm25_fts(conn, query, project, n, scope=scope)
+    return _bm25_like(conn, query, project, n, scope=scope)
 
 
 def _bm25_fts(
@@ -132,12 +153,13 @@ def _bm25_fts(
     query: str,
     project: str | None,
     n: int,
+    *, scope: SearchScope | None = None,
 ) -> list[tuple[int, float]]:
     fts_query = _sanitize_fts(query)
     if not fts_query:
-        return _bm25_like(conn, query, project, n)
+        return _bm25_like(conn, query, project, n, scope=scope)
     if getattr(conn, "backend", None) is Backend.POSTGRES:
-        return _bm25_pg(conn, fts_query, project, n)
+        return _bm25_pg(conn, fts_query, project, n, scope=scope)
     sql = (
         "SELECT f.rowid AS eid, bm25(episodes_v11_fts) AS score "
         "FROM episodes_v11_fts AS f "
@@ -148,13 +170,16 @@ def _bm25_fts(
     if project:
         sql += "AND e.project = ? "
         params.append(project)
+    predicate, scope_params = _episode_scope(scope)
+    sql += f"AND {predicate} "
+    params.extend(scope_params)
     sql += "ORDER BY score ASC LIMIT ?"
     params.append(int(n))
     try:
         cur = conn.execute(sql, params)
     except sqlite3.OperationalError:
         # Malformed FTS expression even after sanitize — degrade.
-        return _bm25_like(conn, query, project, n)
+        return _bm25_like(conn, query, project, n, scope=scope)
     # bm25() returns lower=better; convert to higher=better so RRF gets a
     # consistent "first row is best" ordering.
     rows = cur.fetchall()
@@ -166,6 +191,7 @@ def _bm25_pg(
     fts_query: str,
     project: str | None,
     n: int,
+    *, scope: SearchScope | None = None,
 ) -> list[tuple[int, float]]:
     from memory_core.pg_fts import match_source
 
@@ -174,8 +200,11 @@ def _bm25_pg(
         f"SELECT f.id AS eid, f.rank AS score FROM ({source}) AS f "
         "JOIN episodes_v11 AS e ON e.id = f.id "
     )
+    predicate, scope_params = _episode_scope(scope)
+    sql += f"WHERE {predicate} "
+    params = [*params, *scope_params]
     if project:
-        sql += "WHERE e.project = ? "
+        sql += "AND e.project = ? "
         params = [*params, project]
     sql += "ORDER BY score ASC, eid ASC LIMIT ?"
     rows = conn.execute(sql, [*params, int(n)]).fetchall()
@@ -188,6 +217,7 @@ def _bm25_like(
     query: str,
     project: str | None,
     n: int,
+    *, scope: SearchScope | None = None,
 ) -> list[tuple[int, float]]:
     """Fallback when FTS5 is missing — naive substring scoring on tokens.
 
@@ -200,11 +230,12 @@ def _bm25_like(
         return []
     sql = (
         "SELECT id, summary, COALESCE(participants,'') AS participants "
-        "FROM episodes_v11"
+        "FROM episodes_v11 e"
     )
-    params: list[Any] = []
+    predicate, params = _episode_scope(scope)
+    sql += f" WHERE {predicate}"
     if project:
-        sql += " WHERE project = ?"
+        sql += " AND e.project = ?"
         params.append(project)
     cur = conn.execute(sql, params)
     scored: list[tuple[int, float]] = []
@@ -259,6 +290,7 @@ def _cosine_search(
     project: str | None,
     n: int,
     embed_fn: Callable[[str], Sequence[float]],
+    *, scope: SearchScope | None = None,
 ) -> list[tuple[int, float]]:
     qvec = list(embed_fn(query) or ())
     if not qvec:
@@ -267,8 +299,8 @@ def _cosine_search(
     if qnorm <= 0.0:
         return []
 
-    sql = "SELECT id, embedding_blob FROM episodes_v11 WHERE embedding_blob IS NOT NULL"
-    params: list[Any] = []
+    predicate, params = _episode_scope(scope)
+    sql = f"SELECT id, embedding_blob FROM episodes_v11 e WHERE embedding_blob IS NOT NULL AND {predicate}"
     if project:
         sql += " AND project = ?"
         params.append(project)

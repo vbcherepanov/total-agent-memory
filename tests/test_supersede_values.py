@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -13,6 +14,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from memory_core.dedup import updates_value
 from tests.pg_store_support import store_backend  # noqa: F401 — fixture
+
+
+def test_documented_correction_pair_satisfies_detector():
+    from memory_core.cross_rerank import order_value_updates
+
+    document = (Path(__file__).resolve().parents[1] / "docs" / "whats-new.md").read_text(encoding="utf-8")
+    row = next(line for line in document.splitlines() if "Corrections rank above" in line)
+    examples = re.findall(r'"([^"]+)"', row)
+    assert len(examples) == 2, "Document both the original statement and its correction"
+    old, new = examples
+    records = [(old, 1), (new, 2)]
+    assert order_value_updates(records, lambda item: item[0], lambda item: (item[1],)) == records[::-1]
 
 VALUE_UPDATES = [
     ("Lionel Messi's country of citizenship is Armenia", "Lionel Messi's country of citizenship is Argentina"),
@@ -123,6 +136,21 @@ def test_without_flag_the_correction_ranks_above_the_value_it_corrects(srv, new,
     save(srv, old)
     save(srv, new)
     assert recall_contents(srv, query) == [new, old]
+
+
+@pytest.mark.parametrize(('old', 'new', 'query'), [
+    ("The stand-up is at 10:15 on Thursdays.", "The stand-up moved to 9:30 on Mondays.",
+     "When is the stand-up?"),
+    ("Стендап проходит в 10:15 по четвергам.", "Стендап перенесли на 9:30 по понедельникам.",
+     "Когда проходит стендап?"),
+    ("Dana's standup meeting is at 10:15 on Thursdays.",
+     "Dana's stand-up meeting is now at 9:30 on Mondays.", "When is Dana's standup meeting?"),
+])
+def test_reported_schedule_paraphrase_wins_real_recall_without_retiring_history(srv, old, new, query):
+    save(srv, old)
+    save(srv, new)
+    assert recall_contents(srv, query) == [new, old]
+    assert active(srv) == [old, new]
 
 
 def test_memory_get_reports_what_superseded_a_record(srv):

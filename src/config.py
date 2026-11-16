@@ -943,12 +943,38 @@ def context_resolves_dates() -> bool:
 
 
 CROSS_RERANK_MODES = ("auto", "on", "off")
-DEFAULT_CROSS_RERANK_MODEL = "Xenova/ms-marco-MiniLM-L-6-v2"
-MULTILINGUAL_CROSS_RERANK_MODELS = frozenset({"jinaai/jina-reranker-v2-base-multilingual"})
+DEFAULT_CROSS_RERANK_MODEL = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+MULTILINGUAL_CROSS_RERANK_MODELS = frozenset({
+    DEFAULT_CROSS_RERANK_MODEL, "jinaai/jina-reranker-v2-base-multilingual",
+})
 DEFAULT_CROSS_RERANK_WINDOW = 50
 DEFAULT_CROSS_RERANK_WEIGHT = 2.0
 # Characters of the previous and of the next turn the encoder reads with each candidate.
 DEFAULT_CROSS_RERANK_CONTEXT = 400
+DEFAULT_CROSS_RERANK_CACHE_SCORES = 4096
+DEFAULT_CROSS_RERANK_BATCH_SIZE = 8
+DEFAULT_CROSS_RERANK_THREADS = 4
+
+
+def get_cross_rerank_threads() -> int:
+    value = int(os.environ.get("MEMORY_CROSS_RERANK_THREADS", str(DEFAULT_CROSS_RERANK_THREADS)))
+    if value < 1:
+        raise ValueError("MEMORY_CROSS_RERANK_THREADS must be a positive integer")
+    return value
+
+
+def get_cross_rerank_batch_size() -> int:
+    value = int(os.environ.get('MEMORY_CROSS_RERANK_BATCH_SIZE', str(DEFAULT_CROSS_RERANK_BATCH_SIZE)))
+    if value < 0:
+        raise ValueError('MEMORY_CROSS_RERANK_BATCH_SIZE must be zero or positive')
+    return value
+
+
+def get_cross_rerank_cache_scores() -> int:
+    value = int(os.environ.get('MEMORY_CROSS_RERANK_CACHE_SCORES', str(DEFAULT_CROSS_RERANK_CACHE_SCORES)))
+    if value < 0:
+        raise ValueError('MEMORY_CROSS_RERANK_CACHE_SCORES must be zero or positive')
+    return value
 
 
 def get_cross_rerank_mode() -> str:

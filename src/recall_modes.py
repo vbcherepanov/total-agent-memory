@@ -69,12 +69,13 @@ def index_response(search_result: dict[str, Any]) -> dict[str, Any]:
     flat: list[dict[str, Any]] = []
     grouped = search_result.get("results") or {}
     if isinstance(grouped, dict):
-        for group in grouped.values():
+        for kind, group in grouped.items():
             if not isinstance(group, list):
                 continue
             for item in group:
                 if not isinstance(item, dict):
                     continue
+                item = {**item, "type": item.get("type") or kind}
                 # Items from detail="compact" store the title under "title"
                 # rather than "content". Preserve that when available so we
                 # don't re-truncate.
@@ -112,9 +113,10 @@ def _flatten(search_result: dict[str, Any]) -> list[dict[str, Any]]:
     flat: list[dict[str, Any]] = []
     grouped = search_result.get("results") or {}
     if isinstance(grouped, dict):
-        for group in grouped.values():
+        for kind, group in grouped.items():
             if isinstance(group, list):
-                flat.extend(i for i in group if isinstance(i, dict))
+                flat.extend({**i, "type": i.get("type") or kind}
+                            for i in group if isinstance(i, dict))
     return flat
 
 
@@ -140,6 +142,7 @@ def _fetch_neighbors(
     created_at: str,
     exclude_ids: set[int],
     neighbors: int,
+    scope: SearchScope | None = None,
 ) -> list[dict[str, Any]]:
     """Return up to ``neighbors`` before and ``neighbors`` after the anchor.
 
@@ -153,6 +156,8 @@ def _fetch_neighbors(
 
     collected: list[dict[str, Any]] = []
     db = store.db
+    predicates, scope_params = (scope or SearchScope()).sql()
+    where = " AND ".join(predicates)
 
     def _rows_to_entries(rows: list[Any]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
@@ -168,15 +173,15 @@ def _fetch_neighbors(
     if session_id:
         before = db.execute(
             "SELECT id, session_id, type, content, project, created_at "
-            "FROM knowledge WHERE session_id=? AND status='active' "
+            f"FROM knowledge k WHERE session_id=? AND {where} "
             "AND created_at < ? ORDER BY created_at DESC LIMIT ?",
-            (session_id, created_at, neighbors),
+            [session_id, *scope_params, created_at, neighbors],
         ).fetchall()
         after = db.execute(
             "SELECT id, session_id, type, content, project, created_at "
-            "FROM knowledge WHERE session_id=? AND status='active' "
+            f"FROM knowledge k WHERE session_id=? AND {where} "
             "AND created_at > ? ORDER BY created_at ASC LIMIT ?",
-            (session_id, created_at, neighbors),
+            [session_id, *scope_params, created_at, neighbors],
         ).fetchall()
         collected.extend(_rows_to_entries(list(before)))
         collected.extend(_rows_to_entries(list(after)))
@@ -191,9 +196,9 @@ def _fetch_neighbors(
     if need_before > 0:
         rows = db.execute(
             "SELECT id, session_id, type, content, project, created_at "
-            "FROM knowledge WHERE status='active' AND created_at < ? "
+            f"FROM knowledge k WHERE {where} AND created_at < ? "
             "ORDER BY created_at DESC LIMIT ?",
-            (created_at, need_before * 3),
+            [*scope_params, created_at, need_before * 3],
         ).fetchall()
         added = 0
         for r in rows:
@@ -207,9 +212,9 @@ def _fetch_neighbors(
     if need_after > 0:
         rows = db.execute(
             "SELECT id, session_id, type, content, project, created_at "
-            "FROM knowledge WHERE status='active' AND created_at > ? "
+            f"FROM knowledge k WHERE {where} AND created_at > ? "
             "ORDER BY created_at ASC LIMIT ?",
-            (created_at, need_after * 3),
+            [*scope_params, created_at, need_after * 3],
         ).fetchall()
         added = 0
         for r in rows:
@@ -259,6 +264,7 @@ def timeline_response(
             created_at=created_at,
             exclude_ids=seen,
             neighbors=neighbors,
+            scope=scope,
         )
         for n in nbrs:
             n["role"] = "neighbor"

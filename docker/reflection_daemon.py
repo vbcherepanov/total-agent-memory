@@ -18,11 +18,14 @@ import sys
 import time
 from pathlib import Path
 
+from worker_health import Heartbeat
+
 MEMORY_DIR = Path(os.environ.get("CLAUDE_MEMORY_DIR", "/data"))
 TRIGGER_FILE = MEMORY_DIR / ".reflect-pending"
 DEBOUNCE_SEC = int(os.environ.get("REFLECT_DEBOUNCE_SEC", "5"))
 INTERVAL_SEC = int(os.environ.get("REFLECT_INTERVAL_SEC", "3600"))
 SRC_DIR = Path(os.environ.get("CLAUDE_TOTAL_MEMORY_SRC", "/app/src"))
+RUN_TIMEOUT_SECONDS = 600
 
 
 def _log(msg: str) -> None:
@@ -30,19 +33,20 @@ def _log(msg: str) -> None:
     sys.stderr.flush()
 
 
-def _run_reflection() -> None:
+def _run_reflection(heartbeat: Heartbeat) -> None:
     runner = SRC_DIR / "tools" / "run_reflection.py"
     if not runner.exists():
         _log(f"runner not found: {runner} — reflection skipped")
         return
     try:
-        subprocess.run(
-            [sys.executable, str(runner), "--scope=auto"],
-            check=False,
-            cwd=str(SRC_DIR.parent),
-            env={**os.environ, "PYTHONPATH": str(SRC_DIR)},
-            timeout=600,
-        )
+        with heartbeat.job(RUN_TIMEOUT_SECONDS):
+            subprocess.run(
+                [sys.executable, str(runner), "--scope=auto"],
+                check=False,
+                cwd=str(SRC_DIR.parent),
+                env={**os.environ, "PYTHONPATH": str(SRC_DIR)},
+                timeout=RUN_TIMEOUT_SECONDS,
+            )
     except subprocess.TimeoutExpired:
         _log("reflection run timed out (>10m)")
     except Exception as e:
@@ -50,6 +54,7 @@ def _run_reflection() -> None:
 
 
 def main() -> None:
+    heartbeat = Heartbeat("reflection")
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
     _log(f"watching {TRIGGER_FILE} (debounce={DEBOUNCE_SEC}s, interval={INTERVAL_SEC}s)")
 
@@ -58,6 +63,7 @@ def main() -> None:
     pending_since = 0.0
 
     while True:
+        heartbeat.pulse()
         now = time.time()
         trigger_mtime = 0.0
         try:
@@ -73,7 +79,7 @@ def main() -> None:
         # Debounced drain
         if pending_since and (now - pending_since) >= DEBOUNCE_SEC:
             _log("debounce elapsed — running reflection")
-            _run_reflection()
+            _run_reflection(heartbeat)
             last_run_at = time.time()
             pending_since = 0.0
             continue
@@ -81,10 +87,10 @@ def main() -> None:
         # Safety-net periodic run
         if (now - last_run_at) >= INTERVAL_SEC:
             _log("periodic run (safety net)")
-            _run_reflection()
+            _run_reflection(heartbeat)
             last_run_at = time.time()
 
-        time.sleep(1)
+        heartbeat.sleep(1)
 
 
 if __name__ == "__main__":

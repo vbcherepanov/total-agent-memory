@@ -10,6 +10,8 @@ def configure_torch_threads() -> None:
     threads = get_torch_threads()
     os.environ['OMP_NUM_THREADS'] = str(threads)
     os.environ['OPENBLAS_NUM_THREADS'] = str(threads)
+    os.environ['MKL_NUM_THREADS'] = str(threads)
+    os.environ['VECLIB_MAXIMUM_THREADS'] = str(threads)
     import torch
     from threadpoolctl import threadpool_limits
 

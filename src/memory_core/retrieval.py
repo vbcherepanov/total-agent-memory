@@ -3,7 +3,9 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TypedDict
+from memory_core.incidents import IncidentFilter
 
 
 class EventEvidence(TypedDict):
@@ -26,6 +28,8 @@ class PassageReference(TypedDict):
 class MemoryHit(TypedDict, total=False):
     id: int
     content: str
+    context: str
+    source_format: str
     project: str
     type: str
     branch: str
@@ -49,7 +53,8 @@ class MemoryHit(TypedDict, total=False):
 KNOWLEDGE_BATCH_SIZE = 400
 
 
-def fetch_active_records(db: sqlite3.Connection, identities: list[int]) -> dict[int, MemoryHit]:
+def fetch_active_records(db: sqlite3.Connection, identities: list[int],
+                         scope: SearchScope | None = None) -> dict[int, MemoryHit]:
     from memory_core.telemetry import counters, op_timer
 
     result: dict[int, MemoryHit] = {}
@@ -57,9 +62,10 @@ def fetch_active_records(db: sqlite3.Connection, identities: list[int]) -> dict[
     with op_timer("retrieval_hydration_ms"):
         for offset in range(0, len(unique), KNOWLEDGE_BATCH_SIZE):
             batch = unique[offset:offset + KNOWLEDGE_BATCH_SIZE]
+            predicates, params = (scope or SearchScope()).sql()
             rows = db.execute(
-                "SELECT * FROM knowledge WHERE status='active' AND id IN ("
-                + ",".join("?" for _ in batch) + ")", batch,
+                "SELECT k.* FROM knowledge k WHERE " + " AND ".join(predicates) + " AND k.id IN ("
+                + ",".join("?" for _ in batch) + ")", [*params, *batch],
             ).fetchall()
             result.update((row["id"], dict(row)) for row in rows)
             counters.bump("retrieval_hydration_batches")
@@ -86,10 +92,16 @@ class SearchScope:
     kind: str = "all"
     branch: str | None = None
     spaces: str | list[str] | None = None
+    as_of: datetime | str | None = None
+    incident: IncidentFilter | None = None
 
     def sql(self) -> tuple[list[str], list[str]]:
         predicates = ["k.status='active'"]
         params: list[str] = []
+        if self.as_of is not None:
+            from memory_core.snapshot import Snapshot
+            predicate, params = Snapshot.at(self.as_of).predicate()
+            predicates = [predicate]
         for column, value in (
             ("project", self.project),
             ("type", self.kind if self.kind != "all" else None),
@@ -102,17 +114,30 @@ class SearchScope:
             params.append(self.branch)
         if self.spaces:
             spaces = [self.spaces] if isinstance(self.spaces, str) else self.spaces
+            table = "snapshot_embedding_cache" if self.as_of is not None else "embeddings"
             predicates.append(
-                "EXISTS (SELECT 1 FROM embeddings e WHERE e.knowledge_id=k.id "
+                f"EXISTS (SELECT 1 FROM {table} e WHERE e.knowledge_id=k.id "
                 "AND COALESCE(e.embedding_space,'text') IN ("
                 + ",".join("?" for _ in spaces)
                 + "))"
             )
             params.extend(space.strip().lower() for space in spaces)
+        if self.incident is not None:
+            incident_predicates, incident_params = self.incident.sql()
+            predicates.extend(incident_predicates)
+            params.extend(incident_params)
         return predicates, params
 
     def allows(self, record: Mapping[str, object], db: sqlite3.Connection) -> bool:
-        if record.get("status", "active") != "active":
+        if self.incident is not None:
+            predicates, params = self.sql()
+            return db.execute("SELECT k.id FROM knowledge k WHERE k.id=? AND " + " AND ".join(predicates),
+                              [record["id"], *params]).fetchone() is not None
+        if self.as_of is not None:
+            from memory_core.snapshot import Snapshot
+            if not Snapshot.at(self.as_of).allows(db, int(record["id"])):
+                return False
+        elif record.get("status", "active") != "active":
             return False
         if self.project and record.get("project") != self.project:
             return False
@@ -123,8 +148,9 @@ class SearchScope:
         if self.spaces:
             spaces = [self.spaces] if isinstance(self.spaces, str) else self.spaces
             spaces = {space.strip().lower() for space in spaces}
+            table = "snapshot_embedding_cache" if self.as_of is not None else "embeddings"
             rows = db.execute(
-                "SELECT COALESCE(embedding_space, 'text') FROM embeddings WHERE knowledge_id=?",
+                f"SELECT COALESCE(embedding_space, 'text') FROM {table} WHERE knowledge_id=?",
                 (record["id"],),
             ).fetchall()
             return any(row[0] in spaces for row in rows)

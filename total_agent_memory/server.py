@@ -106,15 +106,9 @@ options:
 
 
 def _installed_version() -> str:
-    from importlib.metadata import PackageNotFoundError, version
+    from total_agent_memory import __version__
 
-    try:
-        return version(DISTRIBUTION)
-    except PackageNotFoundError:
-        import tomllib
-
-        with open(os.path.join(_root, "pyproject.toml"), "rb") as handle:
-            return tomllib.load(handle)["project"]["version"]
+    return __version__
 
 
 def _answer_without_server(argv) -> int | None:

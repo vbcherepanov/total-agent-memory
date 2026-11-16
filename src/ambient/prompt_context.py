@@ -100,10 +100,11 @@ class PromptContext:
     background: BackgroundPath
     elapsed_ms: int
     correction_id: int | None = None
+    dropped_floor: int = 0
 
 
 def wants_context(prompt: str) -> bool:
-    stripped = prompt.strip()
+    stripped = hook_recall.user_prompt_text(prompt)
     return len(stripped) >= MIN_PROMPT_CHARS and not stripped.startswith(COMMAND_PREFIX)
 
 
@@ -219,9 +220,8 @@ def cold_recall(db: sqlite3.Connection, prompt: str, project: str, session_id: s
             continue
         groups.setdefault(str(kind or "memory"), []).append({
             "id": int(record_id), "type": kind, "content": content, "project": record_project,
-            "created_at": created_at, "score": -float(rank)})
-        if sum(len(items) for items in groups.values()) >= COLD_LIMIT:
-            break
+            "created_at": created_at,
+            "score": len(set(terms) & set(_FTS_WORD.findall(content.casefold()))) / len(terms)})
     return {"results": groups}
 
 
@@ -239,6 +239,7 @@ def build_prompt_context(*, db_path: Path, memory_dir: Path, prompt: str, projec
                          clock: Callable[[], float] = time.monotonic) -> PromptContext:
     """Correction draft, rules + background for ``prompt``; updates the session state and rule surfaces."""
     deadline = Deadline(settings.latency_ms / MS_PER_SEC, clock)
+    prompt = hook_recall.user_prompt_text(prompt)
     capture = settings.correction_capture and is_user_text(prompt)
     recall = settings.ambient_recall and wants_context(prompt)
     if not (capture or recall) or not db_path.is_file():
@@ -250,6 +251,7 @@ def build_prompt_context(*, db_path: Path, memory_dir: Path, prompt: str, projec
     record_ids: list[int] = []
     background: BackgroundPath = "none"
     correction_id: int | None = None
+    dropped_floor = 0
 
     db = _connect(db_path, deadline)
     try:
@@ -270,7 +272,7 @@ def build_prompt_context(*, db_path: Path, memory_dir: Path, prompt: str, projec
             room = budget - sum(len(part) + 2 for part in parts)
             if room >= hook_recall.BUDGET_MIN and not deadline.expired():
                 seen = frozenset(state.records)
-                text, record_ids, background = _background(db, memory_dir, prompt, project, session_id, room,
+                text, record_ids, background, dropped_floor = _background(db, memory_dir, prompt, project, session_id, room,
                                                            seen, deadline, warm)
                 if text:
                     parts.append(text)
@@ -282,7 +284,7 @@ def build_prompt_context(*, db_path: Path, memory_dir: Path, prompt: str, projec
     if kept_rules or record_ids or correction_id is not None:
         state.save()
     return PromptContext("\n\n".join(parts), tuple(item.rule_id for item in kept_rules), tuple(record_ids),
-                         background, deadline.elapsed_ms(), correction_id)
+                         background, deadline.elapsed_ms(), correction_id, dropped_floor)
 
 
 def capture_correction(db: sqlite3.Connection, prompt: str, project: str, session_id: str,
@@ -314,13 +316,13 @@ def prompt_key(prompt: str) -> str:
 
 def is_user_text(prompt: str) -> bool:
     """Anything the user typed except a client command; short complaints ("WTF") count."""
-    stripped = prompt.strip()
+    stripped = hook_recall.user_prompt_text(prompt)
     return bool(stripped) and not stripped.startswith(COMMAND_PREFIX)
 
 
 def _background(db: sqlite3.Connection, memory_dir: Path, prompt: str, project: str, session_id: str,
                 room: int, seen: frozenset[int], deadline: Deadline,
-                warm: WarmRecall | None) -> tuple[str, list[int], BackgroundPath]:
+                warm: WarmRecall | None) -> tuple[str, list[int], BackgroundPath, int]:
     budget = min(room, hook_recall.BUDGET_MAX)
     caller = warm if warm is not None else daemon_recall(memory_dir)
     if caller is not None:
@@ -333,15 +335,15 @@ def _background(db: sqlite3.Connection, memory_dir: Path, prompt: str, project: 
             if answer is not None:
                 ids = [int(i) for i in answer.get("ids") or [] if isinstance(i, int)]
                 text, kept = drop_seen_lines(str(answer.get("text") or ""), ids, seen)
-                return text, kept, "warm"
+                return text, kept, "warm", int(answer.get("dropped_floor", 0))
     if deadline.expired():
-        return "", [], "none"
+        return "", [], "none", 0
     request = hook_recall.HookRecallRequest(query=prompt, project=project or None, session_id=session_id,
                                             budget_chars=budget, limit=COLD_LIMIT, dedupe=True)
     try:
         result = cold_recall(db, prompt, project, session_id, seen)
     except sqlite3.Error as exc:
         LOGGER.info(json.dumps({"event": "ambient_cold_recall_skipped", "error": str(exc)}))
-        return "", [], "none"
+        return "", [], "none", 0
     block = hook_recall.compact_block(result, request, seen)
-    return block.text, block.ids, "cold"
+    return block.text, block.ids, "cold", block.dropped_floor

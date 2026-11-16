@@ -278,10 +278,11 @@ def test_direct_connection_is_not_reported_as_pooled(pg_database):
 def test_isolated_check_ignores_the_servers_libpq_environment(pg_database, monkeypatch):
     # The test server has no TLS: a borrowed PGSSLMODE=require makes the in-process check fail.
     without_sslmode = DatabaseDsn.parse(pg_database.url).model_copy(update={"sslmode": None})
-    monkeypatch.setenv("PGSSLMODE", "require")
-    borrowed = PgDatabaseChecker().check(without_sslmode, instance_id=None)
-    assert borrowed.check(CheckId.CONNECT).category is ErrorCategory.SSL_REQUIRED
-    assert PgDatabaseChecker(isolated=True).check(without_sslmode, instance_id=None).ok
+    with monkeypatch.context() as context:
+        context.setenv("PGSSLMODE", "require")
+        borrowed = PgDatabaseChecker().check(without_sslmode, instance_id=None)
+        assert borrowed.check(CheckId.CONNECT).category is ErrorCategory.SSL_REQUIRED
+        assert PgDatabaseChecker(isolated=True).check(without_sslmode, instance_id=None).ok
 
 
 def test_isolated_check_refuses_server_local_dsns_before_spawning():

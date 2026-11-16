@@ -71,7 +71,8 @@ def workers(tmp_path):
         assert proc.poll() is None, "server exited during startup"
         assert time.time() < deadline, "server not ready"
         try:
-            if httpx.get(f"{base}/healthz", timeout=2).json() == {"status": "ok", "version": VERSION}:
+            health = httpx.get(f"{base}/healthz", timeout=2).json()
+            if health.get("status") == "ok" and health.get("version") == VERSION:
                 break
         except httpx.HTTPError:
             time.sleep(0.5)

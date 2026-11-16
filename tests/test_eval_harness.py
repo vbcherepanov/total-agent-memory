@@ -193,3 +193,28 @@ def test_unknown_scenario_type_fails_cleanly():
     r = h.run_scenario({"type": "nonsense"})
     assert r.passed is False
     assert "error" in r.details
+
+
+@pytest.mark.parametrize('source_kind', ['missing', 'empty_dir', 'empty_file', 'empty_list', 'invalid'])
+def test_unmeasured_suite_is_an_error(tmp_path, source_kind):
+    if source_kind == 'missing':
+        source = tmp_path / 'missing'
+    elif source_kind == 'empty_dir':
+        source = tmp_path
+    elif source_kind == 'empty_file':
+        source = tmp_path / 'empty.json'
+        source.write_text('[]', encoding='utf-8')
+    elif source_kind == 'invalid':
+        source = tmp_path / 'invalid.json'
+        source.write_text('[42]', encoding='utf-8')
+    else:
+        source = []
+    with pytest.raises(ValueError, match='scenario'):
+        EvalHarness().run_suite(source)
+
+
+def test_invalid_file_in_scenario_directory_is_not_silently_skipped(tmp_path):
+    (tmp_path / 'valid.json').write_text(json.dumps({'type': 'recall', 'query': 'ledger'}), encoding="utf-8")
+    (tmp_path / 'invalid.json').write_text('42', encoding="utf-8")
+    with pytest.raises(ValueError, match='scenario file'):
+        EvalHarness().load_scenarios(tmp_path)

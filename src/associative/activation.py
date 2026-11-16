@@ -12,6 +12,8 @@ import sqlite3
 import sys
 from collections import defaultdict
 
+from memory_core.retrieval import SearchScope
+
 LOG = lambda msg: sys.stderr.write(f"[memory-activation] {msg}\n")
 
 # Frontier nodes read per hop, most active first.
@@ -178,7 +180,8 @@ class SpreadingActivation:
         return found_ids
 
     def get_activated_memories(
-        self, activation_map: dict[str, float], top_k: int = 20
+        self, activation_map: dict[str, float], top_k: int = 20,
+        scope: SearchScope | None = None,
     ) -> list[tuple[int, float]]:
         """Find knowledge records connected to activated nodes.
 
@@ -205,6 +208,7 @@ class SpreadingActivation:
             activation_map = dict(strongest)
         values = ",".join("(?,?)" for _ in activation_map)
         params: list = [x for item in activation_map.items() for x in item]
+        predicates, scope_params = (scope or SearchScope()).sql()
         rows = self.db.execute(
             f"""WITH a(node_id, act) AS (VALUES {values})
                 SELECT kn.knowledge_id,
@@ -212,11 +216,12 @@ class SpreadingActivation:
                                         THEN 1.0 ELSE kn.strength END) AS score
                 FROM a
                 JOIN knowledge_nodes kn ON kn.node_id = a.node_id
-                JOIN knowledge k ON k.id = kn.knowledge_id AND k.status = 'active'
+                JOIN knowledge k ON k.id = kn.knowledge_id
+                WHERE {' AND '.join(predicates)}
                 GROUP BY kn.knowledge_id
                 ORDER BY score DESC, kn.knowledge_id
                 LIMIT ?""",
-            [*params, top_k],
+            [*params, *scope_params, top_k],
         ).fetchall()
         result = [(row[0], round(row[1], 4)) for row in rows]
 

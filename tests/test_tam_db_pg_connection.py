@@ -21,7 +21,7 @@ from tam_db.contracts import (
 pytestmark = pytest.mark.postgres
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPAT_SQL = ROOT / "migrations" / "postgres" / "compat" / "0001_compat.sql"
+COMPAT_DIR = ROOT / "migrations" / "postgres" / "compat"
 
 SCHEMA_SCRIPT = """
     CREATE TABLE knowledge (
@@ -52,7 +52,8 @@ def workspace(pg_database) -> Workspace:
 
     schema = schema_for("connection-tests")
     with psycopg.connect(pg_database.url, autocommit=True) as admin:
-        admin.execute(COMPAT_SQL.read_text(encoding="utf-8"))
+        for migration in sorted(COMPAT_DIR.glob("*.sql")):
+            admin.execute(migration.read_text(encoding="utf-8"))
         admin.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
     return Workspace(url=pg_database.url, schema=schema)
 

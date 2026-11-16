@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from pathlib import Path
@@ -245,7 +246,19 @@ def test_metrics_render_counter_and_histogram(tmp_path):
 # ── offline purge CLI ───────────────────────────────────────────────
 
 
-def test_offline_purge_cli(tmp_path, monkeypatch, capsys):
+@pytest.fixture
+def restore_root_logging():
+    root = logging.getLogger()
+    handlers, level = tuple(root.handlers), root.level
+    yield
+    for handler in tuple(root.handlers):
+        if handler not in handlers:
+            root.removeHandler(handler)
+            handler.close()
+    root.setLevel(level)
+
+
+def test_offline_purge_cli(tmp_path, monkeypatch, capsys, restore_root_logging):
     from aml_adapter.cli import main
     from team_memory.lifecycle import ServerLease
 

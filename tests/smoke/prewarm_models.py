@@ -17,6 +17,7 @@ import config  # noqa: E402
 from fastembed import TextEmbedding  # noqa: E402
 from fastembed.rerank.cross_encoder import TextCrossEncoder  # noqa: E402
 from memory_core.fastembed_loader import load_model  # noqa: E402
+from memory_core.multilingual_rerank import MODEL, register_model  # noqa: E402
 
 
 def main() -> int:
@@ -29,6 +30,8 @@ def main() -> int:
         load_model(TextEmbedding, name)
         print(f"cached {name} in {cache}")
     reranker = config.get_cross_rerank_model()
+    if reranker == MODEL:
+        register_model()
     load_model(TextCrossEncoder, reranker)
     print(f"cached {reranker} in {cache}")
     return 0
