@@ -57,8 +57,19 @@ jobs:
         with:
           path: ${{ env.FASTEMBED_CACHE_PATH }}
           key: tam-models-v15-${{ runner.os }}-${{ runner.arch }}
+      # Hosted interpreters ship their own tools (pipx on windows-2022 / 3.12),
+      # whose pins make `pip check` fail for reasons unrelated to the candidate.
+      - name: Create an isolated environment for the candidate
+        run: |
+          python -m venv "$RUNNER_TEMP/tam-candidate"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "$RUNNER_TEMP/tam-candidate/Scripts" >> "$GITHUB_PATH"
+          else
+            echo "$RUNNER_TEMP/tam-candidate/bin" >> "$GITHUB_PATH"
+          fi
       - name: Install exact candidate wheel
         run: |
+          python -c "import sys; assert sys.prefix != sys.base_prefix, sys.prefix"
           for wheel in dist/*.whl; do
             python -m pip install "${wheel}[media]" pytest
           done
@@ -173,8 +184,9 @@ jobs:
   source-archive:
     needs: package
     runs-on: ubuntu-24.04
-    # The full suite in the unpacked sdist took 19 min on a slow runner; 20 left no margin.
-    timeout-minutes: 30
+    # 15.0.0 grew the suite to ~7000 tests: the ci test job alone takes ~28 min,
+    # and this job also builds the dev image and prewarms models.
+    timeout-minutes: 60
     env:
       FASTEMBED_CACHE_PATH: ${{ github.workspace }}/.tam-models
     steps:
