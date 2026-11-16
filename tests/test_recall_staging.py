@@ -2,15 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 
 import pytest
 
 import server
 from memory_core.cross_rerank import CrossReranker
 from memory_core.store_owner import OwnerOverloaded, OwnerSettings, StoreOwner
+from memory_core.telemetry import counters
 from tests.test_store_owner import nothing, wait_set
 
 WAIT_SECONDS = 5
+
+
+async def wait_counter(name: str, target: float) -> None:
+    deadline = time.monotonic() + WAIT_SECONDS
+    while counters.snapshot().get(name, 0) < target:
+        if time.monotonic() > deadline:
+            pytest.fail(f"{name} did not reach {target}")
+        await asyncio.sleep(0.001)
 
 
 def test_inference_releases_owner_but_ordinary_await_keeps_it_serial():
@@ -83,8 +93,10 @@ def test_pool_and_total_admission_remain_bounded_and_shutdown_drains():
         first = asyncio.create_task(owner.call(work))
         try:
             await wait_set(started)
+            queued = counters.snapshot().get("recall_inference_pending", 0)
             second = asyncio.create_task(owner.call(work))
-            await asyncio.sleep(0.02)
+            # The owner has started the second call once it waits for the busy inference worker.
+            await wait_counter("recall_inference_pending", queued + 1)
             assert len(calls) == 1
             with pytest.raises(OwnerOverloaded):
                 await owner.call(nothing)

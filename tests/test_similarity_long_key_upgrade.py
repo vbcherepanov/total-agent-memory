@@ -21,7 +21,8 @@ TARGET = "the billing ledger is stored in rack seven of the primary datacenter i
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    # Same as tam_db.pg_schema.Migration.checksum: read_text() folds CRLF from Windows checkouts.
+    return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
 
 
 def test_shipped_migrations_are_unchanged():

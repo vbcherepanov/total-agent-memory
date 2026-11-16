@@ -77,7 +77,8 @@ def test_sleep_pulses_from_worker_thread(health, monkeypatch):
 def test_status_private_and_worker_name_validated(health, tmp_path):
     health.Heartbeat("reflection").pulse()
     status = tmp_path / "reflection.json"
-    assert status.stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":  # Windows has no POSIX mode bits; the workers run in Linux containers.
+        assert status.stat().st_mode & 0o777 == 0o600
     assert json.loads(status.read_text(encoding="utf-8"))["pid"] == os.getpid()
     with pytest.raises(ValueError):
         health.Heartbeat("../escape")

@@ -198,7 +198,8 @@ def test_chunking_preserves_all_text_and_line_spans(index):
     write(root, 'content.unknown_xyz', content)
     service.index(root, 'one')
     rows = service.repository.db.execute("SELECT content,start_line,end_line FROM resource_chunks WHERE kind='text' ORDER BY ordinal").fetchall()
-    assert ''.join(row[0] for row in rows) == content
+    # Chunks keep the file verbatim; write_text() produced CRLF on Windows.
+    assert ''.join(row[0] for row in rows) == (root / 'content.unknown_xyz').read_bytes().decode('utf-8')
     assert all(len(row[0]) <= service.limits.chunk_chars for row in rows)
     assert rows[0][1] == 1 and rows[-1][2] == 20
 
