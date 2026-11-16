@@ -22,6 +22,9 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 
+from config import has_excluded_tag
+from memory_core.retrieval import SearchScope, fetch_active_records
+
 try:
     from config import get_edge_half_life_days
 except ImportError:  # pragma: no cover — fallback when imported as package
@@ -67,6 +70,8 @@ class ContextExpander:
         budget: int = 5,
         depth: int = 1,
         min_strength: float = 0.0,
+        scope: SearchScope | None = None,
+        excluded_tags: tuple[str, ...] = (),
     ) -> list[int]:
         """Return up to `budget` knowledge_ids related to seeds.
 
@@ -76,8 +81,10 @@ class ContextExpander:
         less than recently reinforced ones, so fresh evidence can rescue
         otherwise dormant nodes. Seeds themselves are never included.
         """
-        if not seed_ids:
+        if not seed_ids or budget <= 0:
             return []
+
+        scope = scope or SearchScope()
 
         seed_set = set(seed_ids)
 
@@ -103,19 +110,28 @@ class ContextExpander:
             return []
 
         placeholders = ",".join("?" * len(expanded_nodes))
+        predicates, params = scope.sql()
+        if scope.as_of is None:
+            predicates.append("k.superseded_by IS NULL")
         rows = self.db.execute(
             f"""SELECT kn.knowledge_id, kn.node_id, kn.strength
                   FROM knowledge_nodes kn
                   JOIN knowledge k ON k.id = kn.knowledge_id
                  WHERE kn.node_id IN ({placeholders})
-                   AND k.status = 'active'
-                   AND k.superseded_by IS NULL""",
-            list(expanded_nodes.keys()),
+                   AND {' AND '.join(predicates)}""",
+            [*expanded_nodes.keys(), *params],
         ).fetchall()
+
+        candidates = fetch_active_records(self.db, [r['knowledge_id'] for r in rows], scope=scope)
+        allowed_ids = {
+            kid for kid, record in candidates.items()
+            if scope.allows(record, self.db)
+            and not has_excluded_tag(record.get('tags', ''), excluded_tags)
+        }
 
         for r in rows:
             kid = r["knowledge_id"]
-            if kid in seed_set:
+            if kid in seed_set or kid not in allowed_ids:
                 continue
             node_weight = expanded_nodes.get(r["node_id"], 0.0)
             link_strength = float(r["strength"] or 1.0)

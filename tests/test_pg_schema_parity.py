@@ -41,7 +41,7 @@ PG_ONLY_COLUMNS = {"embeddings": ("embedding",)}
 PG_ONLY_TRIGGERS = frozenset({"episodes_v11_fts_insert", "episodes_v11_fts_update", "episodes_v11_fts_delete"})
 TYPE_MAP = {"INTEGER": "bigint", "BOOLEAN": "bigint", "TEXT": "text", "REAL": "double precision",
             "BLOB": "bytea", "JSON": "text"}
-EXPECTED_TRIGGERS = 32
+EXPECTED_TRIGGERS = 39
 WORKSPACE_KEY = "parity-workspace"
 MASTER_KEY_BYTES = 32
 
@@ -221,7 +221,9 @@ def test_integer_primary_keys_are_identities(sqlite_store, workspace):
             identity = workspace.execute_native(
                 "SELECT is_identity FROM information_schema.columns WHERE table_schema = current_schema() "
                 "AND table_name = %s AND column_name = %s", (table, pk[0])).fetchone()[0]
-            assert identity == "YES", f"{table}.{pk[0]}"
+            # Incident metadata borrows the knowledge ID; it must never allocate one.
+            expected_identity = "NO" if (table, pk[0]) == ("knowledge_incidents", "knowledge_id") else "YES"
+            assert identity == expected_identity, f"{table}.{pk[0]}"
 
 
 def test_unique_and_check_constraints_match(sqlite_store, workspace):

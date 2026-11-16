@@ -244,10 +244,49 @@ def correction_windows(registry, token):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize('rerank_on', [True, False])
-async def test_a_value_correction_ends_above_the_value_it_corrects(registry, rerank_on):
+async def test_different_scopes_are_not_treated_as_value_corrections(registry, rerank_on):
     token = registry.issue_token('anna', 'test')
     gateway = reranker(WordModel())[0] if rerank_on else GatewayReranker(encoder_factory=lambda: None)
     service = MemoryService(registry, FusedPool(correction_windows(registry, token)), reranker=gateway)
     result = await service.call(token, 'memory_recall', {'query': 'standup meeting mondays', 'limit': 5})
     assert [item['record']['content'] for item in result['results']] == [
-        "Dana's standup meeting is at 10:15 on Mondays", "Dana's standup meeting is at 9:30 on Mondays"]
+        "Dana's standup meeting is at 9:30 on Mondays", "Dana's standup meeting is at 10:15 on Mondays"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('rerank_on', [True, False])
+@pytest.mark.parametrize('limit', [1, 2])
+@pytest.mark.parametrize('query,first', [
+    ('What time was the standup meeting before?', 1),
+    ('What time is the standup meeting now?', 2),
+    ('Во сколько раньше был standup meeting?', 1),
+])
+async def test_temporal_value_order_precedes_limit(registry, rerank_on, limit, query, first):
+    token = registry.issue_token('anna', 'test')
+    key = keys(registry, registry.authenticate(token))
+    windows = {
+        key['personal']: [], key['shared']: [],
+        key['sales']: [record(2, "Dana's standup meeting is at 10:15 on Mondays", 0.9, 0.03),
+                       record(1, "Dana's standup meeting is at 9:30 on Mondays", 0.8, 0.02)],
+    }
+    gateway = reranker(WordModel())[0] if rerank_on else GatewayReranker(encoder_factory=lambda: None)
+    service = MemoryService(registry, FusedPool(windows), reranker=gateway)
+    result = await service.call(token, 'memory_recall', {'query': query, 'limit': limit})
+    assert len(result['results']) == limit
+    assert result['results'][0]['record']['id'] == first
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('rerank_on', [True, False])
+async def test_different_projects_do_not_reorder_each_other(registry, rerank_on):
+    token = registry.issue_token('anna', 'test')
+    key = keys(registry, registry.authenticate(token))
+    windows = {
+        key['personal']: [], key['shared']: [],
+        key['sales']: [dict(record(1, "Dana's standup meeting is at 9:30 on Mondays", 0.9, 0.03), project='alpha'),
+                       dict(record(2, "Dana's standup meeting is at 10:15 on Mondays", 0.8, 0.02), project='beta')],
+    }
+    gateway = reranker(WordModel())[0] if rerank_on else GatewayReranker(encoder_factory=lambda: None)
+    service = MemoryService(registry, FusedPool(windows), reranker=gateway)
+    result = await service.call(token, 'memory_recall', {'query': 'standup meeting mondays', 'limit': 2})
+    assert [item['record']['id'] for item in result['results']] == [1, 2]

@@ -130,3 +130,13 @@ def test_transfer_lessons_excludes_target_project(ae, adb):
 def test_transfer_lessons_empty_when_no_matches(ae):
     out = ae.transfer_lessons(target_project="x", text="xyzzy frob nitz")
     assert out["count"] == 0
+
+
+@pytest.mark.parametrize("text", ["Русский поиск сохраняет решения", "Український пошук зберігає рішення", "café résumé übertragung"])
+def test_unicode_analogy_without_latin_tags(ae, adb, text):
+    _add(adb, type="solution", content=text, project="other")
+    _add(adb, type="solution", content=text, project="mine")
+    results = ae.find_analogies(text=text.upper(), exclude_project="mine")
+    assert len(results) == 1
+    assert results[0]["project"] == "other"
+    assert results[0]["shared_features"]

@@ -51,6 +51,51 @@ def test_scan_counts_without_changing_anything(old_install):
     assert ANTHROPIC in (old_install / "raw" / "s.jsonl").read_text(encoding="utf-8")
 
 
+def test_without_rowid_composite_keys_are_scanned_and_redacted(old_install):
+    with sqlite3.connect(old_install / 'memory.db') as db:
+        db.execute('INSERT INTO resource_terms(term,chunk_id) VALUES(?,?)', (ANTHROPIC, 'first'))
+        db.execute('INSERT INTO resource_terms(term,chunk_id) VALUES(?,?)', (ANTHROPIC, 'second'))
+        db.execute('INSERT INTO resource_terms(term,chunk_id) VALUES(?,?)', ('plain', 'second'))
+    assert stored_secrets.scan(old_install)['tables']['resource_terms'] == 2
+    result = stored_secrets.redact(old_install)
+    assert result['tables']['resource_terms'] == 2
+    with sqlite3.connect(old_install / 'memory.db') as db:
+        assert db.execute('SELECT term,chunk_id FROM resource_terms ORDER BY chunk_id,term').fetchall() == [
+            ('[REDACTED]', 'first'), ('[REDACTED]', 'second'), ('plain', 'second')]
+    assert stored_secrets.scan(old_install)['rows'] == 0
+
+
+def test_nullable_composite_keys_use_distinct_rowids(old_install):
+    with sqlite3.connect(old_install / 'memory.db') as db:
+        db.execute('CREATE TABLE nullable_keys(a TEXT,b TEXT,content TEXT,PRIMARY KEY(a,b))')
+        db.executemany('INSERT INTO nullable_keys VALUES(NULL,NULL,?)', [(ANTHROPIC,), ('safe',)])
+    stored_secrets.redact(old_install)
+    with sqlite3.connect(old_install / 'memory.db') as db:
+        assert db.execute('SELECT content FROM nullable_keys ORDER BY rowid').fetchall() == [('[REDACTED]',), ('safe',)]
+
+
+def test_without_rowid_preserves_invalid_utf8_in_text_keys(old_install):
+    raw = b'\xff prefix ' + ANTHROPIC.encode()
+    with sqlite3.connect(old_install / 'memory.db') as db:
+        db.execute('INSERT INTO resource_terms VALUES(CAST(? AS TEXT),?)', (raw, 'legacy'))
+    stored_secrets.redact(old_install)
+    with sqlite3.connect(old_install / 'memory.db') as db:
+        db.text_factory = bytes
+        assert db.execute('SELECT term,typeof(term) FROM resource_terms WHERE chunk_id=?', ('legacy',)).fetchone() == (
+            b'\xff prefix [REDACTED]', b'text')
+
+
+def test_redaction_key_collision_rolls_back_and_retains_backup(old_install):
+    with sqlite3.connect(old_install / 'memory.db') as db:
+        db.executemany('INSERT INTO resource_terms VALUES(?,?)', [(ANTHROPIC, 'same'), (STRIPE, 'same')])
+    with pytest.raises(sqlite3.IntegrityError):
+        stored_secrets.redact(old_install)
+    with sqlite3.connect(old_install / 'memory.db') as db:
+        assert {row[0] for row in db.execute('SELECT term FROM resource_terms')} == {ANTHROPIC, STRIPE}
+        assert ANTHROPIC in db.execute("SELECT tags FROM knowledge WHERE project='p'").fetchone()[0]
+    assert list((old_install / 'backups').glob('pre-redact-*.db'))
+
+
 def test_redact_cleans_rows_json_fts_and_logs_after_a_private_backup(old_install):
     result = stored_secrets.redact(old_install)
     assert result["tables"]["knowledge"] == 1 and result["raw_logs"] == 1

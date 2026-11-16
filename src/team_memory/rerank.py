@@ -60,7 +60,7 @@ class GatewayReranker:
                 wait=self._wait_for_model(),
                 context_of=(lambda window: [item["record"].get(CONTEXT_FIELD) or item["record"].get("content", "")
                                             for item in window]) if encoder.context_chars else None,
-                recency_of=lambda item: (item["record"].get("created_at") or "", item["record"].get("id", 0)))
+                recency_of=None)
         return Reranked(ordered, "applied" if encoder.ready else "not_ready")
 
     async def rerank(self, query: str, items: list[dict], deadline: float) -> Reranked:

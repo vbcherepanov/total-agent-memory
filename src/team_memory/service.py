@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pydantic import JsonValue, ValidationError
 
 from memory_reports.llm_summary import ReportSummarizer
+from memory_core.query_shapes import is_historical_value_query
 from recall_output import INSTRUCTION_NOTICE
 from secret_redaction import redact_value
 from team_memory.contracts import (
@@ -48,6 +49,9 @@ MEMORY_TOOLS = {
 }
 TOOLS = {**MEMORY_TOOLS, **LEARNING_TOOLS, **REPORT_TOOLS}
 WRITES = frozenset(("memory_save", "memory_update", "memory_delete"))
+READ_ONLY_TOOLS = frozenset(("memory_scopes", "memory_recall", "memory_get", "memory_history", "memory_export",
+                           "memory_report", "onboarding_overview", "onboarding_quiz", "onboarding_team_report",
+                           "onboarding_curriculum_get"))
 
 
 
@@ -58,12 +62,15 @@ def _with_notice(merged: dict) -> dict:
     return merged
 
 
-def _newest_value_first(items: list[dict]) -> list[dict]:
-    """Records that give a new value for the same statement, newest first (memory_core.cross_rerank)."""
-    from memory_core.cross_rerank import order_value_updates
+def _order_values(items: list[dict], query: str) -> list[dict]:
+    from memory_core.cross_rerank import order_scoped_value_updates
 
-    return order_value_updates(items, lambda item: item["record"].get("content", ""),
-                               lambda item: (item["record"].get("created_at") or "", item["record"].get("id", 0)))
+    return order_scoped_value_updates(
+        items, lambda item: item["record"].get("content", ""),
+        lambda item: (item["record"].get("created_at") or "", item["record"].get("id", 0)),
+        lambda item: (item["scope"]["kind"], item["scope"].get("team_id"), item["record"].get("project")),
+        older_first=is_historical_value_query(query),
+    )
 
 class MemoryService:
     def __init__(self, registry: Registry, pool: WorkerPool, learning: LearningService | None = None,
@@ -80,11 +87,15 @@ class MemoryService:
         self.histogram = Counter()
 
     async def call(self, credential: str | Callable[[], Actor], name: str,
-                   arguments: dict[str, JsonValue]) -> JsonValue:
+                   arguments: dict[str, JsonValue], *, readonly: bool = False) -> JsonValue:
         started = time.monotonic()
         status = "ok"
         try:
-            return await self._execute(credential, name, arguments)
+            if readonly and name not in READ_ONLY_TOOLS:
+                from team_memory.contracts import ReadOnly
+                self._authenticate(credential)
+                raise ReadOnly("This MCP endpoint permits read-only tools")
+            return await self._execute(credential, name, arguments, readonly=readonly)
         except (DomainError, ValidationError):
             status = "rejected"
             raise
@@ -107,7 +118,7 @@ class MemoryService:
         return credential() if callable(credential) else self.registry.authenticate(credential)
 
     async def _execute(self, credential: str | Callable[[], Actor], name: str,
-                       arguments: dict[str, JsonValue]) -> JsonValue:
+                       arguments: dict[str, JsonValue], *, readonly: bool = False) -> JsonValue:
         actor = self._authenticate(credential)
         if name not in TOOLS:
             raise DomainError("Unknown tool")
@@ -115,7 +126,8 @@ class MemoryService:
         arguments, _ = redact_value(arguments)
         if name in LEARNING_TOOLS:
             request = LEARNING_TOOLS[name][0].model_validate(arguments)
-            return await self.learning.call(Caller(actor, credential), name, request)
+            return await self.learning.call(Caller(actor, credential), name, request,
+                                            **({"readonly": True} if readonly else {}))
         if name in REPORT_TOOLS:
             return await asyncio.to_thread(self.reports.call, actor, REPORT_TOOLS[name][0].model_validate(arguments))
         request = TOOLS[name][0].model_validate(arguments)
@@ -158,7 +170,7 @@ class MemoryService:
         anything else. Without the cross-encoder the order is the previous one: rank within the
         workspace, then score. With it, the merged fused window is re-ranked, `limit` records are kept,
         and those are ordered by score, which is exactly what one workspace did on its own before.
-        Either way a record never ends above its own later value update (`_newest_value_first`).
+        Value updates are ordered within their scope and project using the query's temporal intent.
         """
         scope_order = {(workspace.scope.kind.value, workspace.scope.team_id): index
                        for index, workspace in enumerate(scopes)}
@@ -172,16 +184,16 @@ class MemoryService:
 
         if not window:
             ranked.sort(key=lambda item: (item["scope_rank"], -float(item["record"].get("score", 0)), position(item)))
-            return _with_notice({"results": _newest_value_first(ranked)[:request.limit],
+            return _with_notice({"results": _order_values(ranked, request.query)[:request.limit],
                                  "ordering": "scope_rank_then_score"})
         ranked.sort(key=lambda item: (item["scope_rank"], -float(item["record"].get("rrf_score", 0)), position(item)))
         reranked = await self.reranker.rerank(request.query, ranked[:window], self.pool.timeout)
         current_actor = self._authenticate(credential)
         for workspace in scopes:
             self.registry.authorize(current_actor, workspace.scope, False)
-        kept = (reranked.items + ranked[window:])[:request.limit]
+        kept = _order_values(reranked.items + ranked[window:], request.query)[:request.limit]
         kept.sort(key=lambda item: -float(item["record"].get("score", 0)))
-        kept = _newest_value_first(kept)
+        kept = _order_values(kept, request.query)
         for item in kept:
             item["record"] = {key: value for key, value in item["record"].items()
                               if key not in (CONTEXT_FIELD, "fused_rank")}

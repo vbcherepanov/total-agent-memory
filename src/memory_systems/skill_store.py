@@ -241,11 +241,13 @@ class SkillStore:
         now = _now_iso()
 
         # Insert usage record
-        self.db.execute(
+        inserted = self.db.execute(
             """INSERT INTO skill_uses (id, skill_id, episode_id, success, steps_used, notes, used_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (use_id, skill_id, episode_id, int(success), steps_used, notes, now),
+            SELECT ?, id, ?, ?, ?, ?, ? FROM skills WHERE id = ?""",
+            (use_id, episode_id, int(success), steps_used, notes, now, skill_id),
         )
+        if inserted.rowcount == 0:
+            raise ValueError(f"Skill not found: {skill_id}")
 
         # Recalculate metrics from all uses
         cur = self.db.execute(

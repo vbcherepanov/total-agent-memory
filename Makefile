@@ -1,8 +1,8 @@
 COMPOSE ?= docker compose
-DEV_IMAGE ?= tam-development:14.10.0
-BROWSER_IMAGE ?= tam-browser-check:14.10.0
+DEV_IMAGE ?= tam-development:15.0.0
+BROWSER_IMAGE ?= tam-browser-check:15.0.0
 SERVICE ?= mcp
-RERANK_IMAGE ?= tam-rerank-check:14.10.0
+RERANK_IMAGE ?= tam-rerank-check:15.0.0
 TORCH_INDEX_URL ?=
 
 .PHONY: help up down restart logs shell test test-browser browser-image lint build dev-image rerank-image clean ps sql-corpus

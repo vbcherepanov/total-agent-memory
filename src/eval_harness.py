@@ -68,7 +68,7 @@ class EvalHarness:
         if source is None:
             source = DEFAULT_SCENARIOS_DIR
         if isinstance(source, list):
-            return list(source)
+            return self._validated_scenarios(list(source))
         path = Path(source)
         scenarios: list[dict[str, Any]] = []
         if path.is_dir():
@@ -79,10 +79,23 @@ class EvalHarness:
                         scenarios.extend(data)
                     elif isinstance(data, dict):
                         scenarios.append(data)
+                    else:
+                        raise ValueError(f"Evaluation scenario file must contain an object or list: {f}")
         elif path.is_file():
             with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
                 scenarios = data if isinstance(data, list) else [data]
+        else:
+            raise ValueError(f"Evaluation scenario path does not exist: {path}")
+        return self._validated_scenarios(scenarios)
+
+    @staticmethod
+    def _validated_scenarios(scenarios: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not scenarios:
+            raise ValueError("Evaluation requires at least one scenario; nothing was measured")
+        for index, scenario in enumerate(scenarios):
+            if not isinstance(scenario, dict):
+                raise ValueError(f"Evaluation scenario {index + 1} must be an object")
         return scenarios
 
     # ──────────────────────────────────────────────

@@ -153,6 +153,23 @@ def test_rules_context_without_query_keeps_shape(server_store):
     assert rule(store, rid)["shown_count"] == 1 and rule(store, rid)["fire_count"] == 0
 
 
+def test_rules_context_returns_auto_consolidated_rule_of_its_project(server_store):
+    server, _ = server_store
+    learned = {}
+    for project in ("projA", "projB"):
+        for attempt in range(3):
+            learned[project] = call(server, "learn_error", {
+                "file": "cmd/x/main.go", "error": f"dial tcp refused #{attempt}",
+                "root_cause": "service started before the database was ready",
+                "fix": "add a healthcheck", "pattern": "startup-order", "project": project,
+            })["rule_id"]
+    assert learned["projA"] != learned["projB"]
+    for project in ("projA", "projB"):
+        payload = call(server, "self_rules_context", {"project": project})
+        assert [r["id"] for r in payload["rules"]] == [learned[project]]
+        assert payload["rules"][0]["scope"] == f"project:{project}"
+
+
 def test_rules_context_with_query_surfaces_and_followed_roundtrip(server_store):
     server, store = server_store
     target = add_rule(store, "Every SQLite migration needs a PostgreSQL twin")
@@ -237,3 +254,80 @@ def test_correction_capture_on_store_backend(server_store):
     row = store.db.execute("SELECT importance, tags FROM insights WHERE id=?", (first,)).fetchone()
     assert row[0] == correction_capture.DRAFT_IMPORTANCE + correction_capture.REPEAT_IMPORTANCE_STEP
     assert correction_capture.DRAFT_TAG in json.loads(row[1])
+
+
+@pytest.mark.parametrize('project', [None, '', '  ', 'general'])
+def test_learned_default_rule_reaches_context_on_each_backend(server_store, project):
+    server, store = server_store
+    for attempt in range(3):
+        payload = call(server, 'learn_error', {
+            'file': 'worker.py', 'error': f'not ready {attempt}',
+            'root_cause': 'startup race', 'fix': 'wait for readiness',
+            'pattern': 'ready-default', 'project': project,
+        })
+    rows = call(server, 'self_rules_context', {'project': 'unrelated'})['rules']
+    assert any(row['id'] == payload['rule_id'] and row['scope'] == 'global' for row in rows)
+    assert store.db.execute('SELECT project FROM errors LIMIT 1').fetchone()[0] == 'general'
+
+
+def test_legacy_auto_rule_scope_migration_is_scoped_and_idempotent(server_store):
+    from pathlib import Path
+    from tam_db.contracts import Backend
+
+    _, store = server_store
+    ids = []
+    for project in (None, '', '  ', 'general', ' alpha '):
+        cur = store.db.execute("INSERT INTO rules(session_id,content,context,category,scope,project,created_at,updated_at) "
+                               "VALUES ('auto_consolidate','legacy','pattern','bug','project',?,"
+                               "'2026-11-15T00:00:00Z','2026-11-15T00:00:00Z')", (project,))
+        ids.append(cur.lastrowid)
+    manual = store.db.execute("INSERT INTO rules(session_id,content,context,category,scope,project,created_at,updated_at) "
+                              "VALUES ('manual','manual','pattern','bug','project','beta',"
+                              "'2026-11-15T00:00:00Z','2026-11-15T00:00:00Z')").lastrowid
+    store.db.commit()
+    root = Path(__file__).parents[1] / 'migrations'
+    is_postgres = getattr(store.db, 'backend', None) is Backend.POSTGRES
+    if is_postgres:
+        sql = (root / 'postgres/workspace/0016_auto_rule_scopes.sql').read_text(encoding='utf-8')
+    else:
+        sql = (root / '053_auto_rule_scopes.sql').read_text(encoding='utf-8')
+    for _ in range(2):
+        store.db.executescript(sql)
+    rows = [tuple(store.db.execute('SELECT project,scope FROM rules WHERE id=?', (rid,)).fetchone())
+            for rid in ids]
+    assert rows == [('general', 'global')] * 4 + [('alpha', 'project:alpha')]
+    assert store.db.execute('SELECT scope FROM rules WHERE id=?', (manual,)).fetchone()[0] == 'project'
+
+
+def test_whitespace_only_auto_rule_projects_match_python_normalization(server_store):
+    from pathlib import Path
+    from rule_scopes import automatic_rule_scope, normalize_rule_project
+    from tam_db.contracts import Backend
+
+    _, store = server_store
+    projects = ['\t\n', ' \t\r\n', ' \talpha\r\n']
+    ids = [store.db.execute("INSERT INTO rules(session_id,content,context,category,scope,project,created_at,updated_at) "
+                            "VALUES ('auto_consolidate','legacy','pattern','bug','project',?,"
+                            "'2026-11-15T00:00:00Z','2026-11-15T00:00:00Z')", (project,)).lastrowid
+           for project in projects]
+    store.db.commit()
+    root = Path(__file__).parents[1] / 'migrations'
+    is_postgres = getattr(store.db, 'backend', None) is Backend.POSTGRES
+    names = (('postgres/workspace/0016_auto_rule_scopes.sql', 'postgres/workspace/0020_auto_rule_scope_whitespace.sql')
+             if is_postgres else ('053_auto_rule_scopes.sql', '057_auto_rule_scope_whitespace.sql'))
+    for _ in range(2):
+        for name in names:
+            store.db.executescript((root / name).read_text(encoding='utf-8'))
+    rows = [tuple(store.db.execute('SELECT project,scope FROM rules WHERE id=?', (rid,)).fetchone()) for rid in ids]
+    assert rows == [(normalize_rule_project(p), automatic_rule_scope(p)) for p in projects]
+
+
+def test_promoted_insight_stores_the_normalized_project(server_store):
+    server, store = server_store
+    iid = store.db.execute("INSERT INTO insights(session_id,content,category,project,importance,confidence,status,created_at,updated_at) "
+                           "VALUES ('rules-test','Check ready state','bug',?,8,0.9,'active','2026-11-15T00:00:00Z','2026-11-15T00:00:00Z')",
+                           (' \talpha\n',)).lastrowid
+    store.db.commit()
+    result = store.promote_insight_to_rule('sid', iid)
+    row = store.db.execute('SELECT project,scope FROM rules WHERE id=?', (result['rule_id'],)).fetchone()
+    assert tuple(row) == ('alpha', 'project:alpha')

@@ -9,10 +9,12 @@ Uses raw SQLite for the ingest_queue table. No external HTTP dependencies
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import sys
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 import uuid
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -28,6 +30,9 @@ LOG = lambda msg: sys.stderr.write(f"[memory-ingest] {msg}\n")
 # An item whose processing raised is retried with backoff this many times
 # before it is parked as 'error'.
 MAX_INGEST_ATTEMPTS = 3
+MAX_URL_BYTES = int(os.environ.get("MEMORY_INGEST_URL_MAX_BYTES", str(20 * 1024 * 1024)))
+URL_TIMEOUT_SECONDS = float(os.environ.get("MEMORY_INGEST_URL_TIMEOUT_SECONDS", "10"))
+URL_CONTENT_TYPES = frozenset({"text/html", "text/plain", "application/json", "application/xhtml+xml"})
 
 
 def _now() -> str:
@@ -94,6 +99,8 @@ class IngestGateway:
         content_type: str = "text",
         metadata: dict | None = None,
         raw_content: bytes | None = None,
+        *,
+        idempotency_key: str | None = None,
     ) -> str:
         """Ingest new content into the system.
 
@@ -103,19 +110,23 @@ class IngestGateway:
 
         Returns ingest_id.
         """
-        ingest_id = _new_id()
+        ingest_id = self._receipt_id(idempotency_key) if idempotency_key is not None else _new_id()
         now = _now()
         meta_json = json.dumps(metadata) if metadata else None
 
         try:
-            self.db.execute(
+            inserted = self.db.execute(
                 """INSERT INTO ingest_queue
                    (id, source, content_type, raw_content, text_content, metadata,
                     status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+                   ON CONFLICT(id) DO NOTHING""",
                 (ingest_id, source, content_type, raw_content, content, meta_json, now),
             )
             self.db.commit()
+            if inserted.rowcount == 0:
+                self._require_receipt(ingest_id)
+                return ingest_id
             LOG(f"Queued ingest item: {ingest_id} ({content_type}, {len(content)} chars)")
         except sqlite3.Error as exc:
             LOG(f"Failed to queue ingest item: {exc}")
@@ -136,12 +147,31 @@ class IngestGateway:
 
         return ingest_id
 
-    def ingest_url(self, url: str, metadata: dict | None = None) -> str:
+    @staticmethod
+    def _receipt_id(key: str) -> str:
+        return uuid.uuid5(uuid.NAMESPACE_URL, "tam-ingestion:" + key).hex
+
+    def _require_receipt(self, ingest_id: str) -> None:
+        row = self.db.execute("SELECT status FROM ingest_queue WHERE id = ?", (ingest_id,)).fetchone()
+        if row is None or row[0] not in {"pending", "processing", "stored"}:
+            raise ValueError("Ingestion receipt is missing or has failed")
+
+    def ingest_url(self, url: str, metadata: dict | None = None, *, idempotency_key: str | None = None) -> str:
         """Fetch URL content and ingest.
 
         Uses urllib (no external deps) for basic fetching.
         Strips HTML tags to extract text content.
         """
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("URL must have an HTTP(S) scheme and hostname")
+        if MAX_URL_BYTES < 1 or URL_TIMEOUT_SECONDS <= 0:
+            raise ValueError("URL ingestion limits must be positive")
+        if idempotency_key is not None:
+            receipt_id = self._receipt_id(idempotency_key)
+            if self.db.execute("SELECT 1 FROM ingest_queue WHERE id = ?", (receipt_id,)).fetchone():
+                self._require_receipt(receipt_id)
+                return receipt_id
         LOG(f"Fetching URL: {url}")
         req = urllib.request.Request(
             url,
@@ -152,9 +182,14 @@ class IngestGateway:
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                raw_bytes = resp.read()
+            with urllib.request.urlopen(req, timeout=URL_TIMEOUT_SECONDS) as resp:
                 content_type_header = resp.headers.get("Content-Type", "")
+                media_type = content_type_header.partition(";")[0].strip().lower()
+                if media_type and media_type not in URL_CONTENT_TYPES:
+                    raise ValueError(f"Unsupported URL content type: {media_type}")
+                raw_bytes = resp.read(MAX_URL_BYTES + 1)
+                if len(raw_bytes) > MAX_URL_BYTES:
+                    raise ValueError(f"URL content exceeds {MAX_URL_BYTES} bytes")
                 charset = "utf-8"
                 if "charset=" in content_type_header:
                     charset = content_type_header.split("charset=")[-1].strip().split(";")[0]
@@ -187,13 +222,16 @@ class IngestGateway:
         meta["source_url"] = url
         meta["original_content_type"] = content_type_header
 
-        return self.ingest(
+        ingest_id = self.ingest(
             content=text_content,
             source="url",
             content_type=ct,
             metadata=meta,
             raw_content=raw_bytes,
+            idempotency_key=idempotency_key,
         )
+        self._require_receipt(ingest_id)
+        return ingest_id
 
     def process_pending(self, limit: int = 10) -> int:
         """Process pending items in ingest_queue. Returns count processed."""

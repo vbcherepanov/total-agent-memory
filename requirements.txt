@@ -13,7 +13,11 @@ uvicorn>=0.30
 
 # AST codebase ingest (ingest_codebase / memory_graph_index). Degrades to
 # whole-file chunks when absent.
-tree-sitter-language-pack>=1.13
+tree-sitter-language-pack>=1.25
+charset-normalizer>=3,<4
+pypdf>=6.21,<7
+psutil>=7,<8
+filelock>=3.20,<4
 
 # Default embedding backend (ONNX via onnxruntime — no torch). Declared in
 # pyproject.toml too, so every install channel retrieves with the same model.

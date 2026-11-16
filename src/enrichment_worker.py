@@ -520,9 +520,13 @@ def _run_contradiction_detector(db, task: EnrichmentTask, store=None) -> None:
     embs = store.embed([task.content_snapshot])
     if not embs:
         return
-    cand_pool = store._binary_search(
-        embs[0], n_candidates=50, project=task.project, n_results=10
-    )
+    if getattr(store, "thread_bound", False):
+        from memory_core.vector_search import VectorScope, VectorSearch
+        cand_pool = VectorSearch(db, max_cache_bytes=0).search(
+            embs[0], VectorScope(dimension=len(embs[0]), project=task.project), candidates=50, limit=10)
+    else:
+        cand_pool = store._binary_search(
+            embs[0], n_candidates=50, project=task.project, n_results=10)
     cand_pool = [(cid, cos) for cid, cos in cand_pool if cid != task.knowledge_id]
     if not cand_pool:
         return

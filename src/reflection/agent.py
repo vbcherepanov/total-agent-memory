@@ -17,11 +17,14 @@ import sys
 import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from collections.abc import Callable
 
 # Relative imports via sys.path for flat project structure
 _src = str(Path(__file__).parent.parent)
 if _src not in sys.path:
     sys.path.insert(0, _src)
+
+from memory_core.embedding_identity import EmbedIdentity
 
 from reflection.digest import DigestPhase
 from reflection.synthesize import SynthesizePhase
@@ -50,6 +53,7 @@ class ReflectionAgent:
         self,
         db: sqlite3.Connection,
         embedder=None,
+        embed_identity: Callable[[], EmbedIdentity | None] | None = None,
     ) -> None:
         """
         Args:
@@ -62,6 +66,8 @@ class ReflectionAgent:
         self.digest = DigestPhase(db)
         self.synthesize = SynthesizePhase(db)
         self._injected_embedder = embedder
+        self._embed_identity = embed_identity
+        self._owned_embed_store = None
 
     async def run(self, scope: str = "full") -> dict:
         """
@@ -278,6 +284,10 @@ class ReflectionAgent:
             LOG(f"representations imports failed: {e}")
             return {"processed": 0, "failed": 0, "skipped": 0, "error": str(e)}
 
+        if self._injected_embedder is not None and self._embed_identity is None:
+            return {"processed": 0, "failed": 0, "skipped": 0,
+                    "error": "Injected representation embedder requires an identity callback"}
+
         q = RepresentationsQueue(self.db)
 
         embedder = self._make_embedder()
@@ -285,15 +295,22 @@ class ReflectionAgent:
             return {"processed": 0, "failed": 0, "skipped": 0, "skipped_reason": "no embedder"}
 
         try:
+            if self._owned_embed_store is not None:
+                q.enqueue_incompatible(self._owned_embed_store._primary_identity())
             return q.process_pending(
                 generator=lambda content, project=None: generate_representations(content, project),
                 embedder=embedder,
                 model_name="auto",
                 limit=limit,
+                identity_of=self._embed_identity,
             )
         except Exception as e:  # noqa: BLE001
             LOG(f"representations processing error: {e}")
             return {"processed": 0, "failed": 0, "skipped": 0, "error": str(e)}
+        finally:
+            if self._owned_embed_store is not None:
+                self._owned_embed_store.db.close()
+                self._owned_embed_store = None
 
     def _make_embedder(self):
         """Return an embedder callable, or None if unavailable.
@@ -306,6 +323,8 @@ class ReflectionAgent:
             import server as _srv
 
             store = _srv.Store()
+            self._owned_embed_store = store
+            self._embed_identity = store.last_embed_identity
             def embed(text: str) -> list[float]:
                 embs = store.embed([text])
                 return embs[0] if embs else []

@@ -1,0 +1,16 @@
+ARG DEVELOPMENT_IMAGE=tam-development:15.0.0
+FROM postgres:18 AS postgres_tools
+FROM ${DEVELOPMENT_IMAGE}
+COPY requirements.txt /tmp/tam-media-requirements.txt
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus tesseract-ocr-ukr \
+    ffmpeg espeak-ng fonts-dejavu-core libpq5 \
+    && apt-get clean
+RUN python -m pip install --no-cache-dir -r /tmp/tam-media-requirements.txt \
+    'Pillow>=12,<13' 'pypdfium2>=5,<6' 'faster-whisper>=1.2,<2' 'av>=15,<19' \
+    'striprtf>=0.0.29,<1' 'xlrd>=2,<3' 'psycopg[binary,pool]>=3.2,<4'
+COPY --from=postgres_tools /usr/lib/postgresql/18/bin/pg_dump /usr/lib/postgresql/18/bin/pg_restore /usr/local/bin/
+COPY --from=postgres_tools /usr/lib/*-linux-gnu/libpq.so.5* /usr/local/lib/
+RUN ldconfig && pg_dump --version && pg_restore --version
+RUN useradd --create-home --uid 1000 tamcheck
+USER tamcheck

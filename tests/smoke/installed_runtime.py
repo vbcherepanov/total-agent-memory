@@ -5,6 +5,7 @@ import platform
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -15,10 +16,13 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
+from typing import Callable
 
 TIMEOUT = 180
 START_TIMEOUT = 45
 STOP_TIMEOUT = 45
+WATCH_TIMEOUT = 15
+WATCH_POLL_SECONDS = 0.05
 
 
 class Scenario:
@@ -112,7 +116,7 @@ class Scenario:
             sys.stderr.write(exc.read().decode('utf-8', errors='replace') + '\n')
             raise
 
-    def stdio(self, command, env, name, arguments):
+    def stdio(self, command, env, name, arguments, before_call: Callable[[], None] | None = None):
         frames = [
             {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
                 'protocolVersion': '2025-06-18', 'capabilities': {},
@@ -129,6 +133,8 @@ class Scenario:
             reader = ThreadPoolExecutor(max_workers=1)
             try:
                 for frame in frames:
+                    if frame['method'] == 'tools/call' and before_call is not None:
+                        before_call()
                     process.stdin.write(json.dumps(frame) + '\n')
                     process.stdin.flush()
                     if 'id' not in frame:
@@ -248,9 +254,39 @@ def main():
                 scenario.root = recovered
                 with scenario.server():
                     scenario.verify(records)
-                local_env = {**scenario.env, 'TAM_MEMORY_DIR': str(Path(directory) / 'local')}
+                local_env = {**scenario.env, 'TAM_MEMORY_DIR': str(Path(directory) / 'local'),
+                             'TAM_INDEX_WATCH_INTERVAL_SECONDS': '0.1'}
                 scenario.stdio(scenario.local, local_env, 'memory_save',
                                {'content': 'Native package smoke retains Unicode: Вася, Петя.', 'type': 'fact'})
+                resources = Path(local_env['TAM_MEMORY_DIR']) / 'resources'
+                resources.mkdir()
+                (resources / 'notes.unlisted_format').write_text('InstalledResourceSentinel', encoding='utf-8')
+                indexed = scenario.stdio(scenario.local, local_env, 'ingest_codebase',
+                                         {'path': str(resources), 'project': 'package-smoke'})
+                assert json.loads(indexed['content'][0]['text'])['persisted']
+                # Each stdio call starts a new process: this also verifies index persistence.
+                searched = scenario.stdio(scenario.local, local_env, 'ingest_codebase',
+                                          {'path': str(resources), 'project': 'package-smoke',
+                                           'action': 'search', 'query': 'InstalledResourceSentinel'})
+                assert json.loads(searched['content'][0]['text'])['count'] > 0
+                def change_and_wait():
+                    (resources / 'notes.unlisted_format').write_text('AutomaticResourceSentinel', encoding='utf-8')
+                    database = sqlite3.connect(Path(local_env['TAM_MEMORY_DIR']) / 'memory.db')
+                    try:
+                        deadline = time.monotonic() + WATCH_TIMEOUT
+                        while time.monotonic() < deadline:
+                            if database.execute('SELECT COUNT(*) FROM resource_chunks WHERE content=?',
+                                                ('AutomaticResourceSentinel',)).fetchone()[0]:
+                                return
+                            time.sleep(WATCH_POLL_SECONDS)
+                        raise AssertionError('Installed background watcher did not update the index')
+                    finally:
+                        database.close()
+                updated = scenario.stdio(scenario.local, local_env, 'ingest_codebase',
+                                         {'path': str(resources), 'project': 'package-smoke',
+                                          'action': 'search', 'query': 'AutomaticResourceSentinel'},
+                                         before_call=change_and_wait)
+                assert json.loads(updated['content'][0]['text'])['count'] > 0
         sys.stdout.write(json.dumps({'status': 'passed', 'os': platform.system(),
                                     'machine': platform.machine(), 'python': platform.python_version(),
                                     'layout': args.layout, 'external_server': bool(args.server_url)}) + '\n')

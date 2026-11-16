@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import math
 
+from memory_core.retrieval import SearchScope
+from memory_core.telemetry import op_timer
+
 RRF_K = 60
 
 # Graph node types that link to nearly every record of a project and
@@ -19,7 +22,8 @@ GRAPH_HUB_TYPES = ("project", "event", "session", "domain")
 # GRAPH_MAX_SEED_NODES x MEMORY_GRAPH_HUB_DEGREE rows.
 GRAPH_MAX_SEED_NODES = 16
 
-def shared_entity_neighbours(store, seed_ids, seed_scores, *, limit):
+@op_timer("retrieval_graph_neighbours_ms")
+def shared_entity_neighbours(store, seed_ids, seed_scores, *, limit, scope: SearchScope | None = None):
     """Records that share an entity node with a seed record, via the knowledge graph.
 
     knowledge_nodes links records to graph nodes (auto_link on save, triple
@@ -55,9 +59,11 @@ def shared_entity_neighbours(store, seed_ids, seed_scores, *, limit):
         node_seed_weight[node_id] = max(node_seed_weight.get(node_id, 0.0), weight)
     node_ids = list(node_seed_weight)
     node_marks = ",".join("?" * len(node_ids))
+    count_conds, count_params = scope.sql() if scope is not None else (["1=1"], [])
     degrees = dict(store.db.execute(f"""
-        SELECT node_id, COUNT(*) FROM knowledge_nodes WHERE node_id IN ({node_marks}) GROUP BY node_id
-    """, node_ids).fetchall())
+        SELECT kn.node_id, COUNT(*) FROM knowledge_nodes kn JOIN knowledge k ON k.id=kn.knowledge_id
+        WHERE kn.node_id IN ({node_marks}) AND {' AND '.join(count_conds)} GROUP BY kn.node_id
+    """, [*node_ids, *count_params]).fetchall())
     # A node linked to one record (the seed itself) has no neighbours; hubs connect everything.
     kept = sorted((node_id for node_id in node_ids if 2 <= degrees.get(node_id, 0) <= hub_degree),
                   key=lambda node_id: (degrees[node_id], node_id))[:GRAPH_MAX_SEED_NODES]
@@ -66,11 +72,12 @@ def shared_entity_neighbours(store, seed_ids, seed_scores, *, limit):
     specificity = {node_id: 1.0 / math.log1p(degrees[node_id]) for node_id in kept}
     kept_marks = ",".join("?" * len(kept))
     scores: dict[int, float] = {}
+    conds, params = scope.sql() if scope is not None else (["k.status='active'"], [])
     for row in store.db.execute(f"""
         SELECT kn.knowledge_id, kn.node_id, COALESCE(kn.strength, 1.0)
         FROM knowledge_nodes kn JOIN knowledge k ON k.id = kn.knowledge_id
-        WHERE kn.node_id IN ({kept_marks}) AND kn.knowledge_id NOT IN ({marks}) AND k.status = 'active'
-    """, [*kept, *seeds]).fetchall():
+        WHERE kn.node_id IN ({kept_marks}) AND kn.knowledge_id NOT IN ({marks}) AND {' AND '.join(conds)}
+    """, [*kept, *seeds, *params]).fetchall():
         kid = int(row[0])
         scores[kid] = scores.get(kid, 0.0) + node_seed_weight[row[1]] * float(row[2]) * specificity[row[1]]
     if not scores:
@@ -112,7 +119,8 @@ def query_entity_names(query: str) -> list[str]:
     return list(names)[:QUERY_ENTITY_MAX_NAMES]
 
 
-def query_entity_candidates(store, query, *, project, ktype, branch, limit):
+@op_timer("retrieval_query_entities_ms")
+def query_entity_candidates(store, query, *, project, ktype, branch, limit, scope: SearchScope | None = None):
     """Records linked to graph entities named in the query, as (knowledge_id, score) pairs.
 
     Each matched entity node (not a hub type, linked to at most
@@ -136,10 +144,12 @@ def query_entity_candidates(store, query, *, project, ktype, branch, limit):
     """, [*names, *GRAPH_HUB_TYPES]).fetchall()]
     if not nodes:
         return []
+    count_conds, count_params = scope.sql() if scope is not None else (["1=1"], [])
     mentions = dict(store.db.execute(f"""
-        SELECT node_id, COUNT(*) FROM knowledge_nodes WHERE node_id IN ({",".join("?" * len(nodes))})
-        GROUP BY node_id
-    """, nodes).fetchall())
+        SELECT kn.node_id, COUNT(*) FROM knowledge_nodes kn JOIN knowledge k ON k.id=kn.knowledge_id
+        WHERE kn.node_id IN ({",".join("?" * len(nodes))}) AND {' AND '.join(count_conds)}
+        GROUP BY kn.node_id
+    """, [*nodes, *count_params]).fetchall())
     kept = sorted((node for node in dict.fromkeys(nodes) if 1 <= mentions.get(node, 0) <= hub_degree),
                   key=lambda node: (mentions[node], node))[:QUERY_ENTITY_MAX_NODES]
     if not kept:
@@ -155,6 +165,8 @@ def query_entity_candidates(store, query, *, project, ktype, branch, limit):
     if branch:
         conds.append("(k.branch=? OR k.branch='')")
         params.append(branch)
+    if scope is not None:
+        conds, params = scope.sql()
     linked: dict[int, set[str]] = {}
     for row in store.db.execute(f"""
         SELECT DISTINCT kn.knowledge_id, kn.node_id FROM knowledge_nodes kn JOIN knowledge k ON k.id = kn.knowledge_id
@@ -170,7 +182,8 @@ def query_entity_candidates(store, query, *, project, ktype, branch, limit):
     return scored[:limit]
 
 
-def lexical_candidates(store, text, *, project, ktype, branch, limit):
+@op_timer("retrieval_lexical_ms")
+def lexical_candidates(store, text, *, project, ktype, branch, limit, scope: SearchScope | None = None):
     """Top `limit` FTS matches of `text` as (knowledge_id, normalised bm25) pairs."""
     from memory_core.fts_schema import SCOPED_BM25_WEIGHTS, scoped_match
     from memory_core.query_terms import fts_match_query
@@ -184,7 +197,18 @@ def lexical_candidates(store, text, *, project, ktype, branch, limit):
     if branch:
         conds.append("(k.branch=? OR k.branch='')")
         params.append(branch)
-    if project:
+    if scope is not None:
+        conds, params = scope.sql()
+    if store.is_postgres:
+        from memory_core.pg_fts import match_source
+        weights = tuple(float(weight) for weight in SCOPED_BM25_WEIGHTS.split(",")) if project else ()
+        source, source_params = match_source("knowledge_fts", scoped_match(match, project) if project else match,
+                                             weights=weights)
+        rows = store.db.execute(f"""
+            SELECT k.id, f.rank AS r FROM ({source}) f JOIN knowledge k ON k.id=f.id
+            WHERE {' AND '.join(conds)} ORDER BY f.rank, k.id LIMIT ?
+        """, [*source_params, *params, limit]).fetchall()
+    elif project:
         rows = store.db.execute(f"""
             WITH f AS MATERIALIZED (
                 SELECT rowid AS id, bm25(knowledge_fts, {SCOPED_BM25_WEIGHTS}) AS r
@@ -201,29 +225,35 @@ def lexical_candidates(store, text, *, project, ktype, branch, limit):
     top = max((abs(row[1]) for row in rows), default=0.0) or 1.0
     return [(int(row[0]), abs(row[1]) / top) for row in rows]
 
-def directive_candidates(store, query, *, project, branch, limit, can_embed):
+@op_timer("retrieval_directives_ms")
+def directive_candidates(store, query, *, project, branch, limit, can_embed, scope: SearchScope | None = None):
     """Convention records of the project that answer an advice-shaped query."""
     scores: dict[int, float] = {}
+    from dataclasses import replace
+    scope_kwargs = {"scope": replace(scope, kind="convention")} if scope is not None else {}
     for kid, score in lexical_candidates(store, query, project=project, ktype="convention",
-                                               branch=branch, limit=limit):
+                                               branch=branch, limit=limit, **scope_kwargs):
         scores[kid] = max(scores.get(kid, 0.0), 0.5 * score)
     if can_embed:
         for kid, similarity in store._search_spaces(query, project=project, limit=limit,
-                                                      kind="convention", branch=branch):
+                                                      kind="convention", branch=branch, **scope_kwargs):
             scores[int(kid)] = max(scores.get(int(kid), 0.0), max(0.0, float(similarity)))
     return sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:limit]
 
-def multi_query_candidates(store, parts, *, fuse, project, ktype, branch, limit, can_embed, spaces):
+@op_timer("retrieval_multi_query_ms")
+def multi_query_candidates(store, parts, *, fuse, project, ktype, branch, limit, can_embed, spaces,
+                           scope: SearchScope | None = None):
     """Fuse the FTS and semantic results of each sub-query with RRF; score = fused RRF."""
     rankings: dict[str, list[int]] = {}
+    scope_kwargs = {"scope": scope} if scope is not None else {}
     for index, part in enumerate(parts):
         lexical = [kid for kid, _ in lexical_candidates(store, part, project=project, ktype=ktype,
-                                                              branch=branch, limit=limit)]
+                                                              branch=branch, limit=limit, **scope_kwargs)]
         if lexical:
             rankings[f"fts:{index}"] = lexical
         if can_embed:
             semantic = store._search_spaces(part, project=project, spaces=spaces, limit=limit,
-                                             kind=ktype, branch=branch)
+                                             kind=ktype, branch=branch, **scope_kwargs)
             semantic.sort(key=lambda pair: pair[1], reverse=True)
             if semantic:
                 rankings[f"semantic:{index}"] = [int(kid) for kid, _ in semantic]
@@ -237,7 +267,9 @@ def multi_query_candidates(store, parts, *, fuse, project, ktype, branch, limit,
 COMPOUND_PART_POOL = 10
 
 
-def compound_part_winners(store, parts, *, fuse, project, ktype, branch, can_embed, spaces):
+@op_timer("retrieval_compound_ms")
+def compound_part_winners(store, parts, *, fuse, project, ktype, branch, can_embed, spaces,
+                          scope: SearchScope | None = None):
     """The best record of each part of a compound query (FTS + semantic fused per part), in part order.
 
     A part with no candidate is skipped; a record that wins two parts is listed once.
@@ -245,7 +277,8 @@ def compound_part_winners(store, parts, *, fuse, project, ktype, branch, can_emb
     winners: list[int] = []
     for part in parts:
         ranked = multi_query_candidates(store, [part], fuse=fuse, project=project, ktype=ktype, branch=branch,
-                                        limit=COMPOUND_PART_POOL, can_embed=can_embed, spaces=spaces)
+                                        limit=COMPOUND_PART_POOL, can_embed=can_embed, spaces=spaces,
+                                        **({"scope": scope} if scope is not None else {}))
         if ranked and ranked[0][0] not in winners:
             winners.append(int(ranked[0][0]))
     return winners

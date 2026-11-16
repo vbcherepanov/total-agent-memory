@@ -20,6 +20,7 @@ import sqlite3
 from typing import Iterable
 
 from paths import memory_dir
+from memory_core.retrieval import SearchScope, fetch_active_records
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ def expand_top_k(
     seed_ids: list[int],
     budget: int = 10,
     min_strength: float = 0.3,
+    scope: SearchScope | None = None,
 ) -> list[tuple[int, float]]:
     """Expand seed knowledge ids through graph_nodes/graph_edges 1-hop.
 
@@ -174,16 +176,21 @@ def expand_top_k(
     # 3) neighbor node -> knowledge_ids (only active ones if status col on knowledge)
     neigh_list = list(neighbor_best.keys())
     neigh_ph = ",".join("?" for _ in neigh_list)
-    strength_select = f", {strength_col}" if strength_col else ", 1.0"
+    strength_select = f", kn.{strength_col}" if strength_col else ", 1.0"
+    predicates, scope_params = scope.sql() if scope is not None else ([], [])
+    scope_join = "JOIN knowledge k ON k.id=kn.knowledge_id" if scope is not None else ""
+    scope_where = " AND " + " AND ".join(predicates) if predicates else ""
     try:
         kn_rows = db.execute(
             f"""
             SELECT kn.knowledge_id, kn.node_id {strength_select}
             FROM knowledge_nodes kn
+            {scope_join}
             WHERE kn.node_id IN ({neigh_ph})
               AND kn.knowledge_id NOT IN ({placeholders})
+              {scope_where}
             """,
-            neigh_list + seeds,
+            neigh_list + seeds + scope_params,
         ).fetchall()
     except sqlite3.Error as e:
         logger.warning("graph_expander: neighbor->knowledge map failed: %s", e)
@@ -211,7 +218,8 @@ def expand_top_k(
 
 
 def expand_via_associations(
-    db: sqlite3.Connection, seed_ids: list[int], budget: int = 10
+    db: sqlite3.Connection, seed_ids: list[int], budget: int = 10,
+    scope: SearchScope | None = None,
 ) -> list[tuple[int, float]]:
     """Expand via the 'associations'-like table.
 
@@ -244,15 +252,18 @@ def expand_via_associations(
         return []
 
     placeholders = ",".join("?" for _ in seeds)
-    try:
-        rows = db.execute(
-            f"""
+    sql = f"""
             SELECT {b_col} AS other FROM {table} WHERE {a_col} IN ({placeholders})
             UNION ALL
             SELECT {a_col} AS other FROM {table} WHERE {b_col} IN ({placeholders})
-            """,
-            seeds + seeds,
-        ).fetchall()
+            """
+    params = seeds + seeds
+    if scope is not None:
+        predicates, scope_params = scope.sql()
+        sql = f"SELECT links.other FROM ({sql}) links JOIN knowledge k ON k.id=links.other WHERE " + " AND ".join(predicates)
+        params = [*params, *scope_params]
+    try:
+        rows = db.execute(sql, params).fetchall()
     except sqlite3.Error as e:
         logger.warning("graph_expander: associations lookup failed: %s", e)
         return []
@@ -274,7 +285,8 @@ def expand_via_associations(
 
 
 def expand(
-    db: sqlite3.Connection, seed_ids: list[int], budget: int = 10
+    db: sqlite3.Connection, seed_ids: list[int], budget: int = 10,
+    scope: SearchScope | None = None,
 ) -> list[tuple[int, float]]:
     """Combine graph-edge expansion and association expansion, dedupe, keep max score."""
     seeds = _as_int_list(seed_ids)
@@ -282,8 +294,8 @@ def expand(
         return []
 
     # Split budget generously then trim at the end.
-    a = expand_top_k(db, seeds, budget=budget)
-    b = expand_via_associations(db, seeds, budget=budget)
+    a = expand_top_k(db, seeds, budget=budget, scope=scope)
+    b = expand_via_associations(db, seeds, budget=budget, scope=scope)
 
     merged = _dedupe_merge(a + b, exclude=set(seeds))
     ranked = sorted(merged.items(), key=lambda p: p[1], reverse=True)[:budget]
@@ -291,7 +303,7 @@ def expand(
 
 
 def fetch_records(
-    db: sqlite3.Connection, knowledge_ids: list[int]
+    db: sqlite3.Connection, knowledge_ids: list[int], scope: SearchScope | None = None,
 ) -> list[dict]:
     """Return full knowledge rows for given ids, preserving input order."""
     ids = _as_int_list(knowledge_ids)
@@ -299,6 +311,10 @@ def fetch_records(
         return []
     if not _table_exists(db, "knowledge"):
         return []
+
+    if scope is not None:
+        records = fetch_active_records(db, ids, scope=scope)
+        return [records[kid] for kid in dict.fromkeys(ids) if kid in records]
 
     cols = _columns(db, "knowledge")
     # Pick a safe, common subset but include whatever extras exist.

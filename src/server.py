@@ -16,6 +16,7 @@ Features: BM25 scoring, 3-level progressive disclosure, decay scoring, fuzzy sea
 """
 
 import asyncio
+import functools
 import atexit
 import contextvars
 import inspect
@@ -30,14 +31,19 @@ import sqlite3
 import struct
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 import uuid
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from memory_core.snapshot_semantic import SnapshotVector
 
 # v11.0 — Apply MEMORY_MODE → derived env defaults BEFORE any downstream
 # module reads `USE_ADVANCED_RAG`, `MEMORY_QUALITY_GATE_ENABLED`, etc. at
@@ -69,6 +75,7 @@ import recall_output
 import server_instructions
 import tool_profiles
 import tool_telemetry
+from memory_core.export_snapshot import EXPORT_PAGE_DEFAULT_LIMIT, EXPORT_PAGE_MAX_LIMIT
 from memory_core.timestamps import format_utc, utc_now
 from rule_surfaces import (
     DEFAULT_REPORT_MIN_N,
@@ -182,6 +189,13 @@ from paths import restrict_permissions  # noqa: E402
 MEMORY_DIR = _resolve_memory_dir()
 # Records a supersede=true save compares against (most recent first).
 SUPERSEDE_CANDIDATES = 500
+# Key of the incident spec inside a save_knowledge outbox payload.
+INTENT_INCIDENT_KEY = "incident_spec"
+# Resource indexing runs on its own pool so it cannot starve recall inference.
+INDEX_WORKERS_ENV = "TAM_INDEX_WORKERS"
+DEFAULT_INDEX_WORKERS = 1
+_INDEX_EXECUTOR: ThreadPoolExecutor | None = None
+_INDEX_EXECUTOR_LOCK = threading.Lock()
 # Modes the store falls into when the configured provider cannot start.
 FALLBACK_EMBED_MODES = ("st", "ollama", "none")
 # A fastembed model that failed to load is tried again after this long.
@@ -297,7 +311,8 @@ class Store:
     background_queues = True
 
     def __init__(self, connection_factory: Callable[..., sqlite3.Connection] = sqlite3.Connection,
-                 database: StoreDatabase | None = None, *, background_queues: bool = True):
+                 database: StoreDatabase | None = None, *, background_queues: bool = True,
+                 thread_bound: bool = False):
         for d in ["raw", "chroma", "transcripts", "queue", "backups", "extract-queue"]:
             (MEMORY_DIR / d).mkdir(parents=True, exist_ok=True)
 
@@ -308,20 +323,31 @@ class Store:
         # Team workers have no consumer for the triple / deep-enrichment /
         # representations queues, so they disable enqueuing into them.
         self.background_queues = background_queues
+        self.thread_bound = thread_bound
         self.db_path = MEMORY_DIR / "memory.db"
-        if self.is_postgres:
-            self._open_postgres(connection_factory)
-            from memory_core.pg_vector_search import PgVectorSearch as VectorSearch
-        else:
-            self._open_sqlite(connection_factory)
-            from memory_core.vector_search import VectorSearch
-            for problem in restrict_permissions(MEMORY_DIR):
-                LOG(problem)
-        from memory_core.vector_search import DEFAULT_VECTOR_CACHE_BYTES
-        self._vector_search = VectorSearch(
-            self.db, max_cache_bytes=int(os.environ.get("MEMORY_VECTOR_CACHE_BYTES", DEFAULT_VECTOR_CACHE_BYTES)),
-        )
-        self._init_services()
+        try:
+            if self.is_postgres:
+                self._open_postgres(connection_factory)
+                from memory_core.pg_vector_search import PgVectorSearch as VectorSearch
+            else:
+                self._open_sqlite(connection_factory)
+                from memory_core.vector_search import VectorSearch
+                for problem in restrict_permissions(MEMORY_DIR):
+                    LOG(problem)
+            from memory_core.vector_search import DEFAULT_VECTOR_CACHE_BYTES
+            self._vector_search = VectorSearch(
+                self.db, max_cache_bytes=int(os.environ.get("MEMORY_VECTOR_CACHE_BYTES", DEFAULT_VECTOR_CACHE_BYTES)),
+            )
+            from multi_repr_search import RepresentationCache, DEFAULT_REPR_CACHE_BYTES
+            self._representation_cache = RepresentationCache(
+                self.db, max_bytes=int(os.environ.get('MEMORY_REPR_CACHE_BYTES', DEFAULT_REPR_CACHE_BYTES)),
+            )
+            self._init_services()
+        except BaseException:
+            connection = getattr(self, "db", None)
+            if connection is not None:
+                connection.close()
+            raise
 
     def _open_postgres(self, connection_factory):
         """Workspace schema on PostgreSQL: connect as the workspace role, apply its migrations."""
@@ -339,17 +365,9 @@ class Store:
         pg_schema.ensure(self.db)
 
     def _open_sqlite(self, connection_factory):
-        # check_same_thread=False lets background threads *read* through this
-        # Connection (the enrichment worker calls Store._binary_search, and
-        # SELECT does not open an implicit transaction).
-        #
-        # It does NOT make writes from another thread safe: sqlite3's legacy
-        # isolation mode keeps the implicit BEGIN/COMMIT on the Connection, so
-        # two threads issuing DML interleave into "cannot start a transaction
-        # within a transaction" / "no transaction active". WAL and
-        # busy_timeout solve contention *between* connections, not this. The
-        # enrichment worker therefore opens its own connection to db_path.
-        self.db = sqlite3.connect(str(self.db_path), check_same_thread=False, factory=connection_factory)
+        # Personal transports enforce ownership; background work uses side connections.
+        # Direct embedded callers retain their existing connection contract.
+        self.db = sqlite3.connect(str(self.db_path), check_same_thread=self.thread_bound, factory=connection_factory)
         self.db.row_factory = sqlite3.Row
         from memory_core.embeddings import EmbeddingProvider
         self.evidence_embedder = EmbeddingProvider()
@@ -457,6 +475,9 @@ class Store:
         # Vectors from a retired model or recipe go through the same backfill queue.
         self._verify_embedding_fingerprint()
         self.enqueue_stale_vectors(force=True)
+        if self.background_queues and self._expected_models():
+            from representations_queue import RepresentationsQueue
+            RepresentationsQueue(self.db).enqueue_incompatible(self._primary_identity())
 
         # Records saved while the embedding provider was down get their
         # vectors in the background (own connection, never blocks startup).
@@ -1047,6 +1068,10 @@ class Store:
                 return
 
             def _replay(payload):
+                from memory_core.incidents import IncidentSpec
+                stored_spec = payload.get(INTENT_INCIDENT_KEY)
+                replay_spec = (IncidentSpec.model_validate(stored_spec)
+                               if stored_spec is not None else None)
                 # `_from_outbox=True` short-circuits create_intent so the
                 # replayed save doesn't create another intent for the
                 # same payload.
@@ -1065,6 +1090,7 @@ class Store:
                     importance=payload.get("importance", "medium"),
                     skip_quality=True,           # don't re-score on replay
                     coref=False,                 # don't re-rewrite on replay
+                    incident_spec=replay_spec,
                     _from_outbox=True,
                 )
                 # On dedup, return None so reconcile records 'dedup' status.
@@ -1143,6 +1169,8 @@ class Store:
                     vector = v
                     model_name = self._v11_embed_provider.active_model(space)
                     provider_name = "fastembed"  # EmbeddingProvider is FastEmbed-first
+                    from memory_core.embedding_identity import EmbedIdentity
+                    identity = EmbedIdentity(model_name, provider_name, *self._recipe(provider_name))
             except Exception as _emb_err:  # noqa: BLE001 — fall back to the text space below
                 self._swallowed("save.embed_space", _emb_err,
                                 f"per-space embed for space={space} fell back to text")
@@ -1162,7 +1190,7 @@ class Store:
             # the per-space encoder failed — degrade gracefully.
             space = "text"
         return {"vector": vector, "model": model_name, "provider": provider_name, "space": space,
-                "content_type": content_type, "language": language}, None
+                "content_type": content_type, "language": language, "identity_key": identity.key(len(vector))}, None
 
     def _persist_record_embedding(self, rid, record_vector, *, ktype, project, sid, created_at,
                                   content, db=None, use_chroma=None):
@@ -1275,7 +1303,7 @@ class Store:
         STALE_SCAN_INTERVAL_SECONDS per process unless ``force``. Returns how
         many records were queued.
         """
-        from memory_core.embedding_identity import stale_ids
+        from memory_core.embedding_identity import reconciliation_ids
         now = time.monotonic()
         if not force and now - getattr(self, "_stale_scan_at", float("-inf")) < STALE_SCAN_INTERVAL_SECONDS:
             return 0
@@ -1284,14 +1312,14 @@ class Store:
             return 0
         conn = self.db if db is None else db
         try:
-            ids = stale_ids(conn, expected)
-            queued = self._embedding_backfill(conn).enqueue_many(ids, "stale vector: embedded by another model") if ids else 0
+            ids = reconciliation_ids(conn, expected)
+            queued = self._embedding_backfill(conn).enqueue_many(ids, "missing, unknown or stale vector") if ids else 0
         except sqlite3.Error as exc:
             self._swallowed("embedding_backfill.stale_scan", exc, "stale vector scan failed")
             return 0
         self._stale_scan_at = now
         if queued:
-            LOG(f"{queued} records carry vectors of a retired embedding model; queued for re-embedding")
+            LOG(f"{queued} records with missing, unknown or stale vectors queued for re-embedding")
         return queued
 
     def _verify_embedding_fingerprint(self):
@@ -1403,7 +1431,8 @@ class Store:
                 "error": (f"{count} vectors in {space} were made by {model}, not {actual_model}; "
                           "they are re-embedded in the background")}
 
-    def _search_spaces(self, query, *, project=None, spaces=None, limit=10, kind="all", branch=None):
+    def _search_spaces(self, query, *, project=None, spaces=None, limit=10, kind="all", branch=None, scope=None,
+                       query_vector: "SnapshotVector | None" = None, _staged=False, _revision=None):
         from memory_core.embeddings import EmbeddingProvider
         from memory_core.telemetry import op_timer
         from memory_core.vector_math import (
@@ -1413,6 +1442,88 @@ class Store:
         )
 
         self._restore_primary_embedder()
+        if query_vector is not None and (scope is None or scope.as_of is None):
+            raise ValueError("A supplied query vector requires a historical search scope")
+        if scope is not None and scope.as_of is not None:
+            from memory_core.snapshot_semantic import SnapshotEmbeddingUnavailable, SnapshotSemanticIndex, SnapshotVector
+
+            def classify_record(record):
+                from memory_core.classifier import classify
+                from memory_core.embedding_spaces import resolve_space
+                try:
+                    classified = classify(record["content"], source_format=record.get("source_format", "auto"))
+                    return resolve_space(classified.type, classified.language)
+                except Exception as error:
+                    self._swallowed("snapshot.classifier", error, "classifier failed, using text defaults")
+                    return "text"
+
+            def encode_record(record):
+                payload, error = self._embed_for_record(
+                    record["content"], record.get("context", ""), record.get("source_format", "auto"))
+                if payload is None:
+                    raise SnapshotEmbeddingUnavailable("text", f"Historical record embedding unavailable: {error}")
+                return SnapshotVector(payload["vector"], payload["model"], payload["provider"], payload["space"],
+                                      payload["identity_key"])
+
+            def query_vector_for_space(text, space):
+                if query_vector is not None and query_vector.space == space:
+                    return query_vector
+                if space == "text":
+                    values = self.embed([text])
+                    identity = self.last_embed_identity() or self._primary_identity()
+                    if not values or not values[0]:
+                        raise SnapshotEmbeddingUnavailable(space, "Historical query embedding unavailable")
+                    return SnapshotVector(values[0], identity.model, identity.provider, space, identity.key(len(values[0])))
+                if getattr(self, "_v11_embed_provider", None) is None:
+                    self._v11_embed_provider = EmbeddingProvider()
+                values = self._v11_embed_provider.embed_query(text, space=space)
+                if not values:
+                    raise SnapshotEmbeddingUnavailable(space, "Historical query embedding unavailable")
+                from memory_core.embedding_identity import EmbedIdentity
+                identity = EmbedIdentity(self._v11_embed_provider.active_model(space), "fastembed", *self._recipe("fastembed"))
+                return SnapshotVector(values, identity.model, identity.provider, space, identity.key(len(values)))
+
+            def encode_query(text, space):
+                try:
+                    return query_vector_for_space(text, space)
+                except Exception as error:
+                    raise SnapshotEmbeddingUnavailable(space, str(error)) from error
+
+            def prepare_batch(records, queries):
+                from functools import partial
+                from memory_core.snapshot_batch import SnapshotBatch, SnapshotEncoder, ollama_vectors
+
+                encoders = {}
+                for space, identity in queries.items():
+                    if identity is None:
+                        continue
+                    if space != "text":
+                        encode = self._v11_embed_provider._provider_for(space).embed
+                    elif identity.provider == "fastembed":
+                        encode = self.fastembed.embed
+                    elif identity.provider == "st":
+                        encode = self.embedder.encode
+                    elif identity.provider == "ollama":
+                        encode = partial(ollama_vectors, url=OLLAMA_URL, model=identity.model)
+                    else:
+                        encode = self.embed_provider.embed
+                    encoders[space] = SnapshotEncoder(identity, encode)
+                batch = SnapshotBatch(tuple((f"{record['content']} {record.get('context', '')}", classify_record(record))
+                                             for record in records), encoders)
+                return batch.execute
+
+            index = SnapshotSemanticIndex(self.db, encode_record, encode_query, classify_record, prepare_batch)
+
+            def steps():
+                hits = yield from index.search_steps(query, scope, limit, revision=_revision)
+                self._semantic_diagnostics = index.diagnostics
+                self._log_semantic_diagnostics(index.diagnostics)
+                return hits
+
+            if _staged:
+                return steps()
+            from memory_core.staged_search import run_inline
+            return run_inline(steps())
         groups = self._vector_search.groups(project)
         query_vectors = {}
         # Spaces that share a model and a query vector are searched together: one ranking by cosine.
@@ -1999,7 +2110,7 @@ class Store:
                         agent_id=None, parent_agent_id=None,
                         _from_outbox=False, source_format: Literal['auto', 'conversation'] = 'auto',
                         repeat: Literal['replace', 'confirm'] = 'replace', embedding=None,
-                        supersedes: int | None = None):
+                        supersedes: int | None = None, incident_spec=None):
         """Save knowledge. Returns
         ``(record_id, was_deduplicated, was_redacted, private_sections, quality_meta)``.
 
@@ -2022,6 +2133,9 @@ class Store:
 
         ``supersedes`` names an active record that the new row replaces in the
         same transaction (``memory_update``); the duplicate lookup is skipped.
+
+        ``incident_spec`` (an ``IncidentSpec``) writes the incident rows in the same
+        transaction as the record; a failure leaves neither behind.
         """
         # v11 Phase 5 — total wall-clock for this save. Recorded into
         # `memory_core.telemetry.counters['save_total_ms']` so the bench
@@ -2048,6 +2162,7 @@ class Store:
                 agent_id=agent_id, parent_agent_id=parent_agent_id,
                 _from_outbox=_from_outbox, source_format=source_format,
                 repeat=repeat, embedding=embedding, supersedes=supersedes,
+                incident_spec=incident_spec,
             )
         _note_written_record(saved[0])
         return saved
@@ -2058,7 +2173,7 @@ class Store:
                               agent_id=None, parent_agent_id=None,
                               _from_outbox=False, source_format: Literal['auto', 'conversation'] = 'auto',
                               repeat: Literal['replace', 'confirm'] = 'replace', embedding=None,
-                              supersedes: int | None = None):
+                              supersedes: int | None = None, incident_spec=None):
         """Underlying implementation; wrapped by `save_knowledge` for telemetry.
 
         `supersedes` is the id of an active record the new row replaces; the insert
@@ -2174,6 +2289,8 @@ class Store:
                         "source_format": source_format,
                         "agent_id": agent_id, "parent_agent_id": parent_agent_id,
                         "supersedes": supersedes,
+                        INTENT_INCIDENT_KEY: (incident_spec.model_dump(by_alias=True, mode="json")
+                                              if incident_spec is not None else None),
                     },
                     session_id=sid, content=content, ktype=ktype, project=project,
                 )
@@ -2307,10 +2424,16 @@ class Store:
             dup_id = self._find_duplicate(content, ktype, project)
             if dup_id and repeat == "replace" and not _from_outbox:
                 replaces = dup_id
+                previous = self.q1("SELECT tags FROM knowledge WHERE id=?", (dup_id,))
+                previous_tags = json.loads(previous["tags"] or "[]")
+                if not isinstance(previous_tags, list) or any(not isinstance(tag, str) for tag in previous_tags):
+                    raise ValueError(f"Record {dup_id} has invalid stored tags")
+                tags = list(dict.fromkeys([*previous_tags, *(tags or [])]))
             elif dup_id:
                 if source_format == 'conversation':
                     self.db.execute("UPDATE knowledge SET source_format='conversation' WHERE id=?", (dup_id,))
                 self.db.execute("UPDATE knowledge SET last_confirmed=? WHERE id=?", (now, dup_id))
+                self._write_incident(dup_id, incident_spec, intent)
                 self.db.commit()
                 LOG(f"Dedup: updated last_confirmed for id={dup_id}")
                 if intent is not None:
@@ -2365,6 +2488,10 @@ class Store:
                     import outbox as _ob
                     _ob.mark_superseded(self.db, intent, None)  # resolved: must not replay as a new record
                 raise ValueError(message)
+            if superseded_now:
+                quality_meta = dict(quality_meta or {})
+                quality_meta["replaced_ids"] = [replaces]
+        self._write_incident(rid, incident_spec, intent)
         self.db.commit()
 
         if replaces:
@@ -2600,20 +2727,49 @@ class Store:
                     skip_quality=skip_quality,
                 )
                 budget_note = (quality_meta or {}).get("importance_budget")
+                replaced_ids = (quality_meta or {}).get("replaced_ids")
                 quality_meta = {
                     "decision": "pending",
                     "reason": "queued for async enrichment",
                 }
                 if budget_note:
                     quality_meta["importance_budget"] = budget_note
+                if replaced_ids:
+                    quality_meta["replaced_ids"] = replaced_ids
             except Exception as e:
                 self._swallowed("save.enrichment_enqueue", e,
                                 "enrichment enqueue failed (sync fallback would re-run heavy stages)")
+
+        from memory_core.similar import find_similar
+        quality_meta = dict(quality_meta or {})
+        try:
+            quality_meta["similarity"] = find_similar(self.db, content, project, rid).payload()
+        except sqlite3.Error as error:
+            self._swallowed("save.similarity", error, "Similarity check failed after saving")
+            quality_meta["similarity"] = {"similarity_error": "Similarity check unavailable; record was saved"}
 
         journal = getattr(self, "error_journal", None)
         if journal is not None:
             journal.flush()
         return rid, replaces is not None, was_redacted, private_sections, quality_meta
+
+    def _write_incident(self, rid, incident_spec, intent):
+        """Write the incident rows inside the open save transaction.
+
+        A failure rolls the whole save back (record included) and resolves the
+        outbox intent so the reconciler cannot replay the record without its incident.
+        """
+        if incident_spec is None:
+            return
+        from memory_core.incidents import IncidentService
+        try:
+            IncidentService(self.db).write(rid, incident_spec)
+        except Exception:
+            self.db.rollback()
+            if intent is not None:
+                import outbox as _ob
+                _ob.mark_superseded(self.db, intent, None)
+            raise
 
     def supersede_values(self, rid, content, ktype, project):
         """Retire active records that `content` (record `rid`) states a new value for.
@@ -2817,35 +2973,72 @@ class Store:
 
     # ── Export ──
 
-    def export_all(self, project=None):
-        """Export all active knowledge as JSON."""
-        conds = ["status='active'"]
+    def export_all(self, project=None, limit=None, cursor=None):
+        """Export knowledge with its lifecycle state and a completeness manifest.
+
+        Without ``limit``/``cursor`` the whole store is exported at once. With either, one page of
+        a snapshot is returned: records are ordered by id and bounded by the highest id present when
+        the first page was taken, so later inserts cannot shift or duplicate records between pages.
+        """
+        from memory_core.export_snapshot import (
+            decode_cursor, encode_cursor, new_snapshot, record_state, snapshot_header, validate_page_limit)
+
+        conds = ["1=1"]
         params = []
         if project:
             conds.append("project=?")
             params.append(project)
-        rows = self.q(f"SELECT * FROM knowledge WHERE {' AND '.join(conds)} ORDER BY id", params)
+        where = " AND ".join(conds)
+        position = next_cursor = None
+        if limit is None and cursor is None:
+            rows = self.q(f"SELECT * FROM knowledge WHERE {where} ORDER BY id", params)
+        else:
+            page_limit = validate_page_limit(limit)
+            if cursor is not None:
+                position = decode_cursor(cursor, project or None)
+            else:
+                bounds = self.q1(f"SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS top FROM knowledge WHERE {where}",
+                                 params)
+                position = new_snapshot(project=project or None, upper_id=bounds["top"], total=bounds["n"])
+            rows = self.q(f"SELECT * FROM knowledge WHERE {where} AND id>? AND id<=? ORDER BY id LIMIT ?",
+                          [*params, position.last_id, position.upper_id, page_limit + 1])
+            if len(rows) > page_limit:
+                rows = rows[:page_limit]
+                next_cursor = encode_cursor(position.advance(rows[-1]["id"]))
         for r in rows:
+            r["state"] = record_state(r)
+            if r.get("type") == "incident":
+                from memory_core.incidents import IncidentService
+                r["incident"] = IncidentService(self.db).get(r["id"]).model_dump(by_alias=True)
             if isinstance(r.get("tags"), str):
                 try:
                     r["tags"] = json.loads(r["tags"])
                 except Exception:
                     pass
-        sessions = self.q("SELECT * FROM sessions WHERE (? IS NULL OR project=?) ORDER BY started_at",
-                          (project, project))
-        relations = self.q("""SELECT rel.* FROM relations rel
-            JOIN knowledge a ON a.id=rel.from_id JOIN knowledge b ON b.id=rel.to_id
-            WHERE a.status='active' AND b.status='active'
-            AND (? IS NULL OR (a.project=? AND b.project=?))""", (project, project, project))
+        later_page = position is not None and position.page > 1
+        sessions = [] if later_page else self.q(
+            "SELECT * FROM sessions " + ("WHERE project=? " if project else "") + "ORDER BY started_at",
+            (project,) if project else ())
+        relations = [] if later_page else self.q("""SELECT rel.* FROM relations rel
+            JOIN knowledge a ON a.id=rel.from_id JOIN knowledge b ON b.id=rel.to_id"""
+            + (" WHERE a.project=? AND b.project=?" if project else ""),
+            (project, project) if project else ())
         from ambient.actions import ActionLog
 
+        if position is None:
+            header = snapshot_header(rows)
+        else:
+            header = snapshot_header(rows, exported_at=position.exported_at, snapshot=position.describe())
         return {
             "version": "2.1",
-            "exported_at": utc_now(),
+            "exported_at": header["exported_at"],
+            "header": header,
+            "end": {"complete": next_cursor is None, "next_cursor": next_cursor},
             "knowledge": rows,
             "sessions": sessions,
             "relations": relations,
-            "agent_actions": ActionLog(self.db).export(project) if self._has_table("agent_actions") else [],
+            "agent_actions": ([] if later_page or not self._has_table("agent_actions")
+                              else ActionLog(self.db).export(project)),
         }
 
     # ── Version History ──
@@ -2887,7 +3080,7 @@ class Store:
             return None
         spaces = [r[0] for r in self.db.execute(
             "SELECT DISTINCT embedding_space FROM embeddings WHERE knowledge_id=?", (kid,))]
-        self.db.execute("UPDATE knowledge SET status='deleted' WHERE id=?", (kid,))
+        self.db.execute("UPDATE knowledge SET status='deleted', state_changed_at=? WHERE id=?", (utc_now(), kid))
         self._delete_embedding(kid)
         self.db.commit()
         for space in {"text", *spaces}:
@@ -3157,7 +3350,9 @@ class Store:
                     "confidence": insight["confidence"],
                     "required": "importance >= 5 AND confidence >= 0.8"}
 
-        scope = "global" if insight["project"] == "general" else f"project:{insight['project']}"
+        from rule_scopes import automatic_rule_scope, normalize_rule_project
+        rule_project = normalize_rule_project(insight["project"])
+        scope = automatic_rule_scope(rule_project)
         priority = min(10, max(1, insight["importance"]))
 
         cur = self.db.execute("""
@@ -3167,7 +3362,7 @@ class Store:
         """, (sid, insight["content"],
               f"Promoted from insight #{insight_id}. {insight.get('context', '')}",
               insight["category"], scope, priority, insight_id,
-              insight["project"], insight.get("tags", "[]"), now, now))
+              rule_project, insight.get("tags", "[]"), now, now))
         self.db.commit()
         rule_id = cur.lastrowid
 
@@ -3479,7 +3674,7 @@ def _parse_as_of(value):
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
-        return value
+        return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
     text = str(value).strip().replace("Z", "+00:00")
     try:
         parsed = datetime.fromisoformat(text)
@@ -3489,7 +3684,7 @@ def _parse_as_of(value):
             parsed = _dateparser.parse(text, fuzzy=True)
         except (ImportError, ValueError, OverflowError) as error:
             raise ValueError(f"as_of must be an ISO date or datetime, got {value!r}") from error
-    return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed.tzinfo else parsed
 
 
 class Recall:
@@ -3506,6 +3701,7 @@ class Recall:
         self._usage_buffer = None
         self._usage_buffer_lock = threading.Lock()
         self._flights = SingleFlight("recall")
+        self._async_flights = {}
 
     # ── usage statistics (recall_count, last_recalled), written off the read path ──
 
@@ -3613,26 +3809,30 @@ class Recall:
     # wrappers keep the call sites inside _search_impl readable.
     from memory_core.retrieval_tiers import GRAPH_HUB_TYPES, GRAPH_MAX_SEED_NODES
 
-    def _shared_entity_neighbours(self, seed_ids, seed_scores, *, limit):
+    def _shared_entity_neighbours(self, seed_ids, seed_scores, *, limit, scope=None):
         from memory_core.retrieval_tiers import shared_entity_neighbours
-        return shared_entity_neighbours(self.s, seed_ids, seed_scores, limit=limit)
+        return shared_entity_neighbours(self.s, seed_ids, seed_scores, limit=limit,
+                                        **({"scope": scope} if scope is not None else {}))
 
     def _lexical_candidates(self, text, *, project, ktype, branch, limit):
         from memory_core.retrieval_tiers import lexical_candidates
         return lexical_candidates(self.s, text, project=project, ktype=ktype, branch=branch, limit=limit)
 
-    def _directive_candidates(self, query, *, project, branch, limit, can_embed):
+    def _directive_candidates(self, query, *, project, branch, limit, can_embed, scope=None):
         from memory_core.retrieval_tiers import directive_candidates
-        return directive_candidates(self.s, query, project=project, branch=branch, limit=limit, can_embed=can_embed)
+        return directive_candidates(self.s, query, project=project, branch=branch, limit=limit, can_embed=can_embed,
+                                    **({"scope": scope} if scope is not None else {}))
 
-    def _query_entity_candidates(self, query, *, project, ktype, branch, limit):
+    def _query_entity_candidates(self, query, *, project, ktype, branch, limit, scope=None):
         from memory_core.retrieval_tiers import query_entity_candidates
-        return query_entity_candidates(self.s, query, project=project, ktype=ktype, branch=branch, limit=limit)
+        return query_entity_candidates(self.s, query, project=project, ktype=ktype, branch=branch, limit=limit,
+                                       **({"scope": scope} if scope is not None else {}))
 
-    def _multi_query_candidates(self, parts, *, project, ktype, branch, limit, can_embed, spaces):
+    def _multi_query_candidates(self, parts, *, project, ktype, branch, limit, can_embed, spaces, scope=None):
         from memory_core.retrieval_tiers import multi_query_candidates
         return multi_query_candidates(self.s, parts, fuse=self._rrf_fuse, project=project, ktype=ktype,
-                                      branch=branch, limit=limit, can_embed=can_embed, spaces=spaces)
+                                      branch=branch, limit=limit, can_embed=can_embed, spaces=spaces,
+                                      **({"scope": scope} if scope is not None else {}))
 
     def _should_use_advanced_rag(self):
         """Check if advanced RAG (HyDE + reranker) is available and enabled."""
@@ -3712,13 +3912,19 @@ class Recall:
     def _pipeline_signature(cls) -> str:
         """Cache-key fragment of the ranking knobs read from the environment on every search."""
         from config import (
+            get_embed_model,
+            get_embed_provider,
             get_recall_compound_slots,
             get_recall_fts_crosslingual_damp,
             get_recall_intent_boosts,
             get_user_turn_boost,
         )
+        from memory_core.embedding_spaces import SUPPORTED_SPACES, model_for_space
         boosts = get_recall_intent_boosts()
         return "|".join((
+            "embed_provider=" + get_embed_provider(),
+            "embed_model=" + get_embed_model(),
+            *(f"embed_{space}={model_for_space(space)}" for space in SUPPORTED_SPACES),
             f"utb={get_user_turn_boost():g}",
             "ib=" + ",".join(f"{name}={boosts[name]:g}" for name in sorted(boosts)),
             f"cs={int(get_recall_compound_slots())}",
@@ -3732,14 +3938,77 @@ class Recall:
             return embedding_space
         return tuple(sorted(str(space) for space in embedding_space))
 
-    def _search_impl(self, query, project=None, ktype="all", limit=10, detail="full",
+    async def search_async(self, owner, query, project=None, ktype="all", limit=10, detail="full",
+                           branch=None, fusion="rrf", rerank=False, diverse=False, embedding_space=None,
+                           _explain=False, record_usage=True, defer_cross_rerank=False, tier_weights=None, as_of=None):
+        import copy
+        from dataclasses import asdict
+
+        from config import get_recall_singleflight_enabled, get_recall_singleflight_wait_seconds
+        from memory_core.retrieval import flatten_results
+        from memory_core.staged_search import REVISION_RETRIES, SearchRequest, SearchRevisionChanged, run_staged
+        from memory_core.telemetry import counters, op_timer
+
+        if not owner.is_owner:
+            raise RuntimeError("Staged recall must run on its Store owner")
+        request = SearchRequest(query, project, ktype, limit, detail, branch, fusion, rerank, diverse,
+                                embedding_space, _explain, record_usage, defer_cross_rerank, tier_weights, as_of)
+        options = asdict(request)
+        revision = self._data_revision()
+        if revision is None or self.s.db.in_transaction:
+            return self.search(**options)
+        key = (request.flight_key(), revision)
+        flights = self._async_flights
+        shared = flights.get(key) if get_recall_singleflight_enabled() else None
+        if shared is not None:
+            try:
+                with op_timer("recall_singleflight_wait_ms"):
+                    result = await owner.suspend(asyncio.wait_for(asyncio.shield(shared),
+                                                                  get_recall_singleflight_wait_seconds()))
+                if self._data_revision() == revision:
+                    counters.bump("recall_singleflight_shared")
+                    result = copy.deepcopy(result)
+                    if request.record_usage:
+                        self._record_usage(item['id'] for item in flatten_results(result))
+                    return result
+            except Exception:
+                counters.bump("recall_singleflight_retry")
+        future = asyncio.get_running_loop().create_future()
+        # A leader can have no waiters; retrieve its error to avoid an unhandled-future warning.
+        future.add_done_callback(lambda done: done.exception() if not done.cancelled() else None)
+        flights[key] = future
+        try:
+            with op_timer("search_total_ms"):
+                for _attempt in range(REVISION_RETRIES):
+                    try:
+                        result = await run_staged(self._search_steps(**options, _staged=True), owner)
+                        break
+                    except SearchRevisionChanged:
+                        counters.bump("recall_revision_retries")
+                else:
+                    counters.bump("recall_revision_serial_fallbacks")
+                    result = self.search(**options)
+            future.set_result(result)
+            return result
+        except BaseException as error:
+            future.set_exception(error)
+            raise
+        finally:
+            if flights.get(key) is future:
+                del flights[key]
+
+    def _search_impl(self, *args, **kwargs):
+        from memory_core.staged_search import run_inline
+        return run_inline(self._search_steps(*args, **kwargs))
+
+    def _search_steps(self, query, project=None, ktype="all", limit=10, detail="full",
                      branch=None, fusion="rrf", rerank=False, diverse=False,
                      embedding_space=None, _explain=False, record_usage=True,
-                     defer_cross_rerank=False, tier_weights=None, as_of=None):
+                     defer_cross_rerank=False, tier_weights=None, as_of=None, _staged=False):
         """Underlying implementation; wrapped by `search` for telemetry.
 
-        `as_of` (ISO date/datetime or datetime) is the moment relative dates in
-        the query ("last month", "three weeks ago") are counted from; None = now.
+        `as_of` selects records active at that instant before retrieval and
+        anchors relative dates in the query; None selects current active records.
 
         `tier_weights` (dict tier -> weight) overrides the environment's
         MEMORY_RECALL_TIER_WEIGHTS for this call; a weight of 0 skips the tier.
@@ -3764,8 +4033,14 @@ class Recall:
 
         from memory_core.cross_rerank import shared_reranker
         from memory_core.retrieval import SearchScope
+        from memory_core.telemetry import op_timer
         scope = SearchScope(project=project, kind=ktype, branch=branch,
-                            spaces=embedding_space)
+                            spaces=embedding_space, as_of=_parse_as_of(as_of))
+        snapshot_sql, snapshot_params = "k.status='active'", []
+        if scope.as_of is not None:
+            from memory_core.snapshot import Snapshot
+            snapshot_sql, snapshot_params = Snapshot.at(scope.as_of).predicate()
+        scope_kwargs = {"scope": scope} if scope.as_of is not None else {}
         # Candidates gathered per tier. A cross-encoder needs a wider window
         # than the caller's limit to have anything to re-order.
         cross = shared_reranker()
@@ -3775,7 +4050,7 @@ class Recall:
         keep = max(limit, cross.window) if deferred else limit
         revision = self._data_revision()
         cacheable = not self.s.db.in_transaction and revision is not None
-        if not cacheable or getattr(self, "_cache_revision", None) != revision:
+        if cacheable and getattr(self, "_cache_revision", None) != revision:
             if self.s.cache is not None:
                 self.s.cache.invalidate()
             if getattr(self.s, "v9_cache", None) is not None:
@@ -3818,8 +4093,10 @@ class Recall:
         def _query_vector():
             """The query embedding, computed once per search."""
             if "q" not in query_vector_cache:
-                vectors = self.s.embed([query]) if can_embed else None
+                with op_timer("retrieval_query_embedding_ms"):
+                    vectors = self.s.embed([query]) if can_embed else None
                 query_vector_cache["q"] = vectors[0] if vectors else None
+                query_vector_cache["identity"] = self.s.last_embed_identity() if vectors else None
             return query_vector_cache["q"]
 
         # v9 A2 L1: fast-path query cache. Keyed by full filter set so that
@@ -3891,6 +4168,19 @@ class Recall:
 
         use_rrf = (fusion == "rrf")
 
+        prepared_semantic = None
+        self.s._semantic_diagnostics = []
+        if scope.as_of is not None and (_v11_spaces or _tier_on("semantic")):
+            self.s._restore_primary_embedder()
+            preparation = self.s._search_spaces(
+                query, project=project, spaces=_v11_spaces, limit=pool * 3,
+                kind=ktype, branch=branch, scope=scope,
+                **({"_staged": True, "_revision": self._data_revision} if _staged else {}),
+            )
+            prepared_semantic = (yield from preparation) if _staged else preparation
+            # Cache writes precede candidate selection, so they are part of this revision.
+            revision = self._data_revision()
+
         # Collect results per doc_id and per-tier ranked lists for RRF
         results = {}          # doc_id -> {"r": row, "score": legacy_score, "via": [tiers]}
         tier_rankings = {}    # tier_name -> [doc_id, ...] ordered by tier-specific score desc
@@ -3905,8 +4195,8 @@ class Recall:
         try:
             if not _tier_on("fts"):
                 raise _TierOff("fts")
-            conds = ["knowledge_fts MATCH ?", "k.status='active'"]
-            params = [fts_q]
+            conds = ["knowledge_fts MATCH ?", snapshot_sql]
+            params = [fts_q, *snapshot_params]
             joins = ""
             if project:
                 conds.append("k.project=?")
@@ -3922,7 +4212,8 @@ class Recall:
             # without an embedding row are admitted only when no space
             # filter was set (otherwise we'd leak unclassified rows).
             if _v11_spaces:
-                joins += " JOIN embeddings e ON e.knowledge_id=k.id"
+                embedding_table = "snapshot_embedding_cache" if scope.as_of is not None else "embeddings"
+                joins += f" JOIN {embedding_table} e ON e.knowledge_id=k.id"
                 ph = ",".join("?" * len(_v11_spaces))
                 conds.append(f"COALESCE(e.embedding_space, 'text') IN ({ph})")
                 params.extend(_v11_spaces)
@@ -4028,13 +4319,14 @@ class Recall:
         # Search each embedding model in its own vector space.
         self.s._restore_primary_embedder()
         can_embed = self.s._embed_mode != "none"
-        self.s._semantic_diagnostics = []
-        semantic_tier = self.s._search_spaces(
+        semantic_tier = (prepared_semantic if prepared_semantic is not None else self.s._search_spaces(
             query, project=project, spaces=_v11_spaces, limit=pool * 3, kind=ktype, branch=branch,
-        ) if can_embed and _tier_on("semantic") else []
+            **scope_kwargs,
+        )) if (can_embed or scope.as_of is not None) and _tier_on("semantic") else []
         from memory_core.retrieval import fetch_active_records
         semantic_records = fetch_active_records(
             self.s.db, [kid for kid, _ in semantic_tier if kid not in results],
+            **scope_kwargs,
         )
         hyde_tier = []
         for kid, similarity in semantic_tier:
@@ -4053,14 +4345,26 @@ class Recall:
             try:
                 hyde_vector = hyde_expand(query, project, embed_fn=self.s._hyde_embed)
                 if hyde_vector:
-                    hyde_tier = self.s._binary_search(
-                        hyde_vector, project=project, n_results=pool * 2,
-                        embedding_spaces=["text"],
-                        embedding_model=self.s._active_embed_model_name(),
-                        kind=ktype, branch=branch,
-                    )
+                    if scope.as_of is not None:
+                        from dataclasses import replace
+                        from memory_core.snapshot_semantic import SnapshotVector
+                        identity = self.s.last_embed_identity() or self.s._primary_identity()
+                        hyde_tier = self.s._search_spaces(
+                            query, project=project, limit=pool * 2, kind=ktype, branch=branch,
+                            scope=replace(scope, spaces=["text"]),
+                            query_vector=SnapshotVector(hyde_vector, identity.model, identity.provider, "text",
+                                                        identity.key(len(hyde_vector))),
+                        )
+                    else:
+                        hyde_tier = self.s._binary_search(
+                            hyde_vector, project=project, n_results=pool * 2,
+                            embedding_spaces=["text"],
+                            embedding_model=self.s._active_embed_model_name(),
+                            kind=ktype, branch=branch,
+                        )
                     hyde_records = fetch_active_records(
                         self.s.db, [kid for kid, _ in hyde_tier if kid not in results],
+                        **scope_kwargs,
                     )
                     for kid, similarity in hyde_tier:
                         if kid in results:
@@ -4075,7 +4379,6 @@ class Recall:
                 LOG(f"HyDE search failed: {error}")
 
         if semantic_tier:
-            semantic_tier.sort(key=lambda x: x[1], reverse=True)
             tier_rankings["semantic"] = [doc_id for doc_id, _ in semantic_tier]
         if hyde_tier:
             hyde_tier.sort(key=lambda x: x[1], reverse=True)
@@ -4090,11 +4393,15 @@ class Recall:
                 q_emb = _query_vector()
                 if q_emb:
                     repr_hits, repr_winners = search_with_winners(
-                        self.s.db, q_emb, project=project, n_candidates=0, top_n=pool * 3
+                        self.s.db, q_emb, project=project, n_candidates=0, top_n=pool * 3,
+                        query_identity=query_vector_cache.get("identity"),
+                        cache=self.s._representation_cache,
+                        **scope_kwargs,
                     )
                     if repr_hits:
                         repr_records = fetch_active_records(
                             self.s.db, [kid for kid, _ in repr_hits if kid not in results],
+                            **scope_kwargs,
                         )
                         repr_tier: list[tuple[int, float]] = []
                         for kid, score in repr_hits:
@@ -4128,8 +4435,8 @@ class Recall:
             from memory_core.telemetry import op_timer
             with op_timer("retrieval_fuzzy_ms"):
                 try:
-                    conds2 = ["k.status='active'"]
-                    params2 = []
+                    conds2 = [snapshot_sql]
+                    params2 = list(snapshot_params)
                     if project:
                         conds2.append("k.project=?")
                         params2.append(project)
@@ -4172,7 +4479,7 @@ class Recall:
         if use_advanced and query_info and query_info.get("deep_graph"):
             # Multi-hop graph traversal (2 hops for architecture queries)
             before_ids = set(results.keys())
-            multi_hop_expand(self.s, top5, results, depth=2)
+            multi_hop_expand(self.s, top5, results, depth=2, scope=scope)
             # Collect newly added graph results for RRF tier ranking
             for did in results:
                 if did not in before_ids:
@@ -4183,12 +4490,13 @@ class Recall:
         else:
             # Standard 1-hop expansion: explicit links (memory_relate) plus the
             # knowledge graph — records that share an entity node with a seed.
+            relation_predicates, relation_params = scope.sql()
             for kid in top5:
-                for r in self.s.q("""
+                for r in self.s.q(f"""
                     SELECT k.* FROM relations rel
                     JOIN knowledge k ON k.id = CASE WHEN rel.from_id=? THEN rel.to_id ELSE rel.from_id END
-                    WHERE (rel.from_id=? OR rel.to_id=?) AND k.status='active'
-                """, (kid, kid, kid)):
+                    WHERE (rel.from_id=? OR rel.to_id=?) AND {' AND '.join(relation_predicates)}
+                """, [kid, kid, kid, *relation_params]):
                     if r["id"] not in results:
                         graph_score = results[kid]["score"] * 0.4
                         results[r["id"]] = {"r": r, "score": graph_score, "via": ["graph"]}
@@ -4197,8 +4505,9 @@ class Recall:
                             tier_scores.setdefault("graph", {})[int(r["id"])] = float(graph_score)
             try:
                 shared = self._shared_entity_neighbours(
-                    top5, {kid: results[kid]["score"] for kid in top5}, limit=limit)
-                shared_records = fetch_active_records(self.s.db, [kid for kid, _ in shared if kid not in results])
+                    top5, {kid: results[kid]["score"] for kid in top5}, limit=limit, **scope_kwargs)
+                shared_records = fetch_active_records(self.s.db, [kid for kid, _ in shared if kid not in results],
+                                                       **scope_kwargs)
                 for kid, graph_score in shared:
                     if kid in results:
                         if "graph" not in results[kid]["via"]:
@@ -4228,8 +4537,9 @@ class Recall:
         if _tier_on("query_entity"):
             try:
                 entity_tier = self._query_entity_candidates(query, project=project, ktype=ktype, branch=branch,
-                                                            limit=pool * 3)
-                entity_records = fetch_active_records(self.s.db, [kid for kid, _ in entity_tier if kid not in results])
+                                                            limit=pool * 3, **scope_kwargs)
+                entity_records = fetch_active_records(self.s.db, [kid for kid, _ in entity_tier if kid not in results],
+                                                       **scope_kwargs)
                 kept_entities: list[int] = []
                 for kid, entity_score in entity_tier:
                     if kid in results:
@@ -4270,11 +4580,12 @@ class Recall:
                 ep_hits = retrieve_episodes(
                     self.s.db, query, project,
                     k=max(5, limit // 2), embed_fn=ep_embed,
+                    **scope_kwargs,
                 )
                 episode_records = fetch_active_records(self.s.db, [
                     fid for hit in ep_hits for fid in (getattr(hit, "fact_ids", ()) or ())[:5]
                     if fid not in results
-                ])
+                ], **scope_kwargs)
                 for hit in ep_hits:
                     fact_ids = list(getattr(hit, "fact_ids", ()) or ())
                     if not fact_ids:
@@ -4315,9 +4626,9 @@ class Recall:
             try:
                 if advice_query:
                     directive_tier = self._directive_candidates(
-                        query, project=project, branch=branch, limit=pool, can_embed=can_embed)
+                        query, project=project, branch=branch, limit=pool, can_embed=can_embed, **scope_kwargs)
                     directive_records = fetch_active_records(
-                        self.s.db, [kid for kid, _ in directive_tier if kid not in results])
+                        self.s.db, [kid for kid, _ in directive_tier if kid not in results], **scope_kwargs)
                     kept: list[int] = []
                     for kid, score in directive_tier:
                         if kid in results:
@@ -4347,9 +4658,9 @@ class Recall:
                 if parts:
                     multi_tier = self._multi_query_candidates(
                         parts, project=project, ktype=ktype, branch=branch, limit=pool, can_embed=can_embed,
-                        spaces=_v11_spaces)
+                        spaces=_v11_spaces, **scope_kwargs)
                     multi_records = fetch_active_records(
-                        self.s.db, [kid for kid, _ in multi_tier if kid not in results])
+                        self.s.db, [kid for kid, _ in multi_tier if kid not in results], **scope_kwargs)
                     kept = []
                     for kid, score in multi_tier:
                         if kid in results:
@@ -4593,41 +4904,64 @@ class Recall:
         def recency(item):
             return item["r"].get("created_at") or "", item["r"]["id"]
 
+        semantic_diagnostics = copy.deepcopy(getattr(self.s, "_semantic_diagnostics", []))
+
         # Stage 4.8: cross-encoder over the fused window (fastembed, local).
         # Its rank joins the RRF rank; see memory_core/cross_rerank.py.
         if deferred and cross.context_chars and len(ranked) > 1:
             from memory_core.cross_rerank import session_window_texts
             window = ranked[:cross.window]
-            texts = session_window_texts(self.s.db, [item["r"] for item in window], side_chars=cross.context_chars)
+            texts = session_window_texts(self.s.db, [item["r"] for item in window], side_chars=cross.context_chars, scope=scope)
             for item in window:
                 item["rerank_context"] = texts.get(item["r"]["id"], item["r"].get("content", ""))
         if cross_active and not deferred and len(ranked) > 1:
             from config import get_cross_rerank_mode
             from memory_core.cross_rerank import session_window_texts
             try:
-                db = self.s.db
+                from functools import partial
+                from memory_core.staged_search import InferenceCall
 
-                def with_neighbours(window):
-                    texts = session_window_texts(db, [item["r"] for item in window], side_chars=cross.context_chars)
-                    return [texts.get(item["r"]["id"], item["r"].get("content", "")) for item in window]
-
-                ranked = cross.rerank(query, ranked, lambda item: item["r"].get("content", ""),
-                                      wait=get_cross_rerank_mode() == "on",
-                                      context_of=with_neighbours if cross.context_chars else None,
-                                      recency_of=None if historical_query else recency)
+                window = ranked[:cross.window]
+                texts = (session_window_texts(self.s.db, [item["r"] for item in window],
+                                              side_chars=cross.context_chars, scope=scope) if cross.context_chars else {})
+                context_texts = [texts.get(item["r"]["id"], item["r"].get("content", "")) for item in window]
+                operation = partial(cross.rerank, query, ranked, lambda item: item["r"].get("content", ""),
+                                    wait=get_cross_rerank_mode() == "on",
+                                    context_of=(lambda window: context_texts) if cross.context_chars else None,
+                                    recency_of=None)
+                if _staged and revision is not None and not self.s.db.in_transaction:
+                    from memory_core.rerank_cache import ScoreCacheMiss
+                    try:
+                        ranked = operation(cache_only=True)
+                    except ScoreCacheMiss:
+                        ranked = yield InferenceCall(operation)
+                else:
+                    ranked = operation()
             except Exception as e:  # noqa: BLE001 — onnxruntime raises its own types; keep the fused order
                 from memory_core.telemetry import counters as _cross_counters
                 LOG(f"cross-rerank failed, keeping fused order: {e}")
                 _cross_counters.bump("cross_rerank_errors")
+            if _staged and revision is not None and self._data_revision() != revision:
+                from memory_core.staged_search import SearchRevisionChanged
+                raise SearchRevisionChanged("Recall data changed during inference")
 
         # Stage 4.9: a record never ranks above its own later value update, in every language and
         # with the cross-encoder off too (memory_core.cross_rerank.keep_updates_below). A question
         # about the earlier value ("what did we use before?", "что было раньше") gets the reverse:
         # the older values of each updated statement first.
-        if len(ranked) > 1:
-            from memory_core.cross_rerank import order_value_updates
-            ranked = order_value_updates(ranked, lambda item: item["r"].get("content", ""), recency,
-                                         older_first=historical_query)
+        from memory_core.cross_rerank import order_scoped_value_updates
+
+        def order_values(items):
+            if scope.as_of is not None:
+                # State history already selects the valid versions. Coexisting snapshot
+                # records must not be interpreted as replacements by a text heuristic.
+                return list(items)
+            return order_scoped_value_updates(items, lambda item: item["r"].get("content", ""), recency,
+                                              lambda item: item["r"].get("project"),
+                                              older_first=historical_query)
+
+        ranked = order_values(ranked)
+        value_candidates = list(ranked)
 
         # Stage 5 (optional): CrossEncoder re-ranking
         # CE is trained on MS-MARCO (web search) — helps for precision in large bases,
@@ -4688,6 +5022,7 @@ class Recall:
                     entities=router_classification.entities,
                     project=project,
                     limit=max(5, limit),
+                    scope=scope,
                 )
                 if graph_rows:
                     existing_ids = {item["r"]["id"] for item in ranked}
@@ -4730,10 +5065,10 @@ class Recall:
             try:
                 seed_ids = [item["r"]["id"] for item in ranked[:3]]
                 existing_ids = {item["r"]["id"] for item in ranked}
-                neighbours = _graph_expand(self.s.db, seed_ids, budget=10)
+                neighbours = _graph_expand(self.s.db, seed_ids, budget=10, scope=scope)
                 new_kids = [kid for kid, _ in neighbours if kid not in existing_ids][:5]
                 if new_kids:
-                    rows = _graph_fetch(self.s.db, new_kids)
+                    rows = _graph_fetch(self.s.db, new_kids, scope=scope)
                     if rows and ranked:
                         base_score = min(it["score"] for it in ranked) * 0.5
                         for row in rows:
@@ -4762,9 +5097,10 @@ class Recall:
                     from memory_core.retrieval_tiers import compound_part_winners, guarantee_slots
                     winners = compound_part_winners(self.s, parts, fuse=self._rrf_fuse, project=project,
                                                     ktype=ktype, branch=branch, can_embed=can_embed,
-                                                    spaces=_v11_spaces)
+                                                    spaces=_v11_spaces, **scope_kwargs)
                     by_id = {item["r"]["id"]: item for item in ranked}
-                    fetched = fetch_active_records(self.s.db, [kid for kid in winners if kid not in by_id])
+                    fetched = fetch_active_records(self.s.db, [kid for kid in winners if kid not in by_id],
+                                                     **scope_kwargs)
                     for kid, row in fetched.items():
                         if scope.allows(row, self.s.db):
                             by_id[kid] = {"r": row, "score": 0.0, "rrf_score": 0.0, "via": ["compound_slot"],
@@ -4786,6 +5122,10 @@ class Recall:
                     counters.bump("retrieval_compound_errors")
                     logging.getLogger(__name__).warning("Compound slots unavailable",
                                                         extra={"stage": "compound_slots", "error": str(error)})
+
+        selected_ids = {item["r"]["id"] for item in ranked}
+        value_tail = [item for item in value_candidates if item["r"]["id"] not in selected_ids]
+        ranked = order_values([*ranked, *value_tail])[:keep]
 
         # Usage statistics (recall_count, last_recalled) for the dashboard and
         # consolidation; they do not affect ranking. Buffered and written by a
@@ -4905,10 +5245,11 @@ class Recall:
             if router_classification.entities:
                 result["routed_entities"] = router_classification.entities
 
-        cacheable = cacheable and not self.s.db.in_transaction
-        self._cache_revision = (self.s.db.total_changes, revision[1]) if cacheable else None
+        cacheable = cacheable and not self.s.db.in_transaction and not semantic_diagnostics
+        if cacheable:
+            self._cache_revision = (self.s.db.total_changes, revision[1])
 
-        result["semantic_diagnostics"] = getattr(self.s, "_semantic_diagnostics", [])
+        result["semantic_diagnostics"] = semantic_diagnostics
 
         # Cache the result. _explain payloads are NOT cached — they include
         # ephemeral tier rankings tied to a single execution.
@@ -5155,8 +5496,12 @@ class Recall:
         except Exception:
             enrich_count = 0
 
+        from dataclasses import asdict
+        from memory_core.embedding_identity import embedding_coverage
+
         return {
             "sessions": s.total_sessions(),
+            "embedding_coverage": asdict(embedding_coverage(s.db, s._expected_models())),
             "knowledge": {
                 "active": active,
                 "archived": archived,
@@ -5364,6 +5709,7 @@ async def list_tools():
 
 async def _tool_catalogue():
     import exploration_memo
+    from memory_core.incidents import IncidentFilter, input_properties
     from memory_reports import tool as report_tool
     return [
         Tool(
@@ -5379,7 +5725,7 @@ async def _tool_catalogue():
                 "properties": {
                     "query": {"type": "string", "description": "What to search for"},
                     "project": {"type": "string", "description": "Filter by project name"},
-                    "type": {"type": "string", "enum": ["decision", "fact", "solution", "lesson", "convention", "all"],
+                    "type": {"type": "string", "enum": ["decision", "fact", "solution", "lesson", "convention", "incident", "all"],
                              "default": "all"},
                     "limit": {"type": "integer", "default": 10},
                     "mode": {"type": "string", "enum": ["search", "index", "timeline", "context", "evidence"], "default": "search",
@@ -5404,8 +5750,9 @@ async def _tool_catalogue():
                                                    "to fit. Neighbours default to 0 here; pass `neighbors` to keep each hit "
                                                    "with the records around it."},
                     "as_of": {"type": "string",
-                              "description": "ISO date or datetime that relative dates in the query ('last month', "
-                                             "'three weeks ago', 'yesterday') are counted from. Default: now."},
+                              "description": "ISO date or datetime selecting records active at that instant before search; "
+                                             "also anchors relative dates in the query. Omit for current active records. "
+                                             "See docs/SNAPSHOT_RETRIEVAL.md for replacement, deletion and metadata semantics."},
                     "detail": {"type": "string", "enum": ["compact", "summary", "full", "auto"], "default": "full",
                                "description": "Level of detail: 'compact' ~50 tokens/result (id+title+score), "
                                               "'summary' truncates content to 150 chars, 'full' returns everything, "
@@ -5432,6 +5779,8 @@ async def _tool_catalogue():
                     "decisions_only": {"type": "boolean", "default": False,
                                        "description": "Return only structured decisions (v8.0): type=decision AND tags contain 'structured'. "
                                                       "Results include parsed schema payload under 'decision'."},
+                    "incident": {**IncidentFilter.model_json_schema(),
+                                 "description": "Filter incident records by status, exact affected scope and overlapping half-open UTC interval. Uses scoped full-text retrieval."},
                 },
                 "required": ["query"],
             },
@@ -5496,7 +5845,8 @@ async def _tool_catalogue():
                     "content": {"type": "string", "description": "The knowledge to save"},
                     "source_format": {"type": "string", "enum": ["auto", "conversation"], "default": "auto",
                                       "description": "Conversation preserves dialogue structure and bypasses automatic CLI filters."},
-                    "type": {"type": "string", "enum": ["decision", "fact", "solution", "lesson", "convention"]},
+                    "type": {"type": "string", "enum": ["decision", "fact", "solution", "lesson", "convention", "incident"]},
+                    **input_properties(),
                     "project": {"type": "string", "default": "general"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                     "context": {"type": "string", "description": "Additional context, WHY for decisions"},
@@ -5533,10 +5883,12 @@ async def _tool_catalogue():
         Tool(
             name="memory_update",
             description="Update existing knowledge. Replaces the record `id`, or the best match for `find` "
-                        "(within `project` when given): supersedes it and creates a new version.",
+                        "(within `project` when given): supersedes it and creates a new version. "
+                        "Provide either id or find; id takes precedence when both are provided.",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    **input_properties(),
                     "id": {"type": "integer", "description": "Exact record to replace; takes precedence over find"},
                     "find": {"type": "string", "description": "Search query to find the old knowledge (when no id)"},
                     "project": {"type": "string", "description": "Limit the find search to this project"},
@@ -5544,6 +5896,7 @@ async def _tool_catalogue():
                     "reason": {"type": "string", "description": "Why updating"},
                 },
                 "required": ["new_content"],
+                "anyOf": [{"required": ["id"]}, {"required": ["find"]}],
             },
         ),
         Tool(
@@ -5570,12 +5923,24 @@ async def _tool_catalogue():
         Tool(
             name="memory_export",
             description="Export all knowledge as JSON for backup or migration. "
-                        "Includes knowledge, sessions, relations and the agent action log.",
+                        "Includes knowledge, sessions, relations and the agent action log. "
+                        "Pass limit to export one page of a snapshot: the end line then carries "
+                        "complete=false and a next_cursor to pass back as cursor until complete=true. "
+                        "Pages of one export share a snapshot id and can be imported only as a "
+                        "complete, contiguous sequence. Sessions, relations and the action log "
+                        "come with the first page only.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "Export only this project (optional)"},
                     "save_to_file": {"type": "boolean", "description": "Save to <memory-dir>/backups/ (default true)", "default": True},
+                    "format": {"type": "string", "enum": ["json", "jsonl"], "default": "json",
+                               "description": "JSON includes sessions and relations; JSONL streams knowledge with a header and completeness footer."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": EXPORT_PAGE_MAX_LIMIT,
+                              "description": "Records per page; omit for one unpaged export. "
+                                             f"Default with a cursor: {EXPORT_PAGE_DEFAULT_LIMIT}."},
+                    "cursor": {"type": "string",
+                               "description": "Opaque next_cursor from the previous page's end line"},
                 },
             },
         ),
@@ -5969,7 +6334,9 @@ async def _tool_catalogue():
         ),
         Tool(
             name="memory_episode_recall",
-            description="Find past episodes (experiences). Search by concepts, outcome, project, or impact.",
+            description="Find past episodes (experiences). Search by concepts, outcome, project, or impact. "
+                        "Text matching is case-insensitive per-term substring matching: every term of "
+                        "the query must occur in the narrative; there is no stemming or synonym expansion.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -6258,16 +6625,28 @@ async def _tool_catalogue():
         # ── v7.0 AST ingest ──
         Tool(
             name="ingest_codebase",
-            description="Parse a file or directory into semantic AST chunks "
-                        "(functions, classes, methods) across 8 languages. "
-                        "Returns chunk count + sample.",
+            description="Index a local file or directory persistently in separate TAM resource tables. "
+                        "All text formats are searchable; detected languages use tree-sitter AST. "
+                        "PDF/Office/archive text is extracted; other binary files have explicit metadata-only status. "
+                        "action=index updates changed files and removes deleted entries; preview does not write. "
+                        "Use action=search with query or action=status to inspect the project-scoped index. "
+                        "Sensitive files and excluded directories are reported without reading their contents.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
                     "include": {"type": "array", "items": {"type": "string"},
                                 "description": "Extension allowlist e.g. ['.py','.go']"},
+                    "action": {"type": "string", "enum": ["index", "preview", "search", "status"], "default": "index"},
+                    "project": {"type": "string", "default": "general", "minLength": 1},
+                    "query": {"type": "string", "default": ""},
+                    "exclude": {"type": "array", "items": {"type": "string"},
+                                "description": "Override excluded directory/file glob patterns; [] includes dependency directories. Sensitive files remain protected."},
                     "sample_limit": {"type": "integer", "default": 5},
+                    "watch": {"type": "boolean", "default": True,
+                              "description": "Automatically refresh this index while the personal server runs."},
+                    "limit": {"type": "integer", "default": 10, "minimum": 0, "maximum": 100},
+                    "offset": {"type": "integer", "default": 0, "minimum": 0},
                 },
                 "required": ["path"],
             },
@@ -6293,7 +6672,9 @@ async def _tool_catalogue():
         Tool(
             name="benchmark",
             description="Run the eval harness: recall_at_k, prevention_rate, latency percentiles. "
-                        "Loads scenarios from evals/scenarios/*.json by default.",
+                        "By default runs the packaged 5-scenario fixture in an isolated, throwaway store "
+                        "(your memory is not read or modified). scenarios_path runs custom scenarios "
+                        "against the live store instead.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -6313,7 +6694,8 @@ async def _tool_catalogue():
                 "properties": {
                     "content": {"type": "string"},
                     "source_format": {"type": "string", "enum": ["auto", "conversation"], "default": "auto"},
-                    "type": {"type": "string", "enum": ["decision", "fact", "solution", "lesson", "convention"]},
+                    "type": {"type": "string", "enum": ["decision", "fact", "solution", "lesson", "convention", "incident"]},
+                    **input_properties(),
                     "project": {"type": "string", "default": "general"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                     "context": {"type": "string"},
@@ -6337,7 +6719,7 @@ async def _tool_catalogue():
                 "properties": {
                     "query": {"type": "string"},
                     "project": {"type": "string"},
-                    "type": {"type": "string", "enum": ["decision", "fact", "solution", "lesson", "convention", "all"], "default": "all"},
+                    "type": {"type": "string", "enum": ["decision", "fact", "solution", "lesson", "convention", "incident", "all"], "default": "all"},
                     "limit": {"type": "integer", "default": 10},
                     "detail": {"type": "string", "enum": ["compact", "summary", "full"], "default": "full"},
                     "branch": {"type": "string"},
@@ -6361,7 +6743,7 @@ async def _tool_catalogue():
                 "properties": {
                     "query": {"type": "string"},
                     "project": {"type": "string"},
-                    "type": {"type": "string", "enum": ["decision", "fact", "solution", "lesson", "convention", "all"], "default": "all"},
+                    "type": {"type": "string", "enum": ["decision", "fact", "solution", "lesson", "convention", "incident", "all"], "default": "all"},
                     "limit": {"type": "integer", "default": 10},
                     "embedding_space": {"type": ["string", "array"]},
                 },
@@ -6410,18 +6792,17 @@ async def _tool_catalogue():
         # ── v11.0 Phase 8 — evaluation harness MCP tools ─────────────
         Tool(
             name="memory_eval_locomo",
-            description="v11.0 Phase 8: run the LongMemEval-style recall+prevention "
-                        "scenario suite (loaded from evals/scenarios/) against the live "
-                        "store. Forces MEMORY_MODE=fast by default. Returns "
-                        "{scenarios_total, scenarios_passed, recall_at_5, recall_at_10, "
-                        "latency_ms, mode, llm_calls_during_eval, network_calls_during_eval}.",
+            description="Evaluate retrieval on a downloaded LoCoMo dataset in an isolated temporary store. "
+                        "Requires dataset_path; no LLM or network. Returns evidence recall, per-question rows "
+                        "and local embedding mode. Not an answer-generation accuracy benchmark.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "top_k": {"type": "integer", "default": 5},
-                    "limit": {"type": "integer", "description": "Cap how many scenarios to run."},
-                    "mode": {"type": "string", "enum": ["fast", "balanced", "deep"], "default": "fast"},
-                    "scenarios_path": {"type": "string", "description": "Optional override path."},
+                    "dataset_path": {"type": "string", "description": "Path to LoCoMo locomo10.json."},
+                    "top_k": {"type": "integer", "minimum": 1, "default": 5},
+                    "limit": {"type": "integer", "minimum": 1, "description": "Maximum questions to evaluate."},
+                    "mode": {"type": "string", "enum": ["fast"], "default": "fast"},
+                    "scenarios_path": {"type": "string", "description": "Deprecated alias for dataset_path; requires LoCoMo format."},
                 },
             },
         ),
@@ -6598,11 +6979,16 @@ async def _tool_catalogue():
             name="memory_temporal_query",
             description="v11.0 W1-C: deterministic temporal reasoning — Allen interval relations, "
                         "duration arithmetic (days/weeks/months/years), and natural-language date "
-                        "normalization (en + ru). Pass op=relation|duration_between|normalize.",
+                        "normalization (en + ru), and historical recall. "
+                        "Pass op=relation|duration_between|normalize|snapshot.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "op": {"type": "string", "enum": ["relation", "duration_between", "normalize"]},
+                    "op": {"type": "string", "enum": ["relation", "duration_between", "normalize", "snapshot"]},
+                    "query": {"type": "string", "minLength": 1, "description": "Search query — snapshot only"},
+                    "as_of": {"type": "string", "minLength": 1, "description": "ISO snapshot timestamp"},
+                    "project": {"type": "string", "description": "Project filter — snapshot only"},
+                    "limit": {"type": "integer", "minimum": 1, "default": 10},
                     "a_start": {"type": "string", "description": "ISO datetime — relation only"},
                     "a_end": {"type": "string"},
                     "b_start": {"type": "string"},
@@ -6614,6 +7000,8 @@ async def _tool_catalogue():
                     "lang": {"type": "string", "enum": ["auto", "en", "ru"], "default": "auto"},
                 },
                 "required": ["op"],
+                "allOf": [{"if": {"properties": {"op": {"const": "snapshot"}}},
+                           "then": {"required": ["query", "as_of"]}}],
             },
         ),
         Tool(
@@ -6652,6 +7040,10 @@ async def _tool_catalogue():
 
 # Per-tool call recorder; installed by _bootstrap_session when TAM_TOOL_TELEMETRY allows it.
 TELEMETRY: tool_telemetry.ToolTelemetry | None = None
+
+from memory_core.store_owner import OwnerSettings, OwnerUnavailable, StoreOwner
+
+_STORE_OWNER: StoreOwner | None = None
 
 
 TIMELINE_DEFAULT_LIMIT = 5
@@ -6693,14 +7085,58 @@ def _log_written_records(call_id: str, record_ids: list[int] | None) -> None:
         store.raw_append(SID, {"type": RAW_RESULT_TYPE, "call_id": call_id, "knowledge_ids": list(record_ids)})
 
 
+def _index_executor() -> ThreadPoolExecutor:
+    """Workers of resource indexing: bounded and apart from the recall inference pool."""
+    global _INDEX_EXECUTOR
+    with _INDEX_EXECUTOR_LOCK:
+        if _INDEX_EXECUTOR is None:
+            workers = int(os.environ.get(INDEX_WORKERS_ENV, DEFAULT_INDEX_WORKERS))
+            if workers < 1:
+                raise ValueError(f"{INDEX_WORKERS_ENV} must be a positive integer")
+            _INDEX_EXECUTOR = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="tam-resource-index")
+        return _INDEX_EXECUTOR
+
+
+async def _run_resource_index(request):
+    """Run a resource-index request off the event loop.
+
+    Extraction can take minutes. The personal Store's connection is bound to the owner
+    thread (SQLite) or carries unlocked transaction state (PostgreSQL), so the work uses a
+    connection of its own, opened and closed inside a worker of the dedicated indexing
+    pool. The owner lease is released meanwhile, letting other tool calls run, and the
+    pool keeps indexing from occupying recall inference workers.
+    """
+    from resource_index.tool import execute_isolated, execute_on_connection
+    if store.is_postgres:
+        work = functools.partial(execute_on_connection, store._open_side_connection, request)
+    else:
+        work = functools.partial(execute_isolated, store.db_path, request)
+    pending = asyncio.get_running_loop().run_in_executor(_index_executor(), work)
+    if _STORE_OWNER is not None and _STORE_OWNER.is_owner:
+        return await _STORE_OWNER.suspend(pending)
+    return await pending
+
+
 async def _call_tool_impl(name, args, request_meta=None) -> tuple[list[TextContent], bool]:
+    started = time.perf_counter()
+    if _STORE_OWNER is None:
+        return await _call_tool_on_owner(name, args, request_meta, started)
+    try:
+        return await _STORE_OWNER.call(lambda: _call_tool_on_owner(name, args, request_meta, started))
+    except OwnerUnavailable as error:
+        content = [TextContent(type="text", text=f"Error: {error}")]
+        _observe_tool_call(name, started, content, True, type(error).__name__, 0)
+        return content, True
+
+
+async def _call_tool_on_owner(name, args, request_meta=None, started=None) -> tuple[list[TextContent], bool]:
     """Run a tool and report whether it failed.
 
     The bool is the MCP ``isError`` flag: a tool that raised is reported
     inside the result so the model can see and self-correct, rather than as a
     protocol-level error.
     """
-    started = time.perf_counter()
+    started = time.perf_counter() if started is None else started
     args_bytes = 0
     error_class = None
     try:
@@ -6741,8 +7177,9 @@ def _observe_tool_call(name: str, started: float, content: list[TextContent], is
         tool_profiles.note_call(name, _tool_profile())
     except tool_profiles.ToolProfileError as error:
         LOG(f"Tool profile unavailable while recording {name}: {error}")
-    if TELEMETRY is not None:
-        TELEMETRY.record(
+    telemetry = TELEMETRY
+    if telemetry is not None:
+        telemetry.record(
             name, duration_ms=duration_ms, ok=not is_error, error_class=error_class, args_bytes=args_bytes,
             result_bytes=sum(tool_telemetry.payload_bytes(item.text or "") for item in content),
         )
@@ -6932,7 +7369,7 @@ def _eval_perf_snapshot_delta(before: dict[str, float]) -> tuple[int, int]:
     return max(0, llm_now - llm_before), max(0, net_now - net_before)
 
 
-def _eval_run_locomo(
+def _eval_run_scenarios(
     *,
     store_obj,
     recall_obj,
@@ -7106,6 +7543,10 @@ async def _dispatch_tool(name, a):
     J = _render
 
     if name == "memory_recall":
+        from memory_core.incidents import IncidentFilter, IncidentService
+        from memory_core.retrieval import SearchScope
+
+        incident_filter = IncidentFilter.model_validate(a["incident"]) if "incident" in a else None
         mode_param = a.get("mode", "search")
         if mode_param not in ("search", "index", "timeline", "context", "evidence"):
             mode_param = "search"
@@ -7131,11 +7572,17 @@ async def _dispatch_tool(name, a):
             search_limit = max(search_limit, FILL_SEARCH_LIMIT)
         # `as_of` is passed only when given, so the positional call shape stays as before.
         as_of_kwargs = {"as_of": a["as_of"]} if a.get("as_of") else {}
-        result = recall.search(a["query"], a.get("project"), a.get("type", "all"),
-                               search_limit, search_detail,
-                               a.get("branch"), a.get("fusion", "rrf"),
-                               a.get("rerank", False), a.get("diverse", False),
-                               **as_of_kwargs)
+        search_args = (a["query"], a.get("project"), a.get("type", "all"), search_limit, search_detail,
+                       a.get("branch"), a.get("fusion", "rrf"), a.get("rerank", False), a.get("diverse", False))
+        if incident_filter is not None:
+            result = IncidentService(store.db).search(
+                a["query"], SearchScope(project=a.get("project"), kind="incident", branch=a.get("branch"),
+                                        as_of=_parse_as_of(a.get("as_of")), incident=incident_filter),
+                search_limit, postgres=store.is_postgres)
+        elif _STORE_OWNER is not None and _STORE_OWNER.is_owner:
+            result = await recall.search_async(_STORE_OWNER, *search_args, **as_of_kwargs)
+        else:
+            result = recall.search(*search_args, **as_of_kwargs)
         if a.get("detail") == "auto":
             result["auto_detail"] = detail_param
 
@@ -7175,10 +7622,14 @@ async def _dispatch_tool(name, a):
 
         # Enrich with CognitiveEngine associative activation.
         # Skip for index/timeline modes — those are intentionally minimal.
-        if mode_param == "search":
+        if mode_param == "search" and incident_filter is None:
             try:
                 ce = _get_v5("cognitive", store.db)
-                cognitive_ctx = ce.on_query(a["query"], a.get("project"))
+                from memory_core.retrieval import SearchScope, fetch_active_records
+                solution_scope = SearchScope(
+                    project=a.get("project"), kind=a.get("type", "all"), branch=a.get("branch"),
+                    as_of=_parse_as_of(a.get("as_of")))
+                cognitive_ctx = ce.on_query(a["query"], a.get("project"), scope=solution_scope)
                 # Append cognitive enrichment to result
                 enrichment = {}
                 if cognitive_ctx.get("activated_concepts"):
@@ -7195,16 +7646,29 @@ async def _dispatch_tool(name, a):
                             existing_ids.add(item.get("id"))
                     from config import get_recall_excluded_tags, has_excluded_tag
                     _noise = get_recall_excluded_tags()
+                    solution_records = fetch_active_records(
+                        store.db, [s["id"] for s in cognitive_ctx["available_solutions"]
+                                   if isinstance(s.get("id"), int)], scope=solution_scope)
                     enrichment["additional_solutions"] = [
                         s for s in cognitive_ctx["available_solutions"]
                         if s.get("id") not in existing_ids
-                        and not has_excluded_tag(s.get("tags", ""), _noise)
+                        and (record := solution_records.get(s.get("id"))) is not None
+                        and solution_scope.allows(record, store.db)
+                        and (solution_scope.as_of is not None or record.get("superseded_by") is None)
+                        and not has_excluded_tag(record.get("tags", ""), _noise)
                     ][:5]
                 if cognitive_ctx.get("applicable_skills"):
                     enrichment["applicable_skills"] = cognitive_ctx["applicable_skills"]
                 if cognitive_ctx.get("competency"):
                     enrichment["competency"] = cognitive_ctx["competency"]
                 if enrichment:
+                    if solution_scope.as_of is not None:
+                        from memory_core.snapshot import Snapshot
+                        enrichment["as_of"] = Snapshot.at(solution_scope.as_of).instant
+                        enrichment["current_metadata"] = [
+                            field for field in ("activated_concepts", "relevant_rules", "applicable_skills", "competency")
+                            if field in enrichment
+                        ]
                     result["cognitive"] = enrichment
             except Exception as e:
                 LOG(f"CognitiveEngine enrichment error: {e}")
@@ -7214,6 +7678,13 @@ async def _dispatch_tool(name, a):
         if mode_param == "search" and a.get("expand_context"):
             try:
                 from context_expander import ContextExpander
+                from config import get_recall_excluded_tags, has_excluded_tag
+                from memory_core.retrieval import SearchScope, fetch_active_records
+
+                expansion_scope = SearchScope(
+                    project=a.get("project"), kind=a.get("type", "all"), branch=a.get("branch"),
+                    as_of=_parse_as_of(a.get("as_of")), incident=incident_filter)
+                excluded_tags = get_recall_excluded_tags()
 
                 seed_ids: list[int] = []
                 for group in result.get("results", {}).values():
@@ -7227,16 +7698,18 @@ async def _dispatch_tool(name, a):
                         seed_ids=seed_ids,
                         budget=int(a.get("expand_budget", 5)),
                         depth=1,
+                        scope=expansion_scope,
+                        excluded_tags=excluded_tags,
                     )
                     if extra_ids:
-                        placeholders = ",".join("?" * len(extra_ids))
-                        rows = store.db.execute(
-                            f"SELECT id, type, content, project, tags, created_at "
-                            f"FROM knowledge WHERE id IN ({placeholders})",
-                            extra_ids,
-                        ).fetchall()
+                        records = fetch_active_records(store.db, extra_ids, scope=expansion_scope)
                         expansion: list[dict] = []
-                        for r in rows:
+                        for kid in extra_ids:
+                            r = records.get(kid)
+                            if (r is None or not expansion_scope.allows(r, store.db)
+                                    or (expansion_scope.as_of is None and r.get("superseded_by") is not None)
+                                    or has_excluded_tag(r.get("tags", ""), excluded_tags)):
+                                continue
                             expansion.append(
                                 {
                                     "id": r["id"],
@@ -7314,7 +7787,8 @@ async def _dispatch_tool(name, a):
             from memory_core.retrieval import SearchScope, flatten_results
             evidence = EvidenceContext(store.db, get_recall_excluded_tags()).build(
                 flatten_results(result), query=a["query"],
-                scope=SearchScope(project=a.get("project"), kind=a.get("type", "all"), branch=a.get("branch")),
+                scope=SearchScope(project=a.get("project"), kind=a.get("type", "all"), branch=a.get("branch"),
+                                  as_of=_parse_as_of(a.get("as_of")), incident=incident_filter),
                 # With fill_budget the budget goes to further ranked hits: on LoCoMo, neighbours
                 # took room from them and lowered coverage (docs/benchmarks/context-fill-v14).
                 radius=int(a.get("neighbors", 0 if fill_context else 1)),
@@ -7332,7 +7806,8 @@ async def _dispatch_tool(name, a):
                     result, store,
                     neighbors=int(a.get("neighbors", 2)),
                     limit=int(a.get("limit", 5)),
-                    scope=SearchScope(project=a.get("project"), kind=a.get("type", "all"), branch=a.get("branch")),
+                    scope=SearchScope(project=a.get("project"), kind=a.get("type", "all"), branch=a.get("branch"),
+                                      as_of=_parse_as_of(a.get("as_of")), incident=incident_filter),
                 )
             except Exception as e:
                 LOG(f"timeline_response error: {e}")
@@ -7360,6 +7835,9 @@ async def _dispatch_tool(name, a):
         return J(asdict(answer_response(store, recall, a)))
 
     elif name == "memory_save":
+        from memory_core.incidents import IncidentService
+        incidents = IncidentService(store.db)
+        incident_spec = incidents.prepare(a["type"], a)
         rid, was_dedup, was_redacted, private_sections, quality_meta = store.save_knowledge(
             SID, _required_text(a, "content"), a["type"],
             a.get("project", "general"), a.get("tags", []), a.get("context", ""),
@@ -7368,7 +7846,7 @@ async def _dispatch_tool(name, a):
             importance=a.get("importance", "medium"),
             coref=a.get("coref"),
             agent_id=a.get("agent_id"),
-            parent_agent_id=a.get("parent_agent_id"))
+            parent_agent_id=a.get("parent_agent_id"), incident_spec=incident_spec)
         # v10 — quality gate dropped the record; surface the verdict so the
         # caller can iterate on the content rather than silently losing it.
         if rid is None:
@@ -7387,6 +7865,7 @@ async def _dispatch_tool(name, a):
             })
         superseded = (store.supersede_values(rid, a["content"], a["type"], a.get("project", "general"))
                       if a.get("supersede") and not was_dedup else [])
+        superseded = list(dict.fromkeys([*(quality_meta or {}).get("replaced_ids", []), *superseded]))
         # Invalidate cache on write
         if store.cache is not None:
             store.cache.invalidate(project=a.get("project"))
@@ -7394,6 +7873,9 @@ async def _dispatch_tool(name, a):
         if getattr(store, "v9_cache", None) is not None:
             store.v9_cache.invalidate_all()
         result = {"saved": True, "id": rid, "deduplicated": was_dedup}
+        if incident_spec is not None:
+            result.update(incidents.payload(incident_spec, incidents.open_items(rid)))
+        result.update((quality_meta or {}).get("similarity", {}))
         if superseded:
             result["superseded"] = superseded
         elif a.get("supersede") and not was_dedup:
@@ -7434,6 +7916,8 @@ async def _dispatch_tool(name, a):
 
     elif name == "memory_update":
         new_content = _required_text(a, "new_content")
+        if a.get("id") is None and not (isinstance(a.get("find"), str) and a["find"].strip()):
+            raise ValueError("Provide id or non-empty find to select the record to update")
         if a.get("id") is not None:
             old = {"id": int(a["id"])}
         else:
@@ -7444,13 +7928,23 @@ async def _dispatch_tool(name, a):
             old = items[0]
         old_rec = store.q1("SELECT * FROM knowledge WHERE id=? AND status='active'", (old["id"],))
         if not old_rec:
+            previous = store.q1("SELECT status,superseded_by FROM knowledge WHERE id=?", (old["id"],))
+            if previous and previous["status"] == "superseded" and previous["superseded_by"]:
+                current = store.get_version_history(old["id"])[0]
+                return J({"error": "Record is superseded; inspect current_id before updating",
+                          "superseded_by": previous["superseded_by"],
+                          "current_id": current["id"], "current_status": current["status"]})
             return J({"error": "Record not found in DB"})
+        from memory_core.incidents import IncidentService
+        incidents = IncidentService(store.db)
+        incident_spec = incidents.prepare(old_rec["type"], a, old["id"])
         new_id, _, _, _, _ = store.save_knowledge(
             SID, new_content, old_rec["type"], old_rec["project"],
             json.loads(old_rec.get("tags", "[]")),
             f"Updated: {a.get('reason', '')}. Was: {old_rec['content'][:200]}",
             branch=old_rec.get("branch", ""), skip_dedup=True, skip_quality=True,
-            source_format=old_rec.get("source_format", "auto"), supersedes=old["id"])
+            source_format=old_rec.get("source_format", "auto"), supersedes=old["id"],
+            incident_spec=incident_spec)
         # B1 — content changed, so any cached representations on the OLD
         # record are now drift-stale; the NEW record gets its own views
         # generated by the async repr queue. Without this enqueue the new
@@ -7466,7 +7960,10 @@ async def _dispatch_tool(name, a):
             store.cache.invalidate(project=old_rec.get("project"))
         if getattr(store, "v9_cache", None) is not None:
             store.v9_cache.invalidate_by_id(old["id"])
-        return J({"updated": True, "old_id": old["id"], "new_id": new_id})
+        result = {"updated": True, "old_id": old["id"], "new_id": new_id}
+        if incident_spec is not None:
+            result.update(incidents.payload(incident_spec, incidents.open_items(new_id)))
+        return J(result)
 
     elif name == "memory_stats":
         data = recall.stats()
@@ -7477,7 +7974,7 @@ async def _dispatch_tool(name, a):
         threshold = a.get("threshold", 0.75)
         dry_run = a.get("dry_run", True)
         # Read-only scan off the event loop, so other tool calls are not frozen meanwhile.
-        groups = await asyncio.to_thread(store.find_similar_groups, a.get("project"), threshold)
+        groups = store.find_similar_groups(a.get("project"), threshold)
         if dry_run:
             preview = []
             for g in groups:
@@ -7498,20 +7995,32 @@ async def _dispatch_tool(name, a):
                        "total_removed": sum(len(r["merged"]) for r in results), "details": results})
 
     elif name == "memory_export":
-        data = store.export_all(a.get("project"))
+        export_format = a.get("format", "json")
+        if export_format not in ("json", "jsonl"):
+            raise ValueError("Export format must be json or jsonl")
+        data = store.export_all(a.get("project"), limit=a.get("limit"), cursor=a.get("cursor"))
+        from memory_core.export_snapshot import snapshot_lines
+
         save = a.get("save_to_file", True)
         if save:
             ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             proj = re.sub(r"[^A-Za-z0-9._-]", "_", str(a.get("project") or "all"))
             backups = (MEMORY_DIR / "backups").resolve()
-            path = (backups / f"export_{proj}_{ts}.json").resolve()
+            path = (backups / f"export_{proj}_{ts}.{export_format}").resolve()
             if path.parent != backups:
                 raise ValueError("Export path escapes the backups directory")
             with open_private_text(path) as f:
-                json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+                if export_format == "jsonl":
+                    for line in snapshot_lines(data["knowledge"], header=data["header"], next_cursor=data["end"]["next_cursor"]):
+                        f.write(line + "\n")
+                else:
+                    json.dump(data, f, ensure_ascii=False, indent=2, default=str)
             return J({"exported": True, "file": str(path),
-                       "knowledge_count": len(data["knowledge"]), "sessions_count": len(data["sessions"])})
+                       "knowledge_count": len(data["knowledge"]), "sessions_count": len(data["sessions"]),
+                       "header": data["header"], "end": data["end"]})
         else:
+            if export_format == "jsonl":
+                return "\n".join(snapshot_lines(data["knowledge"], header=data["header"], next_cursor=data["end"]["next_cursor"])) + "\n"
             return J(data)
 
     elif name == "memory_wiki_generate":
@@ -7623,6 +8132,10 @@ async def _dispatch_tool(name, a):
                     "recall_count": r["recall_count"] or 0,
                     "branch": r["branch"] or "",
                 })
+            if r["type"] == "incident":
+                from memory_core.incidents import IncidentService, OPEN_ITEM
+                entry["incident"] = IncidentService(store.db).get(kid).model_dump(by_alias=True)
+                entry["open_items"] = len(OPEN_ITEM.findall(r["content"] or ""))
             out.append(entry)
         return J({"total": len(out), "detail": detail, "results": out})
 
@@ -8094,22 +8607,16 @@ async def _dispatch_tool(name, a):
         return J(ended)
 
     elif name == "ingest_codebase":
-        from ast_ingest import ASTIngester
-        ing = ASTIngester()
-        p = allowed_path(a["path"])
-        include = set(a.get("include", [])) or None
-        if p.is_dir():
-            chunks = ing.parse_directory(p, include=include)
-        else:
-            chunks = ing.parse_file(p)
-        sample = [redact_value(c.to_dict())[0] for c in chunks[: a.get("sample_limit", 5)]]
-        return J({
-            "path": str(p),
-            "total_chunks": len(chunks),
-            "by_kind": {k: sum(1 for c in chunks if c.kind == k)
-                         for k in {c.kind for c in chunks}},
-            "sample": sample,
-        })
+        from resource_index.tool import IndexAction, IndexRequest
+        from resource_index.service import DEFAULT_EXCLUDED
+        request = IndexRequest(
+            path=allowed_path(a["path"]), action=IndexAction(a.get("action", "index")),
+            project=a.get("project", "general"), query=a.get("query", ""),
+            include=tuple(a.get("include", ())), exclude=tuple(a.get("exclude", DEFAULT_EXCLUDED)),
+            sample_limit=a.get("sample_limit", 5), limit=a.get("limit", 10), offset=a.get("offset", 0),
+            watch=a.get("watch", True),
+        )
+        return J(await _run_resource_index(request))
 
     elif name == "analogize":
         from analogy import AnalogyEngine
@@ -8124,6 +8631,12 @@ async def _dispatch_tool(name, a):
         return J({"count": len(results), "analogies": results})
 
     elif name == "benchmark":
+        if not a.get("scenarios_path"):
+            from evaluation.runner import run_isolated
+            try:
+                return J(await asyncio.to_thread(run_isolated, "benchmark"))
+            except (ValueError, RuntimeError) as error:
+                return J({"status": "error", "reason": str(error)})
         from eval_harness import EvalHarness
         def _recall_fn(q, params):
             res = recall.search(q, params.get("project"), "all",
@@ -8219,6 +8732,9 @@ async def _dispatch_tool(name, a):
 
     # ── v11.0 Phase 6 — fast-path & introspection tool dispatch ──────
     elif name == "memory_save_fast":
+        from memory_core.incidents import IncidentService
+        incidents = IncidentService(store.db)
+        incident_spec = incidents.prepare(a["type"], a)
         rid, was_dedup, was_redacted, private_sections, quality_meta = store.save_knowledge(
             SID, _required_text(a, "content"), a["type"],
             a.get("project", "general"), a.get("tags", []), a.get("context", ""),
@@ -8229,6 +8745,7 @@ async def _dispatch_tool(name, a):
             coref=False,        # never spend an LLM round-trip on the fast path
             agent_id=a.get("agent_id"),
             parent_agent_id=a.get("parent_agent_id"),
+            incident_spec=incident_spec,
         )
         if rid is None:
             return J({"saved": False, "rejected_by_quality_gate": False,
@@ -8240,6 +8757,10 @@ async def _dispatch_tool(name, a):
         if getattr(store, "v9_cache", None) is not None:
             store.v9_cache.invalidate_all()
         out = {"saved": True, "id": rid, "deduplicated": was_dedup, "mode": "fast"}
+        if incident_spec is not None:
+            out.update(incidents.payload(incident_spec, incidents.open_items(rid)))
+        out.update((quality_meta or {}).get("similarity", {}))
+        superseded = list(dict.fromkeys([*(quality_meta or {}).get("replaced_ids", []), *superseded]))
         if superseded:
             out["superseded"] = superseded
         elif a.get("supersede") and not was_dedup:
@@ -8429,52 +8950,17 @@ async def _dispatch_tool(name, a):
 
     # ── v11.0 Phase 8 — evaluation tools dispatch ────────────────────
     elif name == "memory_eval_locomo":
-        mode = a.get("mode", "fast")
-        top_k = int(a.get("top_k", 5))
-        limit = a.get("limit")
-        scenarios_path = a.get("scenarios_path")
-        if scenarios_path:
-            scenarios_path = str(allowed_path(scenarios_path))
-
-        with _EvalModeContext(mode):
-            try:
-                from memory_core.telemetry import counters as _c
-                before = _c.snapshot()
-            except Exception:
-                before = {}
-
-            try:
-                run = _eval_run_locomo(
-                    store_obj=store, recall_obj=recall,
-                    top_k=top_k, limit=limit,
-                    scenarios_path=scenarios_path,
-                )
-            except Exception as exc:
-                return J({
-                    "status": "error",
-                    "reason": f"eval failed: {type(exc).__name__}: {exc}",
-                    "mode": mode,
-                })
-
-            llm_delta, net_delta = _eval_perf_snapshot_delta(before)
-
-        report = run["report"]
-        recall_block = report.get("recall", {})
-        return J({
-            "scenarios_total": int(report.get("total", 0)),
-            "scenarios_passed": int(report.get("passed", 0)),
-            "recall_at_5": float(recall_block.get("r_at_5", 0.0)),
-            "recall_at_10": float(recall_block.get("r_at_10", 0.0)),
-            "latency_ms": float(report.get("latency", {}).get("p95_ms", 0.0)),
-            "mode": mode,
-            "llm_calls_during_eval": int(llm_delta),
-            "network_calls_during_eval": int(net_delta),
-            "details": {
-                "recall": recall_block,
-                "prevention": report.get("prevention", {}),
-                "latency": report.get("latency", {}),
-            },
-        })
+        from evaluation.runner import run_isolated
+        try:
+            if a.get("mode", "fast") != "fast":
+                raise ValueError("LoCoMo evaluation supports offline fast mode only")
+            dataset_path = a.get("dataset_path") or a.get("scenarios_path")
+            if dataset_path:
+                dataset_path = str(allowed_path(dataset_path))
+            return J(await asyncio.to_thread(run_isolated, "locomo", dataset_path=dataset_path,
+                                             top_k=a.get("top_k", 5), limit=a.get("limit")))
+        except (ValueError, RuntimeError) as error:
+            return J({"status": "error", "reason": str(error), "mode": "fast"})
 
     elif name == "memory_eval_recall":
         mode = a.get("mode", "fast")
@@ -8537,7 +9023,7 @@ async def _dispatch_tool(name, a):
                     elapsed = (_t.perf_counter() - t0) * 1000.0
                     run = {"report": report, "elapsed_ms": elapsed, "scenarios": builtin}
                 else:
-                    run = _eval_run_locomo(
+                    run = _eval_run_scenarios(
                         store_obj=store, recall_obj=recall,
                         top_k=top_k, limit=limit,
                         scenarios_path=dataset_path,
@@ -8916,6 +9402,11 @@ async def _dispatch_tool(name, a):
         return J(handle_recall_iterative(a, search_fn=_search))
 
     elif name == "memory_temporal_query":
+        if a.get("op") == "snapshot":
+            from memory_core.snapshot import SnapshotQuery
+            request = SnapshotQuery.from_arguments(a)
+            return J(recall.search(request.query, project=request.project, as_of=request.snapshot.instant,
+                                   limit=request.limit, record_usage=False))
         from v11_handlers import handle_temporal_query
         return J(handle_temporal_query(a))
 
@@ -8997,10 +9488,73 @@ def _detect_git_branch():
 
 
 async def _bootstrap_session():
+    global _STORE_OWNER
+    if _STORE_OWNER is not None:
+        raise RuntimeError("Personal Store has already been started")
+    _STORE_OWNER = StoreOwner(_bootstrap_session_owned, _close_session_owned, OwnerSettings.from_env(os.environ))
+    try:
+        await _STORE_OWNER.ready()
+    except BaseException:
+        _STORE_OWNER.stop()
+        raise
+
+
+async def _shutdown_session():
+    if _STORE_OWNER is not None:
+        await _STORE_OWNER.close()
+
+
+async def _close_session_owned():
+    global store, recall, TELEMETRY
+    current, current_recall = store, recall
+    store = recall = None
+    try:
+        if current_recall is not None:
+            current_recall.close()
+        if current is not None:
+            resource_watcher = getattr(current, "_resource_watcher", None)
+            if resource_watcher is not None:
+                resource_watcher.close()
+            worker = getattr(current, "_enrich_worker", None)
+            if worker is not None:
+                worker.stop()
+                worker.join()
+            backfill = getattr(current, "_embedding_backfill_thread", None)
+            if backfill is not None:
+                backfill.join()
+            journal = getattr(current, "error_journal", None)
+            if journal is not None:
+                journal.flush()
+            cache = getattr(current, "v9_cache", None)
+            if cache is not None:
+                cache.close()
+    finally:
+        try:
+            if current is not None:
+                current.db.close()
+        finally:
+            if TELEMETRY is not None:
+                TELEMETRY.close()
+                TELEMETRY = None
+
+
+async def _prewarm_session(text: str):
+    async def warm():
+        return store.embed([text])
+    if _STORE_OWNER is None:
+        raise OwnerUnavailable("Personal Store has not started")
+    return await _STORE_OWNER.call(warm)
+
+
+async def _bootstrap_session_owned():
     """Common setup: build Store/Recall, start session, cleanup. Called
     by every transport. Populates module globals."""
     global store, recall, SID, BRANCH
-    store = Store()
+    store = Store(thread_bound=True)
+    from resource_index.watcher import ResourceWatcher, WatchSettings
+    from resource_index.models import IndexLimits
+    store._resource_watcher = ResourceWatcher(store.db_path, allowed_path, WatchSettings.from_env(), IndexLimits.from_env())
+    store._resource_watcher.start()
     recall = Recall(store)
     _install_telemetry(store.db_path)
     SID = f"mcp_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
@@ -9076,7 +9630,8 @@ async def _run_streamable_http(host: str, port: int, sock: socket.socket | None 
     handle_mcp = http_auth.guard_asgi(handle_mcp, bind=host, root=MEMORY_DIR)
 
     async def healthz(request: Request) -> Response:
-        return JSONResponse({"status": "ok", "version": _SERVER_VERSION})
+        from server_capabilities import PERSONAL_CAPABILITIES
+        return JSONResponse({"status": "ok", "version": _SERVER_VERSION, "capabilities": list(PERSONAL_CAPABILITIES)})
 
     @asynccontextmanager
     async def lifespan(starlette_app):
@@ -9229,18 +9784,21 @@ async def _http_worker(host: str, port: int, sock: socket.socket, init_lock):
     import fcntl
 
     try:
-        await _bootstrap_session()
+        try:
+            await _bootstrap_session()
+        finally:
+            fcntl.flock(init_lock, fcntl.LOCK_UN)
+            init_lock.close()
+        await _run_streamable_http(host, port, sock=sock, stateless=True)
     finally:
-        fcntl.flock(init_lock, fcntl.LOCK_UN)
-        init_lock.close()
-    await _run_streamable_http(host, port, sock=sock, stateless=True)
+        await _shutdown_session()
 
 
 def _serve_http_workers(host: str, port: int, workers: int) -> None:
     """Run `workers` HTTP server processes on one listening socket.
 
-    Tool calls run synchronously inside a process's event loop, so one
-    process serves one call at a time. Each worker is a fresh interpreter
+    Each process serialises tool calls on its Store owner thread while the
+    transport loop stays responsive. Each worker is a fresh interpreter
     with its own Store and SQLite connection, handed the listening socket
     by file descriptor; SQLite (WAL) serialises their writes. If any worker
     exits, the others are stopped and its exit code is passed on, so the
@@ -9280,17 +9838,20 @@ def _serve_http_workers(host: str, port: int, workers: int) -> None:
 
 
 async def main():
-    await _bootstrap_session()
-    transport = _transport()
-    if transport in HTTP_TRANSPORTS:
-        await _run_streamable_http(*_http_address())
-    elif transport == "stdio":
-        await _run_stdio()
-    else:
-        raise SystemExit(
-            f"Unknown MCP_TRANSPORT={transport!r}. "
-            f"Expected one of: stdio, http, streamable-http."
-        )
+    try:
+        await _bootstrap_session()
+        transport = _transport()
+        if transport in HTTP_TRANSPORTS:
+            await _run_streamable_http(*_http_address())
+        elif transport == "stdio":
+            await _run_stdio()
+        else:
+            raise SystemExit(
+                f"Unknown MCP_TRANSPORT={transport!r}. "
+                f"Expected one of: stdio, http, streamable-http."
+            )
+    finally:
+        await _shutdown_session()
 
 
 def _check_tool_profile() -> None:

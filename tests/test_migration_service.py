@@ -580,6 +580,7 @@ def test_seeded_counters_take_the_sqlite_values_and_the_ledger_is_not_copied(tmp
     with closing(sqlite3.connect(path)) as db:
         db.execute("UPDATE privacy_counters SET value = 7 WHERE key = 'private_redactions_total'")
         db.execute("UPDATE vector_index_revision SET revision = 42")
+        db.execute("UPDATE representation_index_revision SET revision = 73")
         db.commit()
     setup = Setup(root, pg_database, workspaces=False)
     setup.targets = setup.service.targets = PgMigrationTargets(setup.targets.master_key, setup.plane.settings)
@@ -589,6 +590,7 @@ def test_seeded_counters_take_the_sqlite_values_and_the_ledger_is_not_copied(tmp
     assert pg_rows(setup.dsn, f"SELECT value FROM {schema}.privacy_counters "
                               "WHERE key = 'private_redactions_total'") == [(7,)]
     assert pg_rows(setup.dsn, f"SELECT revision FROM {schema}.vector_index_revision") == [(42,)]
+    assert pg_rows(setup.dsn, f"SELECT revision FROM {schema}.representation_index_revision") == [(73,)]
     with closing(sqlite3.connect(root / setup.store.load().archive / "workspaces" / "shared" / "memory.db")) as db:
         versions = {row[0] for row in db.execute("SELECT version FROM migrations")}
     assert versions <= {row[0] for row in pg_rows(setup.dsn, f"SELECT version FROM {schema}.migrations")}

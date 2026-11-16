@@ -11,6 +11,8 @@ import sqlite3
 import subprocess
 import sys
 import textwrap
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -25,6 +27,21 @@ from memory_core.timestamps import format_utc
 MIGRATION = ROOT / "migrations" / "041_tool_calls.sql"
 NOW = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
 SUBPROCESS_TIMEOUT_SEC = 60
+
+
+@pytest.fixture(autouse=True)
+def close_writers(monkeypatch):
+    writers = []
+    original = tool_telemetry.ToolTelemetry.__init__
+
+    def initialize(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        writers.append(self)
+
+    monkeypatch.setattr(tool_telemetry.ToolTelemetry, "__init__", initialize)
+    yield
+    for writer in writers:
+        writer.close()
 
 
 def make_db(path: Path) -> Path:
@@ -66,6 +83,7 @@ def test_calls_are_buffered_until_a_batch_is_full(db):
     record(t)
     assert rows(db) == [] and t.pending == 2
     record(t, ok=False)
+    t.flush()
     assert t.pending == 0
     assert rows(db) == [("memory_recall", 5.0, 1, None, 10, 20, "lean")] * 2 + [
         ("memory_recall", 5.0, 0, "ValueError", 10, 20, "lean")]
@@ -77,6 +95,7 @@ def test_default_batch_size_is_the_named_constant(db):
         record(t)
     assert rows(db) == []
     record(t)
+    t.flush()
     assert len(rows(db)) == tool_telemetry.FLUSH_BATCH_SIZE
 
 
@@ -96,6 +115,7 @@ def test_a_failing_sink_never_raises_and_keeps_the_calls(db, caplog):
     with caplog.at_level(logging.ERROR, logger="tool_telemetry"):
         record(t)
         record(t)  # triggers a flush that fails
+        t.flush()
     assert t.pending == 2
     assert "flush of 2 calls failed" in caplog.text
 
@@ -111,7 +131,7 @@ def test_the_buffer_of_a_failing_sink_is_bounded(caplog, monkeypatch):
         for _ in range(8):
             record(t)
     assert t.pending == 5
-    assert "dropped" in caplog.text
+    assert t.metrics["dropped_calls"] == 3
 
 
 def test_old_rows_are_pruned_on_flush(db):
@@ -135,6 +155,7 @@ def test_pruning_runs_at_most_once_per_interval(db, monkeypatch):
     monkeypatch.setattr(t, "prune", lambda conn=None: calls.append(1) or original(conn))
     record(t)
     record(t)
+    t.flush()
     assert len(calls) == 1
 
 
@@ -343,3 +364,82 @@ def test_settings_help_matches_the_retention():
 
     spec = next(s for s in LOCAL_CATALOG if s.key == tool_telemetry.TELEMETRY_ENV)
     assert f"kept {tool_telemetry.RETENTION_DAYS} days" in spec.help
+
+
+def test_blocked_writer_does_not_block_record(db):
+    entered = threading.Event()
+    release = threading.Event()
+    connect = tool_telemetry.sqlite_connector(db)
+
+    def blocked_connect():
+        entered.set()
+        if not release.wait(5):
+            raise TimeoutError("test writer was not released")
+        return connect()
+
+    t = tool_telemetry.ToolTelemetry(blocked_connect, profile="full", batch_size=1)
+    try:
+        record(t)
+        assert entered.wait(2)
+        completed = threading.Event()
+        caller = threading.Thread(target=lambda: (record(t), completed.set()))
+        caller.start()
+        assert completed.wait(1), "record waited for the database writer"
+        caller.join(1)
+        assert t.pending == 2
+    finally:
+        release.set()
+        t.close()
+    assert len(rows(db)) == 2
+
+
+def test_sqlite_write_lock_does_not_delay_batch_submission(db):
+    blocker = sqlite3.connect(db)
+    blocker.execute("BEGIN IMMEDIATE")
+    t = telemetry(db)
+    try:
+        started = time.monotonic()
+        for _ in range(tool_telemetry.FLUSH_BATCH_SIZE):
+            record(t)
+        assert time.monotonic() - started < tool_telemetry.SQLITE_BUSY_TIMEOUT_SEC
+    finally:
+        blocker.rollback()
+        blocker.close()
+        t.close()
+    assert len(rows(db)) == tool_telemetry.FLUSH_BATCH_SIZE
+
+
+def test_partial_batch_flushes_without_another_call(db):
+    t = telemetry(db, flush_interval=0.01)
+    record(t)
+    deadline = time.monotonic() + 2
+    while not rows(db) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert len(rows(db)) == 1
+
+
+def test_shutdown_is_bounded_and_recovers_after_sink_unblocks(db):
+    entered = threading.Event()
+    release = threading.Event()
+    connect = tool_telemetry.sqlite_connector(db)
+
+    def blocked_connect():
+        entered.set()
+        if not release.wait(5):
+            raise TimeoutError("test writer was not released")
+        return connect()
+
+    t = tool_telemetry.ToolTelemetry(blocked_connect, profile="full", batch_size=1, shutdown_timeout=0.01)
+    try:
+        record(t)
+        assert entered.wait(2)
+        started = time.monotonic()
+        t.close()
+        assert time.monotonic() - started < 1
+        assert t.metrics["shutdown_timeouts"] == 1
+        record(t)
+        assert t.metrics["dropped_calls"] == 1
+    finally:
+        release.set()
+        t._worker.join(2)
+    assert len(rows(db)) == 1

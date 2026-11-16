@@ -24,6 +24,8 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
+from rule_scopes import automatic_rule_scope, normalize_rule_project
+
 LOG = lambda msg: sys.stderr.write(f"[error-capture] {msg}\n")
 
 DEFAULT_CONSOLIDATE_THRESHOLD = 3
@@ -59,7 +61,7 @@ class ErrorCapture:
         pattern: str,
         severity: str = "medium",
         category: str = "bug",
-        project: str = "general",
+        project: str | None = "general",
         session_id: str = "learn_error",
         extra_tags: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -74,6 +76,7 @@ class ErrorCapture:
             if not value:
                 raise ValueError(f"{field_name} is required")
 
+        project = normalize_rule_project(project)
         tags = [f"file:{file}", f"pattern:{pattern}", "learn_error"]
         if extra_tags:
             tags.extend(extra_tags)
@@ -135,9 +138,9 @@ class ErrorCapture:
         rule_marker = f"[pattern:{pattern}]"
         existing = cur.execute(
             """SELECT id FROM rules
-               WHERE context LIKE ? AND status = 'active'
+               WHERE context LIKE ? AND project = ? AND status = 'active'
                LIMIT 1""",
-            (f"%{rule_marker}%",),
+            (f"%{rule_marker}%", project),
         ).fetchone()
         if existing:
             return existing[0]
@@ -165,9 +168,9 @@ class ErrorCapture:
                 """INSERT INTO rules (session_id, content, context, category,
                                       scope, priority, project, tags, status,
                                       created_at, updated_at)
-                   VALUES ('auto_consolidate', ?, ?, ?, 'project', 7, ?, ?,
+                   VALUES ('auto_consolidate', ?, ?, ?, ?, 7, ?, ?,
                            'active', ?, ?)""",
-                (rule_content, rule_context, category, project,
+                (rule_content, rule_context, category, automatic_rule_scope(project), project,
                  json.dumps(["auto-consolidated", f"pattern:{pattern}"]),
                  now, now),
             )

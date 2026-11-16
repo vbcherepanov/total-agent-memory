@@ -22,11 +22,54 @@ from memory_core.embedding_identity import (  # noqa: E402
     record_fingerprint,
     retire_group,
     stale_ids,
+    reconciliation_ids,
+    embedding_coverage,
 )
 from tests.pg_store_support import store_backend  # noqa: E402,F401 — fixture
 
 MODEL = "test-model"
 OLD_MODEL = "retired-model"
+
+
+def test_reconciliation_finds_missing_vectors_and_is_resumable(store):
+    for kid in range(1, 5):
+        seed(store, kid, [1.0, 0.0])
+    store.db.execute("DELETE FROM embeddings WHERE knowledge_id IN (1,2,3)")
+    store.db.execute("UPDATE knowledge SET status='superseded' WHERE id=3")
+    store.db.commit()
+    assert reconciliation_ids(store.db, {'text': MODEL}, limit=1) == [1]
+    store._embedding_backfill().enqueue(1)
+    assert reconciliation_ids(store.db, {'text': MODEL}, limit=1) == [2]
+    store._embedding_backfill().enqueue(2)
+    assert reconciliation_ids(store.db, {'text': MODEL}) == []
+    coverage = embedding_coverage(store.db, {'text': MODEL})
+    assert coverage.active == 3
+    assert coverage.missing == 2
+    assert coverage.pending == 2
+    assert coverage.unqueued == 0
+
+
+def test_coverage_distinguishes_missing_unknown_stale_and_dead_letter(store):
+    seed(store, 1, [1.0, 0.0])
+    seed(store, 2, [1.0, 0.0], model='auto')
+    seed(store, 3, [1.0, 0.0], model=OLD_MODEL)
+    store.db.execute('DELETE FROM embeddings WHERE knowledge_id=1')
+    store.db.commit()
+    store._embedding_backfill().enqueue(3)
+    store.db.execute("UPDATE embedding_pending SET status='failed' WHERE knowledge_id=3")
+    store.db.commit()
+    coverage = embedding_coverage(store.db, {'text': MODEL})
+    assert (coverage.missing, coverage.unknown, coverage.stale, coverage.failed, coverage.unqueued) == (1,1,1,1,2)
+    assert reconciliation_ids(store.db, {'text': MODEL}) == [1, 2]
+
+
+def test_startup_reconciliation_enqueues_legacy_missing_vectors(store):
+    seed(store, 1, [1.0, 0.0])
+    store.db.execute('DELETE FROM embeddings WHERE knowledge_id=1')
+    store.db.commit()
+    assert store.enqueue_stale_vectors(force=True) == 1
+    assert store.enqueue_stale_vectors(force=True) == 0
+    assert store.db.execute('SELECT knowledge_id FROM embedding_pending').fetchone()[0] == 1
 
 
 @pytest.fixture

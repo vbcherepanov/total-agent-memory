@@ -173,7 +173,8 @@ def main() -> int:
 
     from reflection.agent import ReflectionAgent
 
-    agent = ReflectionAgent(db, embedder=embedder)
+    agent = ReflectionAgent(db, embedder=embedder,
+                            embed_identity=store.last_embed_identity if store is not None else None)
 
     t0 = time.time()
     try:

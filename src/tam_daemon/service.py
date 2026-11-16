@@ -187,7 +187,7 @@ class DaemonState:
         SQLite connection is shared, and this keeps it single-threaded.
         """
         with _op_timer("daemon_prewarm_embed_ms"):
-            vectors = self.tam.store.embed([WARMUP_TEXT])
+            vectors = asyncio.run(self.tam._prewarm_session(WARMUP_TEXT))
         self.embedding_warm = bool(vectors) and vectors[0] is not None
         if not self.embedding_warm:
             LOGGER.warning("embedding prewarm returned no vector; recall falls back to lexical tiers")
@@ -210,24 +210,13 @@ class DaemonState:
         if thread is not None and thread.is_alive():
             thread.join(FLUSH_JOIN_TIMEOUT_SEC)
             if thread.is_alive():
-                LOGGER.warning("bootstrap still running at shutdown; store left to process exit")
-                return
-        store = self.tam.store
-        if store is None:
-            return
-        worker = store._enrich_worker
-        if worker is not None:
-            worker.stop()
-            worker.join(FLUSH_JOIN_TIMEOUT_SEC)
-            if worker.is_alive():
-                LOGGER.warning("enrichment worker did not stop in time; its queue stays persisted")
-        if store.v9_cache is not None:
-            store.v9_cache.close()
+                LOGGER.warning("bootstrap still running at shutdown; stopping Store owner")
         try:
-            store.db.commit()
-            store.db.close()
+            asyncio.run(self.tam._shutdown_session())
         except Exception as exc:  # noqa: BLE001 — backend-specific errors (sqlite3 / psycopg); logged, exit continues
             LOGGER.warning("store close failed", extra={"error": f"{type(exc).__name__}: {exc}"})
+            self.exit_code = EXIT_FAILED
+            return
         LOGGER.info("background work flushed")
 
     def health(self) -> dict[str, Any]:
@@ -431,6 +420,11 @@ def build_app(tam: ModuleType, state: DaemonState, token: str) -> ASGIApp:
             req = hook_recall.parse_request(body)
         except hook_recall.HookRequestError as exc:
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        if not req.query:
+            _counters().bump("daemon_hook_recall_automation_skipped")
+            return JSONResponse({"ok": True, "text": "", "count": 0, "ids": [],
+                                 "skipped_seen": 0, "truncated": False, "elapsed_ms": 0,
+                                 "dropped_floor": 0})
         if not await state.wait_ready(HOOK_READY_TIMEOUT_SEC):
             return JSONResponse({"ok": False, "error": state.bootstrap_error or "store is warming up"},
                                 status_code=503)
@@ -452,10 +446,12 @@ def build_app(tam: ModuleType, state: DaemonState, token: str) -> ASGIApp:
         track = req.dedupe and req.session_id is not None
         seen = state.seen.seen(req.session_id) if track else frozenset()
         block = hook_recall.compact_block(result if isinstance(result, dict) else {}, req, seen)
+        _counters().bump("daemon_hook_recall_dropped_floor", block.dropped_floor)
         if track and block.ids:
             state.seen.remember(req.session_id, block.ids)
         return JSONResponse({"ok": True, "text": block.text, "count": len(block.ids), "ids": block.ids,
                              "skipped_seen": block.skipped_seen, "truncated": block.truncated,
+                             "dropped_floor": block.dropped_floor,
                              "elapsed_ms": int((time.perf_counter() - started) * 1000)})
 
     @asynccontextmanager

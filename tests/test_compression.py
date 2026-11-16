@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from memory_core.embedding_identity import EmbedIdentity
+
 # These tests stub the LLM seam; `llm_enabled` skips the has_llm() probe
 # so they do not depend on a live Ollama being present on the machine.
 pytestmark = pytest.mark.usefixtures("llm_enabled")
@@ -190,6 +192,6 @@ def test_multi_repr_search_covers_compressed(cmp_db):
     store.upsert(kid, "compressed", "the answer is xyz123", _fake_emb("the answer is xyz123"), "fake")
 
     q_emb = _fake_emb("the answer is xyz123")
-    results = search(cmp_db, q_emb, top_n=5)
+    results = search(cmp_db, q_emb, top_n=5, query_identity=EmbedIdentity("fake", "declared"))
     ids = [r[0] for r in results]
     assert kid in ids

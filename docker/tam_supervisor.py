@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from worker_health import write_services
+
 
 # ───────────────────────────────────────────────────────────────────────
 # Service registry
@@ -187,6 +189,7 @@ def main() -> int:
     if not services:
         _log("no services selected — exiting")
         return 0
+    write_services([svc.name for svc in services])
     _ensure_db_initialised()
     _ensure_http_token(services)
     _log(f"starting: {', '.join(s.name for s in services)}")

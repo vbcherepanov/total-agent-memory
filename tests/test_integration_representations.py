@@ -52,6 +52,7 @@ def test_save_enqueues_representations(store):
 
 def test_reflection_generates_representations(store, monkeypatch):
     from reflection.agent import ReflectionAgent
+    from memory_core.embedding_identity import EmbedIdentity
     import representations
 
     store.db.execute(
@@ -93,7 +94,10 @@ def test_reflection_generates_representations(store, monkeypatch):
     import deep_enricher
     monkeypatch.setattr(deep_enricher, "_llm_complete", lambda *a, **kw: "")
 
-    agent = ReflectionAgent(store.db, embedder=_fake_embedder)
+    identity = EmbedIdentity("fake", "declared")
+    agent = ReflectionAgent(
+        store.db, embedder=_fake_embedder, embed_identity=lambda: identity,
+    )
     report = asyncio.run(agent.run_full())
 
     assert report["representations"]["processed"] >= 1
@@ -110,3 +114,8 @@ def test_reflection_generates_representations(store, monkeypatch):
     assert "summary" in kinds
     assert "keywords" in kinds
     assert "questions" in kinds
+    rows = store.db.execute(
+        "SELECT embed_identity_key FROM knowledge_representations WHERE knowledge_id=?",
+        (rid,),
+    ).fetchall()
+    assert all(row["embed_identity_key"] == identity.key(8) for row in rows)

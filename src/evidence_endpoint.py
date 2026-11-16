@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 from typing import Protocol, TypedDict
 
 from config import get_recall_excluded_tags
@@ -10,6 +11,7 @@ from memory_core.evidence_window import ANSWER_GUIDANCE
 from memory_core.grounding import MissingRelation
 from memory_core.passage_index import PassageIndex
 from memory_core.retrieval import MemoryHit, SearchScope, flatten_results
+from memory_core.incidents import IncidentFilter, IncidentService
 
 
 class MissingRelationOptions(TypedDict):
@@ -20,6 +22,7 @@ class MissingRelationOptions(TypedDict):
 
 class EvidenceOptions(TypedDict, total=False):
     query: str
+    as_of: str
     project: str
     type: str
     branch: str
@@ -45,7 +48,8 @@ class EvidenceStore(Protocol):
 class EvidenceRecall(Protocol):
     def search(self, query: str, project: str | None = None, ktype: str = 'all',
                limit: int = 10, detail: str = 'full', branch: str | None = None,
-               *, record_usage: bool = True) -> SearchEnvelope: ...
+               *, record_usage: bool = True,
+               as_of: datetime | str | None = None) -> SearchEnvelope: ...
 
 
 class FollowupDetails(TypedDict):
@@ -97,8 +101,16 @@ def index_passages(store: EvidenceStore, options: IndexOptions) -> IndexResponse
 
 def evidence_response(store: EvidenceStore, recall: EvidenceRecall, options: EvidenceOptions,
                       initial: SearchEnvelope) -> EvidenceResponse:
-    scope = SearchScope(options.get('project'), options.get('type', 'all'), options.get('branch'))
+    scope = SearchScope(options.get('project'), options.get('type', 'all'), options.get('branch'),
+                        as_of=options.get('as_of') or None,
+                        incident=IncidentFilter.model_validate(options['incident']) if 'incident' in options else None)
     def search(query: str, limit: int) -> list[MemoryHit]:
+        if scope.incident is not None:
+            return flatten_results(IncidentService(store.db).search(
+                query, scope, limit, postgres=getattr(store, 'is_postgres', False)))
+        if scope.as_of is not None:
+            return flatten_results(recall.search(query, project=scope.project, ktype=scope.kind,
+                limit=limit, detail='full', branch=scope.branch, record_usage=False, as_of=scope.as_of))
         return flatten_results(recall.search(query, project=scope.project, ktype=scope.kind,
             limit=limit, detail='full', branch=scope.branch, record_usage=False))
     filtered = any(options.get(key) for key in ('topics', 'entities', 'intent', 'decisions_only'))

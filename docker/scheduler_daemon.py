@@ -18,10 +18,11 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import time
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import Callable
+
+from worker_health import Heartbeat
 
 
 PY = sys.executable
@@ -33,13 +34,14 @@ def _log(msg: str) -> None:
     sys.stdout.flush()
 
 
-def _run(cmd: list[str], timeout: int = 1800) -> None:
+def _run(cmd: list[str], heartbeat: Heartbeat, timeout: int = 1800) -> None:
     _log(f"running: {' '.join(cmd)}")
     try:
-        r = subprocess.run(
-            cmd, cwd="/app", timeout=timeout,
-            env={**os.environ, "PYTHONPATH": "/app"},
-        )
+        with heartbeat.job(timeout):
+            r = subprocess.run(
+                cmd, cwd="/app", timeout=timeout,
+                env={**os.environ, "PYTHONPATH": "/app"},
+            )
         _log(f"  exit={r.returncode}")
     except subprocess.TimeoutExpired:
         _log(f"  TIMEOUT after {timeout}s")
@@ -47,26 +49,26 @@ def _run(cmd: list[str], timeout: int = 1800) -> None:
         _log(f"  ERROR: {e}")
 
 
-def _job_orphan_backfill() -> None:
+def _job_orphan_backfill(heartbeat: Heartbeat) -> None:
     runner = os.path.join(SRC, "tools", "backfill_orphan_edges.py")
     if not os.path.exists(runner):
         _log(f"skip orphan_backfill — {runner} missing")
         return
-    _run([PY, runner, "--min-mentions=1", "--limit=500", "--trigger-now"])
+    _run([PY, runner, "--min-mentions=1", "--limit=500", "--trigger-now"], heartbeat)
 
 
-def _job_check_updates() -> None:
+def _job_check_updates(heartbeat: Heartbeat) -> None:
     runner = os.path.join(SRC, "tools", "check_updates.py")
     if not os.path.exists(runner):
         _log(f"skip check_updates — {runner} missing")
         return
-    _run([PY, runner], timeout=300)
+    _run([PY, runner], heartbeat, timeout=300)
 
 
 @dataclass
 class Job:
     name: str
-    fn: Callable[[], None]
+    fn: Callable[[Heartbeat], None]
     # Returns the next datetime this job should fire after the given `now`.
     next_fire: Callable[[datetime], datetime]
 
@@ -97,6 +99,7 @@ JOBS = [
 
 
 def main() -> int:
+    heartbeat = Heartbeat("scheduler")
     _log(f"started — {len(JOBS)} jobs")
     now = datetime.now()
     schedule = {j.name: j.next_fire(now) for j in JOBS}
@@ -104,13 +107,14 @@ def main() -> int:
         _log(f"  {j.name} → next fire {schedule[j.name].isoformat(timespec='seconds')}")
 
     while True:
+        heartbeat.pulse()
         now = datetime.now()
         # Find next due job; if any is overdue, run immediately.
         for j in JOBS:
             if schedule[j.name] <= now:
                 _log(f"firing: {j.name}")
                 try:
-                    j.fn()
+                    j.fn(heartbeat)
                 except Exception as e:
                     _log(f"  job {j.name} crashed: {e}")
                 schedule[j.name] = j.next_fire(datetime.now())
@@ -121,7 +125,7 @@ def main() -> int:
         # wait between checks).
         next_due = min(schedule.values())
         sleep_for = max(1.0, min(60.0, (next_due - datetime.now()).total_seconds()))
-        time.sleep(sleep_for)
+        heartbeat.sleep(sleep_for)
 
 
 if __name__ == "__main__":

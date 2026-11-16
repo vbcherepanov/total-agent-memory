@@ -14,12 +14,27 @@ import hashlib
 import sqlite3
 import struct
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Iterable
+from memory_core.embedding_identity import EmbedIdentity
+from queue_retry import ensure_column
 
 
 VALID_REPRESENTATIONS: frozenset[str] = frozenset(
     {"raw", "summary", "keywords", "questions", "compressed", "criterion"}
 )
+
+
+@dataclass(frozen=True)
+class RepresentationSnapshot:
+    id: int
+    knowledge_id: int
+    representation: str
+    content: str
+    embed_model: str
+    embed_dim: int
+    embed_identity_key: str | None
+    float32_vector: bytes
 
 
 def _now() -> str:
@@ -54,6 +69,33 @@ class MultiReprStore:
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self.db = db
+        ensure_column(db, "knowledge_representations", "embed_identity_key", "TEXT")
+
+    def snapshots(self, knowledge_id: int) -> list[RepresentationSnapshot]:
+        rows = self.db.execute(
+            "SELECT id,knowledge_id,representation,content,embed_model,embed_dim,"
+            "embed_identity_key,float32_vector FROM knowledge_representations "
+            "WHERE knowledge_id=? ORDER BY id", (knowledge_id,),
+        ).fetchall()
+        return [RepresentationSnapshot(**dict(row)) for row in rows]
+
+    def replace_embedding(self, snapshot: RepresentationSnapshot, embedding: list[float],
+                          identity: EmbedIdentity) -> bool:
+        if not embedding:
+            raise ValueError('Representation embedding is unavailable')
+        key = identity.key(len(embedding))
+        cursor = self.db.execute(
+            "UPDATE knowledge_representations SET binary_vector=?,float32_vector=?,"
+            "embed_model=?,embed_dim=?,embed_identity_key=? "
+            "WHERE id=? AND knowledge_id=? AND representation=? AND content=? "
+            "AND embed_model=? AND embed_dim=? AND COALESCE(embed_identity_key,'')=? "
+            "AND float32_vector=?",
+            (_binary_blob(embedding), _float32_blob(embedding), identity.model, len(embedding), key,
+             snapshot.id, snapshot.knowledge_id, snapshot.representation, snapshot.content,
+             snapshot.embed_model, snapshot.embed_dim, snapshot.embed_identity_key or '',
+             snapshot.float32_vector),
+        )
+        return cursor.rowcount == 1
 
     def upsert(
         self,
@@ -63,6 +105,9 @@ class MultiReprStore:
         embedding: list[float],
         model: str,
         parent_content_hash: str | None = None,
+        *,
+        commit: bool = True,
+        identity: EmbedIdentity | None = None,
     ) -> None:
         """Insert or replace a single (knowledge_id, representation) row.
 
@@ -79,6 +124,10 @@ class MultiReprStore:
             )
         if not embedding:
             raise ValueError("embedding cannot be empty")
+        identity = identity or EmbedIdentity(model, 'declared')
+        if identity.model != model:
+            raise ValueError('Representation model does not match embedding identity')
+        identity_key = identity.key(len(embedding))
 
         # Schema-detect: column may be missing on legacy DBs that haven't
         # applied migration 027 yet. Fall back to the legacy INSERT shape.
@@ -90,8 +139,8 @@ class MultiReprStore:
                 """INSERT INTO knowledge_representations
                      (knowledge_id, representation, content, binary_vector,
                       float32_vector, embed_model, embed_dim, created_at,
-                      parent_content_hash, last_confirmed)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      parent_content_hash, last_confirmed, embed_identity_key)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(knowledge_id, representation) DO UPDATE SET
                      content             = excluded.content,
                      binary_vector       = excluded.binary_vector,
@@ -100,7 +149,8 @@ class MultiReprStore:
                      embed_dim           = excluded.embed_dim,
                      created_at          = excluded.created_at,
                      parent_content_hash = excluded.parent_content_hash,
-                     last_confirmed      = excluded.last_confirmed""",
+                     last_confirmed      = excluded.last_confirmed,
+                     embed_identity_key  = excluded.embed_identity_key""",
                 (
                     knowledge_id,
                     representation,
@@ -112,21 +162,23 @@ class MultiReprStore:
                     now,
                     parent_content_hash,
                     now,
+                    identity_key,
                 ),
             )
         else:
             self.db.execute(
                 """INSERT INTO knowledge_representations
                      (knowledge_id, representation, content, binary_vector,
-                      float32_vector, embed_model, embed_dim, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                      float32_vector, embed_model, embed_dim, created_at, embed_identity_key)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(knowledge_id, representation) DO UPDATE SET
                      content        = excluded.content,
                      binary_vector  = excluded.binary_vector,
                      float32_vector = excluded.float32_vector,
                      embed_model    = excluded.embed_model,
                      embed_dim      = excluded.embed_dim,
-                     created_at     = excluded.created_at""",
+                     created_at     = excluded.created_at,
+                     embed_identity_key = excluded.embed_identity_key""",
                 (
                     knowledge_id,
                     representation,
@@ -136,9 +188,11 @@ class MultiReprStore:
                     model,
                     len(embedding),
                     now,
+                    identity_key,
                 ),
             )
-        self.db.commit()
+        if commit:
+            self.db.commit()
 
     def _has_hash_column(self) -> bool:
         try:

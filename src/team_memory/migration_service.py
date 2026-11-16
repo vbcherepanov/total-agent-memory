@@ -109,7 +109,7 @@ SEEDED_TABLES = frozenset({"meta"})
 # Workspace rows the baseline seeds (migrations/postgres/workspace/0001_baseline.sql). SQLite is
 # authoritative for the counters: the seeded rows are replaced. The SQLite migration ledger is not
 # copied; its versions must already be in the PostgreSQL ledger (else the file is from a newer TAM).
-REPLACED_WORKSPACE_TABLES = frozenset({"vector_index_revision", "privacy_counters"})
+REPLACED_WORKSPACE_TABLES = frozenset({"vector_index_revision", "representation_index_revision", "privacy_counters"})
 WORKSPACE_LEDGERS = frozenset({"migrations"})
 
 Clock = Callable[[], datetime]

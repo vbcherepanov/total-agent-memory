@@ -170,8 +170,10 @@ class EpisodeStore:
             conditions.append("impact_score >= ?")
             params.append(min_impact)
         if query:
-            conditions.append("narrative LIKE ?")
-            params.append(f"%{query}%")
+            for term in dict.fromkeys(query.split()):
+                escaped = term.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+                conditions.append("lower(narrative) LIKE lower(?) ESCAPE '!'")
+                params.append(f"%{escaped}%")
 
         where = " AND ".join(conditions) if conditions else "1=1"
         sql = f"SELECT {','.join(_EPISODE_COLS)} FROM episodes WHERE {where}"

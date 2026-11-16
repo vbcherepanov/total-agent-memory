@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "total-agent-memory"
-version = "14.10.0"
+version = "15.0.0"
 description = "Persistent local memory MCP server for Claude Code, Codex CLI, Cursor and any MCP client: 79 tools — temporal knowledge graph, procedural memory, episodic memory, AST codebase ingest, pre-edit guard, auto-consolidating error capture"
 readme = "README.md"
 license = "MIT"
@@ -33,7 +33,11 @@ dependencies = [
     # ingest_codebase() parses source with tree-sitter. Without this the
     # ingester silently degrades to whole-file chunks, which is not what the
     # README advertises — so it is a hard dependency, not an extra (2 MB wheel).
-    "tree-sitter-language-pack>=1.13",
+    "tree-sitter-language-pack>=1.25",
+    "charset-normalizer>=3,<4",
+    "pypdf>=6.21,<7",
+    "psutil>=7,<8",
+    "filelock>=3.20,<4",
     # The default embedding backend. It was declared only in requirements.txt,
     # so install.sh and Docker users got it while every pip / uvx / npx / brew
     # user silently fell back to sentence-transformers with a different,
@@ -45,7 +49,7 @@ dependencies = [
     # the multilingual MiniLM-L12 and the fallback is the small English
     # MiniLM-L6. The ~1.5 GB users reported came from torch being imported
     # eagerly on top of the fastembed model, which is fixed separately.
-    "fastembed>=0.6,<0.9",
+    "fastembed>=0.8,<0.9",
     # HTTP transport (MCP_TRANSPORT=http) — a documented feature, so a declared
     # dependency rather than something inherited from mcp[cli] by luck.
     "starlette>=0.37",
@@ -112,11 +116,20 @@ ocr = [
     "pyobjc-framework-Vision>=10.3; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10.3; sys_platform == 'darwin'",
 ]
-all = ["total-agent-memory[rerank]", "total-agent-memory[postgres]"]
+media = [
+    "Pillow>=12,<13",
+    "pypdfium2>=5,<6",
+    "faster-whisper>=1.2,<2",
+    "av>=15,<19",
+    "striprtf>=0.0.29,<1",
+    "xlrd>=2,<3",
+]
+all = ["total-agent-memory[rerank]", "total-agent-memory[postgres]", "total-agent-memory[media]"]
 # Test and lint toolchain for contributors and CI (mirrors requirements-dev.txt,
 # minus the benchmark-only packages): pip install -e ".[dev]"
 dev = [
     "pytest>=8.0.0",
+    "pytest-timeout>=2.3",
     "pytest-cov>=5.0",
     "hypothesis>=6.100",
     "ruff>=0.16.6",
@@ -136,6 +149,7 @@ tam-team = "total_agent_memory.team:main"
 tam-remote = "total_agent_memory.remote:main"
 tam-aml = "total_agent_memory.aml:main"
 tam-lookup = "total_agent_memory.lookup:main"
+tam-prepare-vector-index = "total_agent_memory.vector_index:main"
 lookup-memory = "total_agent_memory.lookup:main"
 # Backward-compat aliases (v11.x users keep working; pip prints a
 # DeprecationWarning on first `from claude_total_memory import ...`).
@@ -197,6 +211,8 @@ src = [
     "team_memory/reports/static/*.js",
     "team_memory/reports/static/*.css",
     # Local dashboard's vendored browser libraries + their licenses (no CDN at runtime).
+    "dashboard_static/*.js",
+    "dashboard_static/locales/*.json",
     "dashboard_static/vendor/*/*.js",
     "dashboard_static/vendor/*/*.txt",
 ]

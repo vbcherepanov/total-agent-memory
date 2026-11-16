@@ -8,6 +8,7 @@ import pytest
 
 import server
 from temporal_filter import parse_query_dates, parse_relative_dates, temporal_rerank
+from tests.pg_store_support import store_backend  # noqa: F401
 
 ANCHOR = datetime.fromisoformat("2023-05-30T23:40")
 
@@ -78,20 +79,21 @@ def test_server_parses_as_of_values():
 
 
 @pytest.fixture
-def store(tmp_path, monkeypatch):
+def store(tmp_path, monkeypatch, store_backend):
     monkeypatch.setattr(server, "MEMORY_DIR", tmp_path)
-    instance = server.Store(background_queues=False)
+    instance = server.Store(database=store_backend, background_queues=False)
     instance._embed_mode = "none"
     monkeypatch.setattr(instance, "bump_recall", lambda ids: None)
     rows = (
-        (1, "[2023/05/28 (Sun) 10:00] user: a big milestone, wrapping up the Johnson account"),
-        (2, "[2023/05/02 (Tue) 09:00] user: a big milestone, I signed a contract with my first client"),
+        (1, "[2023/05/28 (Sun) 10:00] user: a big milestone, wrapping up the Johnson account", "2023-05-28T10:00:00Z"),
+        (2, "[2023/05/02 (Tue) 09:00] user: a big milestone, I signed a contract with my first client", "2023-05-02T09:00:00Z"),
+        (3, "[2023/05/02 (Tue) 09:00] user: a big milestone, I opened my second office", "2026-01-01T00:00:00Z"),
     )
-    for identity, content in rows:
+    for identity, content, created_at in rows:
         instance.db.execute(
             "INSERT INTO knowledge(id,content,session_id,project,type,status,created_at,last_confirmed) "
-            "VALUES (?,?,'s','p','fact','active','2026-01-01','2026-01-01')",
-            (identity, content),
+            "VALUES (?,?,'s','p','fact','active',?,?)",
+            (identity, content, created_at, created_at),
         )
     instance.db.commit()
     yield instance
@@ -105,5 +107,6 @@ def test_recall_as_of_reorders_by_the_anchored_window(store):
     anchored = recall.search(query, project="p", limit=5, as_of="2023-05-30T23:40")
     ids_now = [hit["id"] for group in now["results"].values() for hit in group]
     ids_anchored = [hit["id"] for group in anchored["results"].values() for hit in group]
-    assert set(ids_now) == {1, 2}
+    assert set(ids_now) == {1, 2, 3}
+    assert set(ids_anchored) == {1, 2}
     assert ids_anchored[0] == 2

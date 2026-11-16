@@ -159,3 +159,6 @@ coverage.xml
 
 # Operator host names for scripts/check-no-internal-data.sh (never committed)
 scripts/internal-data-hosts.local.txt
+
+# Local release evidence (test logs, machine paths); never published
+docs/release/

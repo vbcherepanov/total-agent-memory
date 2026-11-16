@@ -6,13 +6,78 @@ and versions use [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [15.0.0] - 2026-11-16
+
+### Upgrade notes
+
+- SQLite migrations 047–049 and PostgreSQL workspace migrations 0011–0013 add representation leases, embedding identity and cache revisions. Legacy representations with unknown identities are excluded from retrieval and queued for regeneration; pending and terminally failed jobs are not duplicated.
+- PostgreSQL searches no longer create HNSW indexes. Provision them with `scripts/prepare_vector_index.py` using an administrative connection. Until a valid index exists, searches use exact scoring.
+- Injected reflection embedders must supply an `embed_identity` callback with the concrete model and provider. Unknown or changing identities fail the job instead of publishing incompatible vectors.
+- SQLite migrations 050–052 and PostgreSQL workspace migrations 0014–0015 add the separate resource index and persisted watch policies. Explicit indexing enables background refresh in the personal server; use `watch=false` to opt out for a root.
+- SQLite migrations 053–059 and PostgreSQL workspace migrations 0016–0022 backfill the scope of auto-consolidated rules, add similarity candidates (migration 059 / PG 0022 add the indexed 24-character keys), keep knowledge state history (and repair the history of records retired before the upgrade) and add the incident structure. Back up the database before upgrading; the migrations run on first start.
+- State history starts at the upgrade, with an approximate past. A record that was already deleted, archived or otherwise retired before it is recorded as active from its `created_at` and retired at the best time the old schema holds: the creation time of its successor for superseded records, otherwise its `last_confirmed` time (never before `created_at`). `as_of` queries therefore return it before that time, but the retirement time of a deleted or archived record is a lower bound, because the old schema stored no deletion time. A retired record with neither timestamp stays invisible at every `as_of`.
+
 ### Added
 
+- **Dashboard internationalization and a Simplified Chinese README.** The local dashboard (home, graph, settings, login and v6 panels) can be shown in Simplified Chinese, Japanese or Spanish, chosen with `?lang=`, the language selector or the browser language; untranslated text falls back to English. Catalogs are served same-origin and inlined under the existing CSP nonce, with no external scripts. `README.zh-CN.md` and `docs/dashboard-i18n.md` are new. Thanks @Cipherweaver (#49).
+- Persistent resource indexing with project isolation, lexical search, content fingerprints, deletion reconciliation and atomic updates in TAM DB tables.
+- Optional `[media]` extraction for image and scanned-PDF OCR, audio and video audio-track transcription, RTF and XLS. Tesseract and its language data are system prerequisites; processing runs in bounded, cancellable subprocesses.
+- Personal index refresh retains include/exclude filters across restarts and reports watcher errors through index status. A process lock prevents duplicate scanners across personal sessions.
+- Reproducible grammar, held-out local LLM, concurrency and resource-scale benchmarks. Parser coverage and syntax-clean examples are reported separately.
+
+### Fixed
+
+- **Save-time similarity finds older near-duplicates through indexed 24-character prefix and suffix keys (migration 059 / PG 0022); p95 about 3.5 ms on a 50k-record store on both backends.** Without the indexes the lookup returns the same matches, only slower.
+- English-only cross-encoders preserve the fused positions of non-Latin candidates instead of scoring unsupported text; multilingual encoders continue to rerank the full window.
+- AST chunks from malformed source consistently report partial parsing while retaining searchable source text.
+- Stored-secret scanning and redaction support compact tables with composite primary keys, preserving invalid UTF-8 text and atomic rollback on key collisions.
+- Cognitive recall enrichment applies the requested project to graph-linked additional solutions, matching the main search and lexical solution lookup.
+- Representation searches reject incompatible model, provider, pooling and library identities even when vector dimensions match.
+- Expired representation jobs can be reclaimed after worker failure. Claim tokens prevent stale workers from publishing results or acknowledging another worker's job; retry backoff and the failure budget bound recovery.
+- Embedding reconciliation includes missing vectors and legacy identities, and reports missing, stale, unknown, pending, failed and unqueued coverage separately.
+- Personal and team retrieval share historical-value ordering within each scope and project. Optional reranking and diversity selection cannot discard the requested historical value before the final result limit.
+- URL ingestion retains failed files for retry, reuses durable receipts after a move failure, and bounds response size, content types and download time.
+- **JOSS review fixes (#54–#58).** `memory_recall(expand_context=true)` no longer returns records of other projects: the scope applies before candidates are chosen (#54). A repeated save keeps the tags of the record it replaces and reports the superseded ids; update errors and async metadata are reported (#55). `benchmark` and `memory_eval_locomo` run on pip and Docker installs, read the real LoCoMo format and report errors instead of zero scenarios (#56). The reflection and scheduler containers report health from a live worker heartbeat, so Compose no longer shows them as unhealthy (#57). Six smaller API and search problems from #58 are fixed (skill and kind handling, selectors, episode terms, concept boundary, correction example).
+- **Auto-consolidated rules reach `self_rules_context`.** Rules that `learn_error` creates after repeated errors were stored with the scope `project`, which no project query matched, and one project's rule hid the same pattern in another. They now carry `global` or `project:<name>` (`src/rule_scopes.py`), consolidation checks existing rules per project, and migration 053 repairs stored rows. Thanks @alex09x (#53) for reporting and fixing the delivery.
+- **PostgreSQL date functions follow SQLite 3.50 (#46).** Fractional seconds are truncated, not rounded, at sub-millisecond boundaries, and midnight values are normalized the same way on both backends (PostgreSQL compat migrations 0002–0003).
+- `ingest_codebase` runs off the transport loop, so indexing a folder with media no longer stalls other stdio and HTTP calls.
+- An incident's structured rows are written in the same transaction as its record; a failure leaves neither behind.
+- `install.ps1` looks for `python` before `python3`, so it uses the interpreter on PATH instead of the Microsoft Store alias or another installation.
+- A server without `/healthz` (HTTP 404) gets the upgrade message instead of "retry".
+- `benchmark` reports runner failures as `{"status": "error"}` like `memory_eval_locomo`, and its description names the packaged scenarios.
+- Concurrent recalls that differ only in letter case no longer share one result; a lost representation claim is counted as `lost_claims`, not `failed`; cancelling a call while it re-acquires the Store lease no longer raises at shutdown.
+
+### Performance
+
+- Bound personal recall inference to a worker pool while retaining one Store owner; validate revisions before finalizing, reuse cached scores without queuing, and configure ONNX thread limits.
+
+- Cross-encoder inference groups candidates by text length into configurable batches and restores scores to the original order, reducing padding work without dropping candidates or truncating more text. `MEMORY_CROSS_RERANK_BATCH_SIZE=0` restores the encoder's original batching and order.
+- SQLite resource postings use a composite primary key without a redundant rowid table. Existing database files retain reusable free pages after migration; no automatic VACUUM is performed.
+- Cross-encoder scores use a bounded process-local cache keyed by the exact query and input texts, preserving multiplicity and restoring scores to the caller's order. Telemetry writes or candidate permutations no longer repeat identical model inference; changed candidates and text are rescored. `MEMORY_CROSS_RERANK_CACHE_SCORES=0` disables the cache, and hit/miss/eviction counters plus inference latency buckets expose its effect.
+- Personal stdio, HTTP and daemon tool calls run on one Store owner thread with a bounded queue. The transport loop stays responsive during slow calls; queued cancellation releases capacity, running writes finish once, and shutdown closes SQLite on its owner. Queue waits and execution times have counters and latency buckets.
+- Recall bypasses result caches while the usage writer holds the revision connection, preserving verified entries until a subsequent revision check. External commits and local transactions still prevent stale cache reads.
+- Tool telemetry uses a bounded background writer, exposes retry/drop counters and does not flush SQLite synchronously on every 25th call.
+- Multi-representation retrieval caches matrices and norms within a configurable memory budget. Store revisions invalidate cached visibility, project and vector changes; uncommitted reads are not cached.
+- Retrieval telemetry measures singleflight waits and additional candidate-generation stages with counters and latency buckets.
+
+### Added
+
+- Persistent project/root-scoped resource indexing in separate SQLite/PostgreSQL tables. `ingest_codebase` now defaults to incremental indexing and supports `preview`, `search`, and paginated `status` actions. Hashes avoid reparsing unchanged files; atomic replacement reconciles edits/deletions and rejects stale writers. PDF, Office XML and ZIP/TAR/GZIP text is extracted locally; unhandled binaries remain searchable by metadata with explicit status. Sensitive files, symlinks, extraction errors and resource limits are reported. Search is lexical over normalized terms, separate from knowledge recall.
+- AST parsing for PHP functions, classes, interfaces, traits, enums and methods, and Vue single-file components with JavaScript/TypeScript/TSX scripts. Embedded symbols retain original file line numbers; named function-valued bindings are extracted, and external script sources are not followed. Language detection also uses the tree-sitter registry; other text formats retain searchable text chunks.
 - **Warm-up for the LoCoMo rerank-mode runner.** `--warmup-queries N` asks N untimed queries before the measured run, and `benchmarks/locomo_rerank_matrix.sh` measures the default mode with and without warm-up and `on`, three fresh-store runs each, one at a time, then compares every rerun with the first.
 - **Default-mode LoCoMo results for v14.6.0.** `benchmarks/results/rerank-modes` now holds three fresh-store runs each of `auto` without and with warm-up and of `on`: R@5 0.746 in all three, the same ranking on all 1,986 questions across reruns of each setting, and one question (the first one asked) answered before the encoder had loaded in cold `auto`. The README cites these figures in place of the planned measurement.
 
+- **Capability-checked clients (#40).** `/healthz` on the team server and the personal HTTP MCP endpoint lists `capabilities` (additive field). `tam-team` and the remote CLI refuse a command whose flag the server does not advertise before sending it, with an upgrade message and a different exit code from the "could not ask the server" network failure.
+- **Self-describing export (#41).** `memory_export` writes a header (export time, schema version, counts per type and state), a `state` on every entry (active, archived, retracted) and a footer with `complete` and `next_cursor`. `limit` (1-5000) and `cursor` page the export: every page carries the same snapshot id and export time, records are ordered by id and bounded by the highest id at page 1 (later inserts cannot shift or duplicate pages), the cursor is signed, and the footer is `complete: false` with `next_cursor` until the last page (`complete: true`, null). Without `limit` the export is unpaged as before. Import checks one key per line, no duplicates and matching counts, and for pages that they share one snapshot, are contiguous and end with the final page (concatenated or as a sequence of files); it fails on the first offending line.
+- **Structured incidents (#42).** Incident records take optional `detection`, `affected` windows and `resolution`; missing structure produces `hints`, not a rejected save. Open `- [ ]` follow-ups are counted. Existing incidents are unchanged.
+- **Similar records and revived deletions on save (#43).** `memory_save` returns `similar` (ids and scores, bounded edit distance, superseded and deleted records included) and `revived: true` when the closest match was deleted on purpose. The save is not blocked.
+- **`as_of` picks the snapshot first (#44).** `memory_recall(as_of=...)`, `kg_at` and `memory_temporal_query` select the version of each key current at that moment, with tombstones for deletions, and search inside it. A superseded version never answers for its key, on SQLite and PostgreSQL.
+- **One router for team MCP and REST (#45).** Team-server MCP calls replay through the REST router: one auth, limit and audit path, one audit line per call. `?readonly=1` drops write tools from `tools/list` and refuses them on call; destructive operations stay CLI-only.
+- **Ambient recall skips automation and applies a relevance floor (#47).** Claude Code `<task-notification>`, `<local-command-stdout>` and `<command-name>` turns get no recall; records below a tunable score floor are dropped, and cross-project records need a stricter floor and carry their project label.
+
 ### Changed
 
+- **Multilingual cross-encoder by default.** `MEMORY_CROSS_RERANK_MODEL` now defaults to `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` (INT8 ONNX on ARM64), so Russian, Ukrainian and other non-Latin queries are reranked too. On LoCoMo retrieval the default mode gives R@1 0.488, R@5 0.745, R@10 0.819 (v14: 0.473, 0.746, 0.826). Set `MEMORY_CROSS_RERANK_MODEL=Xenova/ms-marco-MiniLM-L-6-v2` for the previous English model.
 - **Paper and installation guide.** `paper/paper.md` now says the cross-encoder runs by default once its model has loaded, that only runs with it off are guaranteed to repeat, and that it raises query cost to hundreds of milliseconds. The README and `docs/installation.md` describe the first-start download (about 330 MB), `TAM_MODEL_CACHE`, the Homebrew source build, the six compose services, port conflicts, and Ollama as optional.
 
 ### Security

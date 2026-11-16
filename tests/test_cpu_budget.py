@@ -37,11 +37,16 @@ configure_torch_threads()
 after = left @ left.T
 torch.testing.assert_close(before, after)
 blas = [item for item in threadpool_info() if item['user_api'] == 'blas']
-assert blas, 'No BLAS library was exercised'
+if not blas:
+    config = np.show_config(mode='dicts')['Build Dependencies']['blas']
+    assert __import__('sys').platform == 'darwin' and config['name'] == 'accelerate', config
+    # Accelerate is not exposed by threadpoolctl; its startup limit is environmental.
+    assert __import__('os').environ['VECLIB_MAXIMUM_THREADS'] == str(torch.get_num_threads())
 assert all(item['num_threads'] == torch.get_num_threads() for item in blas), blas
 assert torch.get_num_threads() == int(__import__('os').environ['MEMORY_TORCH_THREADS'])
 assert __import__('os').environ['OMP_NUM_THREADS'] == str(torch.get_num_threads())
 assert __import__('os').environ['OPENBLAS_NUM_THREADS'] == str(torch.get_num_threads())
+assert __import__('os').environ['MKL_NUM_THREADS'] == str(torch.get_num_threads())
 np.testing.assert_allclose(np.eye(4) @ np.eye(4), np.eye(4))
 '''
     result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, check=False,

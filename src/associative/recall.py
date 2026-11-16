@@ -187,8 +187,8 @@ class AssociativeRecall:
         2. Tokenize text into unigrams, bigrams, and trigrams
         3. Match tokens against cached node names using:
            - Exact match (case-insensitive)
-           - Substring match: node name contained in a token or vice versa
-           - Underscore-aware: split node names like "error_handling" and match parts
+           - Word-boundary matches of complete concept names
+           - Underscore-aware: "error_handling" also matches "error handling"
         4. Return matching concept names (deduplicated, original casing)
 
         This is a FAST local extraction (no LLM), suitable for real-time use.
@@ -235,53 +235,17 @@ class AssociativeRecall:
                         found.append(original_name)
                         seen.add(key)
 
-        # Phase 2: Substring and partial matching against all node names
-        # Build a joined lowercase text for substring checks
         text_lower = text.lower()
         for node_lower, original_name in name_lookup.items():
             key = original_name.lower()
             if key in seen:
                 continue
 
-            # Skip very short node names (single char) for substring matching
             if len(node_lower) < 2:
                 continue
-
-            matched = False
-
-            # Check if the full node name appears as a substring in the text
-            # Handles: "postgresql" in "PostgreSQL database optimization"
-            # Also handles underscored names: "error_handling" parts in text
-            if node_lower in text_lower:
-                matched = True
-
-            # Check if any text token contains the node name or vice versa
-            # Handles: token "webhook" matching node "webhook_handling"
-            # Handles: token "authentication" matching node "auth"
-            if not matched:
-                # Split node name on underscores for compound matching
-                node_parts = node_lower.replace("_", " ").split()
-                for token in tokens_lower:
-                    if token in _STOP_WORDS or len(token) < 2:
-                        continue
-                    # Token contains node name: "authentication" contains "auth"
-                    if len(node_lower) >= 3 and node_lower in token:
-                        matched = True
-                        break
-                    # Node name contains token: "webhook_handling" contains "webhook"
-                    if len(token) >= 3 and token in node_lower:
-                        matched = True
-                        break
-                    # Check individual parts of compound node names
-                    # "error_handling" -> ["error", "handling"]
-                    for part in node_parts:
-                        if len(part) >= 3 and (part in token or token in part):
-                            matched = True
-                            break
-                    if matched:
-                        break
-
-            if matched:
+            parts = re.split(r"[\s_]+", node_lower)
+            pattern = r"(?<!\w)" + r"[\s_]+".join(re.escape(part) for part in parts) + r"(?!\w)"
+            if re.search(pattern, text_lower):
                 found.append(original_name)
                 seen.add(key)
 

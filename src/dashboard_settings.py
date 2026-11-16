@@ -57,7 +57,7 @@ PAGE = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="tam-csrf" content="__CSRF__">
-<title>Settings — total-agent-memory</title>
+<title data-i18n="Settings — total-agent-memory">Settings — total-agent-memory</title>
 <style>
   :root { --bg:#0a0a14; --card:#12121f; --line:#23233a; --text:#ddd; --muted:#8a8aa0; --accent:#8ad;
           --good:#6c6; --bad:#f66; --warn:#fc6; }
@@ -102,36 +102,36 @@ PAGE = r"""<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <a href="/" class="back">← Dashboard</a>
-  <h1>Settings</h1>
-  <p class="lead">Values set here override the environment and MCP client configs, which override built-in defaults.
-    API keys are encrypted on disk and never sent back to the browser.</p>
-  <div id="sections"><p class="lead">Loading…</p></div>
+  <a href="/" class="back"><span data-i18n="← Dashboard">← Dashboard</span></a>
+  <h1><span data-i18n="Settings">Settings</span></h1>
+  <p class="lead"><span data-i18n="Values set here override the environment and MCP client configs, which override built-in defaults. API keys are encrypted on disk and never sent back to the browser.">Values set here override the environment and MCP client configs, which override built-in defaults.
+    API keys are encrypted on disk and never sent back to the browser.</span></p>
+  <div id="sections"><p class="lead"><span data-i18n="Loading…">Loading…</span></p></div>
   <section id="privacy">
-    <h2>Stored credentials</h2>
-    <p>Before 14.6.0 some tools stored API keys and passwords as typed. Scanning reads only; redacting first backs up
-      memory.db to backups/ (owner-only) and then replaces every credential it finds with [REDACTED].</p>
-    <button type="button" id="scan">Scan memory</button>
-    <button type="button" id="redact" class="danger" hidden>Back up and redact</button>
+    <h2><span data-i18n="Stored credentials">Stored credentials</span></h2>
+    <p><span data-i18n="Before 14.6.0 some tools stored API keys and passwords as typed. Scanning reads only; redacting first backs up memory.db to backups/ (owner-only) and then replaces every credential it finds with [REDACTED].">Before 14.6.0 some tools stored API keys and passwords as typed. Scanning reads only; redacting first backs up
+      memory.db to backups/ (owner-only) and then replaces every credential it finds with [REDACTED].</span></p>
+    <button type="button" id="scan"><span data-i18n="Scan memory">Scan memory</span></button>
+    <button type="button" id="redact" class="danger" hidden><span data-i18n="Back up and redact">Back up and redact</span></button>
     <div id="privacy-msg" class="msg"></div>
   </section>
 </div>
 <div class="bar" id="bar" hidden>
   <span id="pending"></span>
-  <button type="button" id="discard">Discard</button>
-  <button type="button" id="save" class="primary">Save changes</button>
+  <button type="button" id="discard"><span data-i18n="Discard">Discard</span></button>
+  <button type="button" id="save" class="primary"><span data-i18n="Save changes">Save changes</span></button>
 </div>
 <script>
 "use strict";
 const CSRF = document.querySelector('meta[name="tam-csrf"]').content;
 const GROUPS = [
-  ["llm", "Language model", "Used for enrichment, summaries and answer checks."],
-  ["embed", "Embeddings", "Turns records into vectors. Changing provider or model makes stored vectors incompatible until re-embedded."],
-  ["recall", "Search answers", "What agents receive from memory_recall."],
-  ["storage", "Storage", "Where files live and how long call logs are kept."],
-  ["agent", "Agent interface", "Which tools agents see, the guide they get on connect and per-tool statistics."],
+  ["llm", TAM_I18N.t("Language model"), TAM_I18N.t("Used for enrichment, summaries and answer checks.")],
+  ["embed", TAM_I18N.t("Embeddings"), TAM_I18N.t("Turns records into vectors. Changing provider or model makes stored vectors incompatible until re-embedded.")],
+  ["recall", TAM_I18N.t("Search answers"), TAM_I18N.t("What agents receive from memory_recall.")],
+  ["storage", TAM_I18N.t("Storage"), TAM_I18N.t("Where files live and how long call logs are kept.")],
+  ["agent", TAM_I18N.t("Agent interface"), TAM_I18N.t("Which tools agents see, the guide they get on connect and per-tool statistics.")],
 ];
-const SOURCE = {web: "Set here", env: "From environment", default: "Default"};
+const SOURCE = {web: TAM_I18N.t("Set here"), env: TAM_I18N.t("From environment"), default: TAM_I18N.t("Default")};
 const pending = new Map();
 let data = null, byKey = {};
 
@@ -169,49 +169,50 @@ function setPending(key, value) {
   else pending.set(key, value);
   const bar = document.getElementById("bar");
   bar.hidden = pending.size === 0;
-  document.getElementById("pending").textContent = pending.size + " unsaved change" + (pending.size === 1 ? "" : "s");
+  document.getElementById("pending").textContent = TAM_I18N.t(
+    pending.size === 1 ? "{count} unsaved change" : "{count} unsaved changes", {count: pending.size});
 }
 
 function editor(key) {
   const item = byKey[key];
-  const label = el("label", {for: "f-" + key, text: item.label}, el("span", {class: "chip " + item.source, text: SOURCE[item.source]}));
+  const label = el("label", {for: "f-" + key, text: TAM_I18N.t(item.label)}, el("span", {class: "chip " + item.source, text: SOURCE[item.source]}));
   let control;
   if (item.kind === "secret") {
-    const shown = item.is_set ? (item.readable ? item.hint : "unreadable with the current master key") : "not set";
+    const shown = item.is_set ? (item.readable ? item.hint : TAM_I18N.t("unreadable with the current master key")) : TAM_I18N.t("not set");
     control = el("div", {class: "secret"});
     const idle = () => {
-      const replace = el("button", {type: "button", text: item.is_set ? "Replace key" : "Add key"});
+      const replace = el("button", {type: "button", text: item.is_set ? TAM_I18N.t("Replace key") : TAM_I18N.t("Add key")});
       replace.addEventListener("click", () => {
-        const input = el("input", {id: "f-" + key, type: "password", autocomplete: "new-password", placeholder: "Paste the new key"});
+        const input = el("input", {id: "f-" + key, type: "password", autocomplete: "new-password", placeholder: TAM_I18N.t("Paste the new key")});
         input.addEventListener("input", () => setPending(key, input.value.trim() || undefined));
-        const undo = el("button", {type: "button", text: "Undo"});
+        const undo = el("button", {type: "button", text: TAM_I18N.t("Undo")});
         undo.addEventListener("click", () => { setPending(key, undefined); idle(); });
         control.replaceChildren(input, undo);
         input.focus();
       });
-      const remove = item.source === "web" ? el("button", {type: "button", text: "Remove"}) : null;
-      if (remove) remove.addEventListener("click", () => { setPending(key, null); control.replaceChildren(el("code", {text: "will be removed on save"})); });
+      const remove = item.source === "web" ? el("button", {type: "button", text: TAM_I18N.t("Remove")}) : null;
+      if (remove) remove.addEventListener("click", () => { setPending(key, null); control.replaceChildren(el("code", {text: TAM_I18N.t("will be removed on save")})); });
       control.replaceChildren(...[el("code", {text: shown}), replace, remove].filter(Boolean));
     };
-    if (pending.get(key) === null) control.replaceChildren(el("code", {text: "will be removed on save"}));
-    else if (pending.has(key)) control.replaceChildren(el("code", {text: "new key entered — save to store it"}));
+    if (pending.get(key) === null) control.replaceChildren(el("code", {text: TAM_I18N.t("will be removed on save")}));
+    else if (pending.has(key)) control.replaceChildren(el("code", {text: TAM_I18N.t("new key entered — save to store it")}));
     else idle();
   } else if (item.kind === "choice") {
     const selected = pending.has(key) ? pending.get(key) : (item.source === "web" ? item.value : "");
     control = el("select", {id: "f-" + key},
-      el("option", {value: "", text: item.source === "env" ? "Environment: " + item.value : "Default"}),
-      item.choices.map((c) => el("option", {value: c, text: c, selected: selected === c})));
+      el("option", {value: "", text: item.source === "env" ? TAM_I18N.t("Environment: ") + item.value : TAM_I18N.t("Default")}),
+      item.choices.map((c) => el("option", {value: c, text: TAM_I18N.t(c), selected: selected === c})));
     control.addEventListener("change", () => setPending(key, control.value || (item.source === "web" ? null : undefined)));
   } else {
     const shown = pending.has(key) ? (pending.get(key) || "") : (item.source === "web" ? item.value : "");
     control = el("input", {id: "f-" + key, value: shown, autocomplete: "off",
-      placeholder: item.source === "env" ? item.value : "default", inputmode: item.kind === "integer" ? "numeric" : null});
+      placeholder: item.source === "env" ? item.value : TAM_I18N.t("default"), inputmode: item.kind === "integer" ? "numeric" : null});
     control.addEventListener("input", () => {
       const value = control.value.trim();
       setPending(key, value || (item.source === "web" ? null : undefined));
     });
   }
-  return el("div", {class: "row"}, label, control, item.help ? el("small", {text: item.help}) : null);
+  return el("div", {class: "row"}, label, control, item.help ? el("small", {text: TAM_I18N.t(item.help)}) : null);
 }
 
 function activeProvider(target) {
@@ -235,7 +236,7 @@ function render() {
       : data.settings.filter((s) => s.group === group).map((s) => s.key);
     const active = group === "llm" || group === "embed" ? activeProvider(group) : null;
     const section = el("section", {}, el("h2", {text: title}), el("p", {text: subtitle}), keys.map(editor),
-      active && active.note ? el("p", {text: active.note}) : null);
+      active && active.note ? el("p", {text: TAM_I18N.t(active.note)}) : null);
     const providerSelect = section.querySelector("#f-" + (data.provider_keys[group] || "none"));
     if (providerSelect) providerSelect.addEventListener("change", () => render());
     return section;
@@ -264,10 +265,10 @@ document.getElementById("save").addEventListener("click", async (event) => {
       reply = await api("/api/settings", {body: {values, confirm_endpoint: true}});
     }
     await reload();
-    const note = el("div", {class: "msg good", text: reply.note});
+    const note = el("div", {class: "msg good", text: TAM_I18N.t(reply.note)});
     document.getElementById("sections").prepend(note);
   } catch (error) {
-    document.getElementById("pending").textContent = "Not saved: " + error.message;
+    document.getElementById("pending").textContent = TAM_I18N.t("Not saved: ") + error.message;
   } finally {
     button.disabled = false;
   }
@@ -280,23 +281,23 @@ function showCounts(result, verb) {
   const rows = Object.entries(result.tables || {}).map(([table, count]) => el("tr", {}, el("td", {text: table}), el("td", {text: String(count)})));
   privacyMsg.className = "msg " + (result.rows || result.raw_logs ? "warn" : "good");
   privacyMsg.replaceChildren(...[
-    el("div", {text: verb + ": " + result.rows + " row(s), " + result.raw_logs + " raw call log(s)."}),
+    el("div", {text: TAM_I18N.t("{verb}: {rows} row(s), {logs} raw call log(s).", {verb, rows: result.rows, logs: result.raw_logs})}),
     rows.length ? el("table", {}, rows) : null,
-    result.backups ? el("div", {text: "Backups with the old values: " + result.backups.join(", ") + " — delete them once you have checked the store."}) : null,
-    result.older_backups && result.older_backups.length ? el("div", {text: result.older_backups.length + " older backup(s) in backups/ predate this run and may hold credentials too."}) : null,
+    result.backups ? el("div", {text: TAM_I18N.t("Backups with the old values: {files} — delete them once you have checked the store.", {files: result.backups.join(", ")})}) : null,
+    result.older_backups && result.older_backups.length ? el("div", {text: TAM_I18N.t("{count} older backup(s) in backups/ predate this run and may hold credentials too.", {count: result.older_backups.length})}) : null,
   ].filter(Boolean));
 }
 scanButton.addEventListener("click", async () => {
   scanButton.disabled = true;
   privacyMsg.className = "msg";
-  privacyMsg.textContent = "Scanning… this reads the whole store and can take a minute.";
+  privacyMsg.textContent = TAM_I18N.t("Scanning… this reads the whole store and can take a minute.");
   try {
     const result = await api("/api/privacy/scan");
-    showCounts(result, "Found");
+    showCounts(result, TAM_I18N.t("Found"));
     redactButton.hidden = !(result.rows || result.raw_logs);
   } catch (error) {
     privacyMsg.className = "msg bad";
-    privacyMsg.textContent = "Scan failed: " + error.message;
+    privacyMsg.textContent = TAM_I18N.t("Scan failed: ") + error.message;
   } finally {
     scanButton.disabled = false;
   }
@@ -305,26 +306,26 @@ let armed = false;
 redactButton.addEventListener("click", async () => {
   if (!armed) {
     armed = true;
-    redactButton.textContent = "Click again to back up and redact";
+    redactButton.textContent = TAM_I18N.t("Click again to back up and redact");
     return;
   }
   armed = false;
   redactButton.disabled = true;
   privacyMsg.className = "msg";
-  privacyMsg.textContent = "Backing up and redacting…";
+  privacyMsg.textContent = TAM_I18N.t("Backing up and redacting…");
   try {
-    showCounts(await api("/api/privacy/redact", {body: {}}), "Redacted");
+    showCounts(await api("/api/privacy/redact", {body: {}}), TAM_I18N.t("Redacted"));
     redactButton.hidden = true;
   } catch (error) {
     privacyMsg.className = "msg bad";
-    privacyMsg.textContent = "Redaction failed: " + error.message;
+    privacyMsg.textContent = TAM_I18N.t("Redaction failed: ") + error.message;
   } finally {
     redactButton.disabled = false;
-    redactButton.textContent = "Back up and redact";
+    redactButton.textContent = TAM_I18N.t("Back up and redact");
   }
 });
 reload().catch((error) => {
-  document.getElementById("sections").replaceChildren(el("p", {class: "msg bad", text: "Could not load settings: " + error.message}));
+  document.getElementById("sections").replaceChildren(el("p", {class: "msg bad", text: TAM_I18N.t("Could not load settings: ") + error.message}));
 });
 </script>
 </body>

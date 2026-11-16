@@ -10,8 +10,12 @@ graft launchagents
 graft examples
 recursive-include benchmarks *.py
 include benchmarks/data/memory-contracts-v1.json
+include benchmarks/fixtures/language-grammar-smoke.json
+include benchmarks/fixtures/LICENSE.tree-sitter-language-pack
 include *.sh *.ps1 requirements*.txt Dockerfile docker-compose*.yml Makefile server.json .env.example .gitignore .dockerignore .mcp.json
 include docs/installation.md
+include docs/UPGRADE_15.md
+include docs/whats-new.md
 graft docs/benchmarks/tam_bench_common
 graft docs/benchmarks/ama-bench
 graft docs/benchmarks/longmemeval-v2
@@ -19,6 +23,9 @@ recursive-include migrations/postgres *.sql
 recursive-include src/team_memory/static *.html *.js *.css *.svg *.woff2 *.txt
 recursive-include src/team_memory/reports/static *.js *.css
 recursive-include src/dashboard_static *.js *.txt
+recursive-include src/dashboard_static/locales *.json
+include docs/dashboard-i18n.md
+include docs/dashboard-i18n.zh-CN.md
 include THIRD-PARTY-LICENSES.md
 global-exclude *.py[cod]
 prune tests/.pytest_cache

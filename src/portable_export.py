@@ -42,13 +42,14 @@ import tarfile
 import tempfile
 import time
 from collections.abc import Iterator
-from contextlib import closing
+from contextlib import ExitStack, closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
 
 from importers.records import ImportRecord, parse_timestamp
 from memory_core.timestamps import utc_now
+from memory_core.export_snapshot import ExportFormatError, read_pages, read_snapshot, record_state, snapshot_header, snapshot_lines
 from portable_crypto import BundleCryptoError, DecryptingReader, EncryptingWriter
 
 LOGGER = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ PRIVATE_FILE_MODE = 0o600
 PRIVATE_DIR_MODE = 0o700
 DEFAULT_PASSPHRASE_ENV = "TAM_BUNDLE_PASSPHRASE"
 MIN_PASSPHRASE_CHARS = 12
-KNOWLEDGE_TYPES = frozenset({"decision", "fact", "solution", "lesson", "convention"})
+KNOWLEDGE_TYPES = frozenset({"decision", "fact", "solution", "lesson", "convention", "incident"})
 SOURCE_FORMATS = frozenset({"auto", "conversation"})
 REQUIRED_TABLES = ("knowledge", "migrations", "sessions")
 BUNDLE_IMPORT_KIND = "bundle"
@@ -85,7 +86,7 @@ EXIT_FAILURE = 1
 EXIT_USAGE = 2
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 RECORD_COLUMNS = ("id", "type", "content", "context", "project", "tags", "created_at", "last_confirmed",
-                  "importance", "branch", "source_format")
+                  "importance", "branch", "source_format", "status", "superseded_by")
 
 
 class BundleError(ValueError):
@@ -148,11 +149,11 @@ def _export_records(snapshot: Path, project: str, target: Path) -> int:
             target.open("w", encoding="utf-8") as out:
         db.row_factory = sqlite3.Row
         # Column names come from the RECORD_COLUMNS constant; the project is a bound parameter.
-        rows = db.execute(f"SELECT {', '.join(RECORD_COLUMNS)} FROM knowledge "
-                          "WHERE status='active' AND project=? ORDER BY id", (project,))
-        for row in rows:
-            out.write(json.dumps(dict(row), ensure_ascii=False) + "\n")
-            count += 1
+        rows = [_record_metadata(db, dict(row)) for row in db.execute(f"SELECT {', '.join(RECORD_COLUMNS)} FROM knowledge "
+                                               "WHERE project=? ORDER BY id", (project,))]
+        count = len(rows)
+        for line in snapshot_lines(rows):
+            out.write(line + "\n")
     os.chmod(target, PRIVATE_FILE_MODE)
     return count
 
@@ -229,6 +230,8 @@ def export_bundle(memory_dir: Path, out: Path, passphrase: str, *, project: str 
         snapshot_database(database, snapshot)
         schema = check_database(snapshot)
         records: int | None = None
+        header = snapshot_header(row for row in _database_records(snapshot)
+                                 if project is None or row.get("project") == project)
         if project is None:
             data = [(DATABASE_MEMBER, snapshot)]
         else:
@@ -243,6 +246,8 @@ def export_bundle(memory_dir: Path, out: Path, passphrase: str, *, project: str 
             "kind": KIND_FULL if project is None else KIND_PROJECT, "project": project,
             "created_at": utc_now(), "tam_version": VERSION, "schema_version": schema,
             "records": records,
+            "header": header,
+            "end": {"complete": True, "next_cursor": None},
             "members": [{"name": name, "size": path.stat().st_size, "sha256": _sha256(path)} for name, path in data],
         }
         manifest_path = staging / MANIFEST_NAME
@@ -353,40 +358,52 @@ def _validate_manifest(staging: Path, extracted: dict[str, tuple[int, str]]) -> 
 
 # ─── import: apply ──────────────────────────────────────────────────────────
 
+def _record_metadata(db: sqlite3.Connection, row: dict[str, Any]) -> dict[str, Any]:
+    if row.get("type") == "incident" and db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_incidents'").fetchone():
+        from memory_core.incidents import IncidentService
+
+        row["incident"] = IncidentService(db).get(row["id"]).model_dump(by_alias=True)
+    return row
+
 def _database_records(path: Path) -> Iterator[dict[str, Any]]:
     with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
         db.row_factory = sqlite3.Row
         columns = {row[1] for row in db.execute("PRAGMA table_info(knowledge)")}
         # Only names from the RECORD_COLUMNS constant that the bundled table really has.
         selected = [name for name in RECORD_COLUMNS if name in columns]
-        query = f"SELECT {', '.join(selected)} FROM knowledge WHERE status='active' ORDER BY id"
+        query = f"SELECT {', '.join(selected)} FROM knowledge ORDER BY id"
         for row in db.execute(query):
-            yield dict(row)
+            yield _record_metadata(db, dict(row))
 
 
-def _jsonl_records(path: Path) -> Iterator[dict[str, Any]]:
-    with path.open("rb") as handle:
-        for number, line in enumerate(handle, start=1):
-            if len(line) > MAX_RECORD_LINE_BYTES:
-                raise BundleError(f"{RECORDS_MEMBER} line {number} exceeds {MAX_RECORD_LINE_BYTES} bytes")
-            if not line.strip():
-                continue
-            try:
-                value = json.loads(line)
-            except RecursionError as error:
-                raise BundleError(f"{RECORDS_MEMBER} line {number} is nested too deeply") from error
-            except ValueError as error:
-                raise BundleError(f"{RECORDS_MEMBER} line {number} is not JSON") from error
-            if not isinstance(value, dict):
-                raise BundleError(f"{RECORDS_MEMBER} line {number} is not an object")
-            yield value
+def _jsonl_records(*paths: Path) -> Iterator[dict[str, Any]]:
+    """Records of one export file, or of several page files read as one snapshot in the order given."""
+    with ExitStack() as stack:
+        handles = [stack.enter_context(path.open("rb")) for path in paths]
+        try:
+            yield from read_snapshot(read_pages(handles), max_line_bytes=MAX_RECORD_LINE_BYTES)
+        except ExportFormatError as error:
+            raise BundleError(str(error)) from error
 
 
 def _as_import_record(row: dict[str, Any]) -> ImportRecord:
+    if "incident" in row:
+        from memory_core.incidents import IncidentSpec
+
+        if row.get("type") != "incident":
+            raise BundleError("incident metadata requires type=incident")
+        IncidentSpec.model_validate(row["incident"])
     content = row.get("content")
     project = row.get("project")
     if not isinstance(content, str) or not isinstance(project, str) or not project:
         raise BundleError(f"bundle record {row.get('id')!r} has no content or project")
+    if type(row.get("id")) is not int or row["id"] < 1:
+        raise BundleError("bundle record requires a positive integer id")
+    if row.get("status", "active") not in ("active", "archived", "superseded", "deleted"):
+        raise BundleError(f"bundle record {row['id']} has an invalid status")
+    if row.get("superseded_by") is not None and type(row["superseded_by"]) is not int:
+        raise BundleError(f"bundle record {row['id']} has an invalid successor id")
     raw_tags = row.get("tags")
     if isinstance(raw_tags, str):
         try:
@@ -399,7 +416,9 @@ def _as_import_record(row: dict[str, Any]) -> ImportRecord:
     context = row.get("context") if isinstance(row.get("context"), str) else ""
     return ImportRecord(text=content, occurred_at=parse_timestamp(row.get("created_at")),
                         source_ref=f"bundle:{row.get('id')}", context=context, tags=tags,
-                        source_format=source_format, knowledge_type=knowledge_type)
+                        source_format=source_format, knowledge_type=knowledge_type,
+                        preserved_identity=(str(row["id"]) + ":" + str(row.get("status", "active"))
+                                            if record_state(row) != "active" else None))
 
 
 def _merge(memory_dir: Path, staged: StagedBundle) -> dict[str, Any]:
@@ -408,11 +427,14 @@ def _merge(memory_dir: Path, staged: StagedBundle) -> dict[str, Any]:
 
     rows = (_database_records(staged.member(DATABASE_MEMBER)) if staged.kind == KIND_FULL
             else _jsonl_records(staged.member(RECORDS_MEMBER)))
+    # Validate the entire authenticated source before opening the destination store.
+    records = [(row, _as_import_record(row)) for row in rows]
     services: dict[str, ImportService] = {}
+    identities: dict[int, int] = {}
+    inactive: list[tuple[dict[str, Any], int]] = []
     with open_store(memory_dir) as store:
         try:
-            for row in rows:
-                record = _as_import_record(row)
+            for row, record in records:
                 project = str(row["project"])
                 service = services.get(project)
                 if service is None:
@@ -420,6 +442,27 @@ def _merge(memory_dir: Path, staged: StagedBundle) -> dict[str, Any]:
                                             ledger_db=store.db, dry_run=False, min_chars=1, max_chars=None)
                     services[project] = service
                 service.add(record)
+                if service.last_record_id is not None:
+                    identities[int(row["id"])] = service.last_record_id
+                    if row.get("type") == "incident":
+                        from memory_core.incidents import IncidentService, IncidentSpec
+
+                        IncidentService(store.db).save(service.last_record_id,
+                                                       IncidentSpec.model_validate(row.get("incident", {})), record.text)
+                    if record_state(row) != "active":
+                        inactive.append((row, service.last_record_id))
+                        store.db.execute("UPDATE knowledge SET status=? WHERE id=?",
+                                         ("archived" if record_state(row) == "archived" else "deleted",
+                                          service.last_record_id))
+                        store.db.commit()
+            for row, target_id in inactive:
+                successor = row.get("superseded_by")
+                status = row.get("status", "deleted")
+                if status == "active" and successor is not None:
+                    status = "superseded"
+                store.db.execute("UPDATE knowledge SET status=?, superseded_by=? WHERE id=?",
+                                 (status, identities.get(successor), target_id))
+            store.db.commit()
         finally:
             for service in services.values():
                 service.finish()

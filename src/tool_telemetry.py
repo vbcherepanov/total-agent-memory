@@ -31,6 +31,7 @@ from types import FrameType
 from typing import Any, Final, Protocol
 
 from memory_core.timestamps import format_utc
+from memory_core.telemetry import Counter, LATENCY_BUCKETS_MS
 
 LOGGER = logging.getLogger(__name__)
 
@@ -41,7 +42,9 @@ MAX_BUFFERED_CALLS: Final = 1000
 RETENTION_DAYS: Final = 7
 PRUNE_INTERVAL_SEC: Final = 3600
 DEFAULT_REPORT_WINDOW_HOURS: Final = 24
-SQLITE_BUSY_TIMEOUT_SEC: Final = 5.0
+SQLITE_BUSY_TIMEOUT_SEC: Final = 0.25
+FLUSH_INTERVAL_SEC: Final = 1.0
+SHUTDOWN_TIMEOUT_SEC: Final = 1.0
 MS_PER_SEC: Final = 1000.0
 PERCENTILES: Final = (50, 95)
 _FALSE: Final = frozenset({"false", "0", "no", "off"})
@@ -125,9 +128,13 @@ class ToolTelemetry:
 
     def __init__(self, connect: Callable[[], Connection], *, profile: str,
                  batch_size: int = FLUSH_BATCH_SIZE, retention_days: int = RETENTION_DAYS,
-                 clock: Callable[[], datetime] = lambda: datetime.now(UTC)):
+                 clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+                 flush_interval: float = FLUSH_INTERVAL_SEC,
+                 shutdown_timeout: float = SHUTDOWN_TIMEOUT_SEC):
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
+        if flush_interval <= 0 or shutdown_timeout <= 0:
+            raise ValueError("Telemetry timeouts must be positive")
         self._connect = connect
         self.profile = profile
         self.batch_size = batch_size
@@ -139,31 +146,54 @@ class ToolTelemetry:
         self._last_prune: float | None = None
         self._previous_sigterm: Any = None
         self._hooks_installed = False
+        self._flush_interval = flush_interval
+        self._shutdown_timeout = shutdown_timeout
+        self._write_lock = threading.Lock()
+        self._wake = threading.Event()
+        self._stopping = threading.Event()
+        self._worker: threading.Thread | None = None
+        self._inflight = 0
+        self._metrics = Counter()
 
     @property
     def pending(self) -> int:
-        return len(self._buffer)
+        with self._lock:
+            return len(self._buffer) + self._inflight
+
+    @property
+    def metrics(self) -> dict[str, float]:
+        return self._metrics.snapshot()
 
     def record(self, tool: str, *, duration_ms: float, ok: bool, error_class: str | None,
                args_bytes: int, result_bytes: int) -> None:
-        """Buffer one call; flush when the batch is full. Never raises."""
+        """Enqueue one call without waiting for the database writer."""
         try:
             call = ToolCall(format_utc(self._clock()), tool, round(duration_ms, 3), int(ok), error_class,
                             args_bytes, result_bytes, self.profile)
             with self._lock:
+                if self._stopping.is_set() or len(self._buffer) + self._inflight >= MAX_BUFFERED_CALLS:
+                    self._metrics.bump("dropped_calls")
+                    return
                 self._buffer.append(call)
+                self._metrics.bump("enqueued_calls")
+                if self._worker is None:
+                    self._worker = threading.Thread(target=self._run_writer, name="tam-telemetry", daemon=True)
+                    self._worker.start()
                 full = len(self._buffer) >= self.batch_size
             if full:
-                self.flush()
+                self._wake.set()
         except Exception:
             LOGGER.exception("tool telemetry: could not record a call to %s", tool)
 
     def flush(self) -> int:
         """Write buffered calls; returns how many were written. Never raises."""
-        with self._lock:
-            batch, self._buffer = self._buffer, []
+        with self._write_lock:
+            with self._lock:
+                batch, self._buffer = self._buffer, []
+                self._inflight = len(batch)
             if not batch:
                 return 0
+            started = time.monotonic()
             try:
                 conn = self._connect()
                 try:
@@ -177,13 +207,43 @@ class ToolTelemetry:
             except Exception:
                 LOGGER.exception("tool telemetry: flush of %d calls failed; keeping them for the next one",
                                  len(batch))
-                kept = (batch + self._buffer)[-MAX_BUFFERED_CALLS:]
-                dropped = len(batch) + len(self._buffer) - len(kept)
-                if dropped:
-                    LOGGER.warning("tool telemetry: dropped %d oldest buffered calls", dropped)
-                self._buffer = kept
+                self._metrics.bump("flush_failures")
+                self._metrics.bump("retried_calls", len(batch))
+                with self._lock:
+                    self._buffer = batch + self._buffer
+                    self._inflight = 0
                 return 0
+            finally:
+                duration = (time.monotonic() - started) * MS_PER_SEC
+                self._metrics.bump("flush_ms", duration)
+                self._metrics.bump("flush_ms_count")
+                for bound in LATENCY_BUCKETS_MS:
+                    if duration <= bound:
+                        self._metrics.bump(f"flush_ms_bucket_le_{bound}")
+                self._metrics.bump("flush_ms_bucket_le_inf")
+            with self._lock:
+                self._inflight = 0
+            self._metrics.bump("written_calls", len(batch))
             return len(batch)
+
+    def _run_writer(self) -> None:
+        while True:
+            self._wake.wait(self._flush_interval)
+            self._wake.clear()
+            self.flush()
+            if self._stopping.is_set():
+                self.flush()
+                return
+
+    def close(self) -> None:
+        self._stopping.set()
+        self._wake.set()
+        worker = self._worker
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(self._shutdown_timeout)
+            if worker.is_alive():
+                self._metrics.bump("shutdown_timeouts")
+                LOGGER.warning("tool telemetry: shutdown drain timed out", extra={"pending": self.pending})
 
     def prune(self, conn: Connection | None = None) -> int:
         """Delete rows older than the retention window; returns the rows removed."""
@@ -204,7 +264,7 @@ class ToolTelemetry:
         self.flush()
         conn = self._connect()
         try:
-            return report(conn, window_hours=window_hours, now=self._clock())
+            return {**report(conn, window_hours=window_hours, now=self._clock()), "writer": self.metrics}
         finally:
             conn.close()
 
@@ -222,7 +282,7 @@ class ToolTelemetry:
         """Flush at interpreter exit and on SIGTERM (then hand the signal to the previous handler)."""
         if self._hooks_installed:
             return
-        atexit.register(self.flush)
+        atexit.register(self.close)
         try:
             self._previous_sigterm = signal.signal(signal.SIGTERM, self._on_sigterm)
         except ValueError:
@@ -233,17 +293,18 @@ class ToolTelemetry:
     def uninstall_shutdown_hooks(self) -> None:
         if not self._hooks_installed:
             return
-        atexit.unregister(self.flush)
+        atexit.unregister(self.close)
+        self.close()
         if signal.getsignal(signal.SIGTERM) == self._on_sigterm:
             signal.signal(signal.SIGTERM, self._previous_sigterm or signal.SIG_DFL)
         self._hooks_installed = False
 
     def _on_sigterm(self, signum: int, frame: FrameType | None) -> None:
-        self.flush()
+        self.close()
         previous = self._previous_sigterm
         signal.signal(signal.SIGTERM, previous if previous is not None else signal.SIG_DFL)
         self._hooks_installed = False
-        atexit.unregister(self.flush)
+        atexit.unregister(self.close)
         if callable(previous):
             previous(signum, frame)
         else:

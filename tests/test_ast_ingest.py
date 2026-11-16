@@ -85,7 +85,7 @@ def test_lang_for_path_recognises_extensions():
     assert lang_for_path("x.rb") == "ruby"
     assert lang_for_path("x.cs") == "csharp"
     assert lang_for_path("x.cpp") == "cpp"
-    assert lang_for_path("README.md") is None
+    assert lang_for_path("README.md") == "markdown"
 
 
 def test_supported_languages_covers_8():
@@ -194,7 +194,7 @@ def test_unknown_extension_is_skipped_by_default(ing, tmp_path):
 
 def test_unknown_extension_falls_back_to_file_chunk_when_opted_in(tmp_path):
     from ast_ingest import ASTIngester
-    p = tmp_path / "plain.txt"
+    p = tmp_path / "plain.unsupported_zz"
     p.write_text("hello world\nsecond line", encoding="utf-8")
     chunks = ASTIngester(fallback_unknown_extensions=True).parse_file(p)
     assert len(chunks) == 1

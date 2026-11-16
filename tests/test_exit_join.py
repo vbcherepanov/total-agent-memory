@@ -90,10 +90,13 @@ CROSS_ENCODER_EXIT = """
     from fastembed.rerank.cross_encoder import TextCrossEncoder
     from memory_core.cross_rerank import CrossReranker
     from memory_core.fastembed_loader import load_model
+    from memory_core.multilingual_rerank import MODEL, register_model
 
     try:
         embedder = load_model(TextEmbedding, config.get_text_embed_model(), threads=1)
         if sys.argv[1] == "check":
+            if config.get_cross_rerank_model() == MODEL:
+                register_model()
             load_model(TextCrossEncoder, config.get_cross_rerank_model())
     except Exception as error:
         print(error, file=sys.stderr)

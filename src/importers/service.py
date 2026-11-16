@@ -87,6 +87,12 @@ class ImportLedger:
             (kind, project, digest, knowledge_id, source_ref, utc_now()),
         )
 
+    def knowledge_id(self, kind: str, project: str, digest: str) -> int | None:
+        row = self._db.execute(
+            "SELECT knowledge_id FROM import_ledger WHERE kind=? AND project=? AND content_hash=?",
+            (kind, project, digest)).fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+
 
 class ImportService:
     """Feed ``ImportRecord`` units into a store, or count them in a dry run."""
@@ -112,6 +118,7 @@ class ImportService:
         self._processed = 0
         self._session_id = f"import-{kind}-{utc_now()[:19].replace(':', '')}-{secrets.token_hex(SESSION_SUFFIX_BYTES)}"
         self._session_started = False
+        self.last_record_id: int | None = None
 
     def run(self, records: Iterable[ImportRecord]) -> ImportStats:
         """Import every record, then report and invalidate caches (also when a record fails)."""
@@ -124,6 +131,7 @@ class ImportService:
 
     def add(self, record: ImportRecord) -> None:
         """Import one source record (split into parts when it is longer than ``max_chars``)."""
+        self.last_record_id = None
         self._import(record)
 
     def finish(self) -> ImportStats:
@@ -151,7 +159,12 @@ class ImportService:
 
     def _import_unit(self, record: ImportRecord, text: str, context: str, source_ref: str) -> None:
         digest = content_hash(self.kind, self.project, text, record.occurred_at)
+        if record.preserved_identity is not None:
+            import hashlib
+
+            digest = hashlib.sha256((digest + ":" + record.preserved_identity).encode()).hexdigest()
         if self.ledger.contains(self.kind, self.project, digest):
+            self.last_record_id = self.ledger.knowledge_id(self.kind, self.project, digest)
             self.stats.already_imported += 1
             return
         self.stats.observe_time(record.occurred_at)
@@ -166,6 +179,7 @@ class ImportService:
         record_id, deduplicated, redacted, _private, _quality = store.save_knowledge(
             self._session_id, text, record.knowledge_type, project=self.project, tags=tags, context=context,
             skip_quality=True, source_format=record.source_format, repeat="confirm",
+            **({"skip_dedup": True} if record.preserved_identity is not None else {}),
         )
         if redacted:
             self.stats.redacted += 1
@@ -181,6 +195,7 @@ class ImportService:
                 stamp = format_utc(record.occurred_at)
                 store.db.execute("UPDATE knowledge SET created_at=?, last_confirmed=? WHERE id=?",
                                  (stamp, stamp, record_id))
+        self.last_record_id = int(record_id)
         self.ledger.record(self.kind, self.project, digest, int(record_id), source_ref)
         store.db.commit()
 

@@ -106,11 +106,12 @@ class LearningService:
     def default(cls, registry: Registry, pool, llm_factory: LLMFactory) -> "LearningService":
         return cls(registry, LearningRepository(registry.root, registry.plane), PoolMemorySource(registry, pool), llm_factory)
 
-    async def call(self, caller: Caller, name: str, request) -> JsonValue:
+    async def call(self, caller: Caller, name: str, request, *, readonly: bool = False) -> JsonValue:
         if name not in self.handlers:
             raise DomainError("Unknown onboarding tool")
         result = await self.handlers[name](caller, request)
-        await self._deliver_notes(caller)
+        if not readonly:
+            await self._deliver_notes(caller)
         return result
 
     # Authorization

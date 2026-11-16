@@ -231,6 +231,51 @@ def test_full_bundle_can_be_merged(memory_dir, tmp_path):
     assert len(active(target)) == 4
 
 
+@pytest.mark.parametrize("project", [None, "alpha"])
+def test_bundle_merge_preserves_archived_deleted_and_superseded_states(memory_dir, tmp_path, project):
+    populate(memory_dir, {"alpha": [
+        "The historical scheduler ran every morning before the migration.",
+        "The current scheduler runs hourly after the migration.",
+        "An obsolete diagnostic was archived for future reference.",
+        "A mistaken deployment instruction was explicitly deleted.",
+    ]})
+    with sqlite3.connect(memory_dir / "memory.db") as db:
+        ids = [row[0] for row in db.execute("SELECT id FROM knowledge ORDER BY id")]
+        db.execute("UPDATE knowledge SET status='superseded', superseded_by=? WHERE id=?", (ids[1], ids[0]))
+        db.execute("UPDATE knowledge SET status='archived' WHERE id=?", (ids[2],))
+        db.execute("UPDATE knowledge SET status='deleted' WHERE id=?", (ids[3],))
+    bundle = tmp_path / "states.tambundle"
+    export(memory_dir, bundle, project=project)
+    target = tmp_path / "states-target"
+    result = portable_export.import_bundle(target, bundle, PASSPHRASE)
+    assert result["imported"] == 4
+    with sqlite3.connect(target / "memory.db") as db:
+        rows = db.execute("SELECT id,status,superseded_by FROM knowledge ORDER BY id").fetchall()
+        assert [row[1] for row in rows] == ["superseded", "active", "archived", "deleted"]
+        assert rows[0][2] == rows[1][0]
+    again = portable_export.import_bundle(target, bundle, PASSPHRASE)
+    assert again["already_imported"] == 4 and again["imported"] == 0
+
+
+def test_snapshot_validation_precedes_destination_writes(tmp_path, monkeypatch):
+    from memory_core.export_snapshot import snapshot_lines
+
+    source = tmp_path / "staged"
+    source.mkdir()
+    row = {"id": 1, "type": "fact", "project": "alpha", "content": "A valid first record.", "status": "active"}
+    lines = list(snapshot_lines([row]))
+    (source / portable_export.RECORDS_MEMBER).write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+    staged = portable_export.StagedBundle(source, {"kind": "project"})
+    import cli_store
+
+    def forbidden_open(*args, **kwargs):
+        raise AssertionError("destination opened before source validation")
+
+    monkeypatch.setattr(cli_store, "open_store", forbidden_open)
+    with pytest.raises(BundleError, match="line 3: missing end"):
+        portable_export._merge(tmp_path / "destination", staged)
+
+
 def test_wrong_passphrase_leaves_the_live_store_untouched(memory_dir, tmp_path):
     populate(memory_dir, RECORDS)
     bundle = tmp_path / "b.tambundle"

@@ -14,7 +14,7 @@ from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
-from memory_core.telemetry import counters
+from memory_core.telemetry import counters, op_timer
 
 T = TypeVar("T")
 
@@ -65,7 +65,8 @@ class SingleFlight(Generic[T]):
                     self._calls.pop(key, None)
                 call.done.set()
             return call.result, False
-        answered = call.done.wait(timeout)
+        with op_timer(f"{self._name}_singleflight_wait_ms"):
+            answered = call.done.wait(timeout)
         with self._lock:
             call.waiters -= 1
         if not answered:

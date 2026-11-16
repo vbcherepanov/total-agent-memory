@@ -286,6 +286,8 @@ def main():
     parser = argparse.ArgumentParser(prog="tam-team")
     parser.add_argument("--root", type=Path, default=Path(os.environ.get("TAM_TEAM_DIR", "~/.tam-server")).expanduser())
     commands = parser.add_subparsers(dest="command", required=True)
+    from team_memory.remote import add_arguments as add_remote_arguments
+    add_remote_arguments(commands.add_parser("remote", help="Connect stdio MCP to a remote server with capability checks"))
     for command in ("user-add", "team-add"):
         sub = commands.add_parser(command)
         sub.add_argument("id")
@@ -340,6 +342,10 @@ def main():
     serve.add_argument("--host", default=os.environ.get("MCP_HTTP_HOST", DEFAULT_HOST))
     serve.add_argument("--port", type=int, default=int(os.environ.get("MCP_HTTP_PORT", DEFAULT_PORT)))
     args = parser.parse_args()
+    if args.command == "remote":
+        from team_memory.remote import run
+        run(args, parser)
+        return
     if args.command == "replication":
         from team_memory.replication_cli import run
         run(args, parser)

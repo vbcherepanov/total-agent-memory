@@ -159,7 +159,7 @@ class ErrorJournal:
         """Write buffered entries when the connection is idle; returns rows written. Never raises."""
         try:
             self._close_expired_windows()
-            if not self._buffer or self.db.in_transaction or threading.get_ident() != self._owner:
+            if not self._buffer or threading.get_ident() != self._owner or self.db.in_transaction:
                 return 0
             entries = list(self._buffer)
             self._buffer.clear()

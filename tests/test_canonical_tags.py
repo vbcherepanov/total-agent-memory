@@ -166,3 +166,21 @@ def test_levenshtein_ratio_known_values():
     assert 0.7 < ct._levenshtein_ratio("performance", "performonce") < 1.0
     # Vastly different lengths short-circuit to 0.0.
     assert ct._levenshtein_ratio("a", "abcdefghijk") == 0.0
+
+
+def test_bounded_levenshtein_matches_unbounded_for_small_inputs():
+    from itertools import product
+    words = [''.join(chars) for length in range(1, 5) for chars in product('ab', repeat=length)]
+    for left in words:
+        for right in words:
+            expected = ct._levenshtein_ratio(left, right)
+            for bound in (0, 1, 2):
+                actual = ct._levenshtein_ratio(left, right, max_distance=bound)
+                distance = round((1 - expected) * max(len(left), len(right)))
+                assert actual == (expected if distance <= bound else 0.0), (left, right, bound)
+
+
+def test_bounded_levenshtein_preserves_long_common_context():
+    left = 'prefix' * 100 + 'old' + 'suffix' * 100
+    right = 'prefix' * 100 + 'oXd' + 'suffix' * 100
+    assert ct._levenshtein_ratio(left, right, max_distance=1) == 1 - 1 / len(left)

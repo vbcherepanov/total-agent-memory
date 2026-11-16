@@ -70,6 +70,19 @@ def test_pipeline_signature_follows_the_switches(monkeypatch):
     assert len({base, damp_off, slots_off, hub}) == 4
 
 
+def test_pipeline_signature_tracks_resolved_embedding_models(monkeypatch):
+    monkeypatch.delenv("MEMORY_CODE_EMBED_MODEL", raising=False)
+    default_code = server.Recall._pipeline_signature()
+    monkeypatch.setenv("MEMORY_CODE_EMBED_MODEL", "")
+    text_code = server.Recall._pipeline_signature()
+    monkeypatch.setenv("MEMORY_EMBED_PROVIDER", "openai")
+    monkeypatch.setenv("MEMORY_EMBED_MODEL", "text-embedding-3-small")
+    small = server.Recall._pipeline_signature()
+    monkeypatch.setenv("MEMORY_EMBED_MODEL", "text-embedding-3-large")
+    large = server.Recall._pipeline_signature()
+    assert len({default_code, text_code, small, large}) == 4
+
+
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "MEMORY_DIR", tmp_path)

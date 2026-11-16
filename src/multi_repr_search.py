@@ -21,7 +21,12 @@ import sqlite3
 import struct
 import sys
 import threading
+from collections import OrderedDict
+from dataclasses import dataclass
 from collections.abc import Iterable
+from memory_core.embedding_identity import EmbedIdentity
+from memory_core.retrieval import SearchScope
+from memory_core.telemetry import counters, op_timer
 
 try:
     import numpy as np
@@ -45,6 +50,104 @@ LOG = lambda msg: sys.stderr.write(f"[multi-repr-search] {msg}\n")
 _SEARCH_REPRESENTATIONS: tuple[str, ...] = (
     "summary", "keywords", "questions", "compressed",
 )
+DEFAULT_REPR_CACHE_BYTES = 32 * 1024 * 1024
+MAX_REPR_CACHE_ENTRIES = 128
+
+
+@dataclass(frozen=True)
+class RepresentationMatrix:
+    ids: np.ndarray
+    matrix: np.ndarray
+    norms: np.ndarray
+
+    @property
+    def nbytes(self) -> int:
+        return self.ids.nbytes + self.matrix.nbytes + self.norms.nbytes
+
+    def score(self, query: list[float], top_n: int) -> list[tuple[int, float]]:
+        vector = np.asarray(query, dtype=np.float32)
+        norm = float(np.linalg.norm(vector))
+        if not norm:
+            return []
+        scores = (self.matrix @ vector) / (self.norms * norm)
+        order = np.argsort(-scores, kind='stable')[:top_n]
+        return [(int(self.ids[index]), float(scores[index])) for index in order if scores[index] > 0]
+
+
+class RepresentationCache:
+    def __init__(self, db: sqlite3.Connection, max_bytes: int = DEFAULT_REPR_CACHE_BYTES):
+        if max_bytes < 0:
+            raise ValueError('Representation cache budget must be non-negative')
+        self.db = db
+        self.max_bytes = max_bytes
+        self.cache_bytes = 0
+        self._revision: tuple[int, int] | None = None
+        self._pools: OrderedDict[tuple[str | None, str, str, int], RepresentationMatrix] = OrderedDict()
+        self._lock = threading.RLock()
+
+    def clear(self) -> None:
+        with self._lock:
+            self._pools.clear()
+            self.cache_bytes = 0
+            self._revision = None
+
+    def _current_revision(self) -> tuple[int, int]:
+        row = self.db.execute(
+            'SELECT v.revision,r.revision FROM vector_index_revision v '
+            'CROSS JOIN representation_index_revision r WHERE v.singleton=1 AND r.singleton=1',
+        ).fetchone()
+        return int(row[0]), int(row[1])
+
+    def rank(self, query: list[float], project: str | None, candidates: int, top_n: int,
+             identity: EmbedIdentity) -> dict[str, list[tuple[int, float]]]:
+        with self._lock, op_timer('representation_search_ms'):
+            revision = self._current_revision()
+            transactional = self.db.in_transaction
+            if transactional or revision != self._revision:
+                self.clear()
+            self._revision = None if transactional else revision
+            ranked = {}
+            for name in _SEARCH_REPRESENTATIONS:
+                key = (project, identity.key(len(query)), name, candidates)
+                pool = self._pools.get(key)
+                if pool is not None:
+                    self._pools.move_to_end(key)
+                    counters.bump('representation_cache_hits')
+                else:
+                    counters.bump('representation_cache_misses')
+                    with op_timer('representation_load_ms'):
+                        rows = _fetch(self.db, name, project, candidates, len(query), identity)
+                        pool = _matrix(rows, len(query))
+                    if pool is not None and not transactional and pool.nbytes <= self.max_bytes:
+                        while self._pools and (self.cache_bytes + pool.nbytes > self.max_bytes
+                                              or len(self._pools) >= MAX_REPR_CACHE_ENTRIES):
+                            _, evicted = self._pools.popitem(last=False)
+                            self.cache_bytes -= evicted.nbytes
+                        self._pools[key] = pool
+                        self.cache_bytes += pool.nbytes
+                if pool is not None:
+                    with op_timer('representation_score_ms'):
+                        scored = pool.score(query, top_n)
+                    if scored:
+                        ranked[name] = scored
+            if self._current_revision() != revision:
+                self.clear()
+            return ranked
+
+
+def _matrix(rows: Iterable[sqlite3.Row], dimension: int) -> RepresentationMatrix | None:
+    ids, blobs = [], []
+    for row in rows:
+        blob = row['float32_vector']
+        if blob is not None and len(blob) == dimension * np.dtype(np.float32).itemsize:
+            ids.append(row['knowledge_id'])
+            blobs.append(bytes(blob))
+    if not ids:
+        return None
+    matrix = np.frombuffer(b''.join(blobs), dtype=np.float32).reshape(len(ids), dimension)
+    norms = np.linalg.norm(matrix, axis=1)
+    norms[norms == 0] = np.inf
+    return RepresentationMatrix(np.asarray(ids, dtype=np.int64), matrix, norms)
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -87,6 +190,7 @@ def _process_representation(
     project: str | None,
     n_candidates: int,
     top_n: int,
+    query_identity: EmbedIdentity,
 ) -> tuple[str, list[tuple[int, float]]]:
     """Fetch + score one representation. Returns (repr_name, scored_top_n).
 
@@ -99,9 +203,9 @@ def _process_representation(
     try:
         if db_lock is not None:
             with db_lock:
-                rows = _fetch(db, repr_name, project, n_candidates, len(query_embedding))
+                rows = _fetch(db, repr_name, project, n_candidates, len(query_embedding), query_identity)
         else:
-            rows = _fetch(db, repr_name, project, n_candidates, len(query_embedding))
+            rows = _fetch(db, repr_name, project, n_candidates, len(query_embedding), query_identity)
     except sqlite3.Error as e:
         LOG(f"fetch error for representation={repr_name}: {e}")
         return repr_name, []
@@ -169,25 +273,27 @@ def _search_sequential(
     project: str | None,
     n_candidates: int,
     top_n: int,
+    query_identity: EmbedIdentity,
 ) -> dict[str, list[tuple[int, float]]]:
     """v8 path — sequential per-representation processing."""
     per_repr: dict[str, list[tuple[int, float]]] = {}
     for repr_name in _SEARCH_REPRESENTATIONS:
         name, scored = _process_representation(
-            db, None, repr_name, query_embedding, project, n_candidates, top_n
+            db, None, repr_name, query_embedding, project, n_candidates, top_n, query_identity
         )
         if scored:
             per_repr[name] = scored
     return per_repr
 
 
-async def _search_parallel_async(
+def _fetch_representations(
     db: sqlite3.Connection,
     query_embedding: list[float],
     project: str | None,
     n_candidates: int,
     top_n: int,
-) -> dict[str, list[tuple[int, float]]]:
+    query_identity: EmbedIdentity,
+) -> dict[str, list[sqlite3.Row]]:
     """v9.0 A1 path — concurrent per-representation via asyncio.gather.
 
     Strategy:
@@ -205,17 +311,18 @@ async def _search_parallel_async(
     fetched: dict[str, list[sqlite3.Row]] = {}
     for repr_name in _SEARCH_REPRESENTATIONS:
         try:
-            rows = _fetch(db, repr_name, project, n_candidates, len(query_embedding))
+            rows = _fetch(db, repr_name, project, n_candidates, len(query_embedding), query_identity)
         except sqlite3.Error as e:
             LOG(f"fetch error for representation={repr_name}: {e}")
             continue
         if rows:
             fetched[repr_name] = rows
 
-    if not fetched:
-        return {}
+    return fetched
 
-    # Phase 2: score in parallel via asyncio.gather + to_thread.
+
+async def _search_parallel_async(fetched: dict[str, list[sqlite3.Row]], query_embedding: list[float],
+                                 top_n: int) -> dict[str, list[tuple[int, float]]]:
     async def _score_one(repr_name: str, rows: list[sqlite3.Row]):
         scored = await asyncio.to_thread(
             _score_rows, rows, query_embedding, top_n
@@ -271,6 +378,8 @@ def search(
     project: str | None = None,
     n_candidates: int = 0,
     top_n: int = 20,
+    *,
+    query_identity: EmbedIdentity | None = None,
 ) -> list[tuple[int, float]]:
     """Search each representation, fuse with RRF, return (knowledge_id, score).
 
@@ -282,7 +391,7 @@ def search(
     The public return contract is identical in both modes.
     """
     fused, _ = search_with_winners(
-        db, query_embedding, project, n_candidates, top_n
+        db, query_embedding, project, n_candidates, top_n, query_identity=query_identity
     )
     return fused
 
@@ -293,6 +402,10 @@ def search_with_winners(
     project: str | None = None,
     n_candidates: int = 0,
     top_n: int = 20,
+    *,
+    query_identity: EmbedIdentity | None = None,
+    cache: RepresentationCache | None = None,
+    scope: SearchScope | None = None,
 ) -> tuple[list[tuple[int, float]], dict[int, str]]:
     """Same as ``search`` but also returns ``winners``.
 
@@ -306,16 +419,28 @@ def search_with_winners(
     """
     if not query_embedding:
         return [], {}
+    if query_identity is None:
+        counters.bump('multi_repr_unknown_query_identity')
+        return [], {}
 
-    if _config.is_v9_parallel_retrieval_enabled():
+    if scope is not None:
+        per_repr = {
+            name: _score_rows(_fetch(db, name, project, n_candidates, len(query_embedding), query_identity,
+                                     scope=scope), query_embedding, top_n)
+            for name in _SEARCH_REPRESENTATIONS
+        }
+    elif cache is not None and np is not None and cache.max_bytes:
+        per_repr = cache.rank(query_embedding, project, n_candidates, top_n, query_identity)
+    elif _config.is_v9_parallel_retrieval_enabled():
         per_repr = _run_coroutine(
             _search_parallel_async(
-                db, query_embedding, project, n_candidates, top_n
+                _fetch_representations(db, query_embedding, project, n_candidates, top_n, query_identity),
+                query_embedding, top_n,
             )
         )
     else:
         per_repr = _search_sequential(
-            db, query_embedding, project, n_candidates, top_n
+            db, query_embedding, project, n_candidates, top_n, query_identity
         )
 
     if not per_repr:
@@ -340,6 +465,8 @@ def _fetch(
     project: str | None,
     limit: int,
     dim: int | None = None,
+    query_identity: EmbedIdentity | None = None,
+    *, scope: SearchScope | None = None,
 ) -> list[sqlite3.Row]:
     """Representation vectors of the scope.
 
@@ -349,8 +476,13 @@ def _fetch(
     never saw newer records. ``limit`` is now only a safety cap (0 = none)
     and rows of another embedding dimension are left out in SQL.
     """
-    conds = ["kr.representation = ?", "k.status = 'active'"]
-    params: list[object] = [representation]
+    if query_identity is None or not dim:
+        return []
+    conds = ["kr.representation = ?", "kr.embed_model = ?", "kr.embed_identity_key = ?"]
+    params: list[object] = [representation, query_identity.model, query_identity.key(dim)]
+    scope_conds, scope_params = scope.sql() if scope is not None else (["k.status = 'active'"], [])
+    conds.extend(scope_conds)
+    params.extend(scope_params)
     if project:
         conds.append("k.project = ?")
         params.append(project)
