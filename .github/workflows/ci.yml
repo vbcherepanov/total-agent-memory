@@ -58,7 +58,8 @@ jobs:
 
   test:
     name: test (${{ matrix.os }}, py${{ matrix.python }})
-    timeout-minutes: 45
+    # 15.0.0 has ~7000 tests: Windows runners need about 50 min (34 min for 14.10).
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -110,7 +111,7 @@ jobs:
       # the GIL (the slowest test takes under a minute on macOS runners).
       - name: Test suite
         run: >-
-          python -m pytest tests -q --strict-markers -p no:cacheprovider
+          python -m pytest tests -q -rfE --strict-markers -p no:cacheprovider
           -o timeout_method=thread -o faulthandler_timeout=300
           -m "${PYTEST_BLOCKING_MARKERS}"
           --junitxml=test-results.xml
