@@ -3,11 +3,16 @@ import contextvars
 import json
 import sqlite3
 import threading
+from dataclasses import replace
 
 import pytest
 
 from memory_core.store_owner import OwnerOverloaded, OwnerSettings, OwnerUnavailable, StoreOwner
 from memory_core.telemetry import counters
+
+# Deadline for a shutdown that is expected to succeed. Hosted Windows runners
+# need well over 10 ms to run cleanup and stop the owner thread.
+SHUTDOWN_GRACE_SECONDS = 10.0
 
 
 async def nothing():
@@ -181,6 +186,8 @@ def test_shutdown_timeout_leaves_cleanup_to_owner():
         finally:
             release.set()
             await task
+            # The short deadline was only for the close that must time out.
+            owner.settings = replace(owner.settings, shutdown_seconds=SHUTDOWN_GRACE_SECONDS)
             await owner.close()
         assert closed.is_set()
     asyncio.run(run())
