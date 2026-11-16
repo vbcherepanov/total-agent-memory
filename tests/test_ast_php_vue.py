@@ -45,7 +45,8 @@ function cancel() {{ return false; }}
     chunks = ASTIngester().parse_file(path)
     by_name = {c.name: c for c in chunks}
     assert by_name['Invoice'].kind == 'component'
-    assert by_name['Invoice'].content == source
+    # The component keeps the file verbatim, CRLF included where write_text produced it (Windows).
+    assert by_name['Invoice'].content == path.read_bytes().decode('utf-8')
     for name, line in [('normal', 3), ('submit', 6), ('cancel', 7)]:
         c = by_name[name]
         assert (c.language, c.parent, c.start_line, c.end_line) == (expected, 'Invoice', line, line)

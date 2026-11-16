@@ -106,6 +106,8 @@ def test_missing_supervisor_manifest_is_unhealthy(health):
     assert not health.check_container()
 
 
+@pytest.mark.skipif(not hasattr(signal, "SIGSTOP"),
+                    reason="freezing the worker needs SIGSTOP; the workers run in Linux containers")
 @pytest.mark.parametrize("worker", ["reflection", "scheduler"])
 def test_actual_worker_is_healthy_and_stopped_loop_expires(health, tmp_path, monkeypatch, worker):
     source = tmp_path / "src"
