@@ -25,9 +25,12 @@ TAM 将决策、解决方案、事实、错误和会话摘要保存在你的电�
 任何 MCP 客户端都可以直接使用，无需修改客户端代码。
 
 每个记忆库都是以 SQLite 数据库为核心的独立目录。检索结合 BM25 全文搜索、本地计算的稠密嵌入、
-模糊匹配和知识图谱，通过倒数排名融合（reciprocal rank fusion）合并结果，
-还可以使用可选的 cross-encoder 再次排序。默认配置在写入和检索时均不调用 LLM，
-因此可以离线评估检索，并复现结果。事实可以附带有效时间区间（`kg_add_fact`、`kg_at`），
+模糊匹配和知识图谱，通过倒数排名融合（reciprocal rank fusion）合并结果。随后，本地 cross-encoder
+会对结果重新排序：默认情况下，它会在模型于后台加载完成后自动启用；设置
+`MEMORY_CROSS_RERANK=off` 可关闭。默认配置在写入和检索时均不调用 LLM，
+因此可以离线评估检索。关闭 cross-encoder 时，在全新记忆库上的 LoCoMo 重跑
+得到了完全一致的排序。使用默认设置时，进程启动后的早期查询可能发生在模型加载前，
+因此重跑结果不保证一致。事实可以附带有效时间区间（`kg_add_fact`、`kg_at`），
 单值事实的新值可以使旧值失效。
 
 TAM 适合日常使用编程 Agent 的开发者，也适合需要在本地运行、检查和修改记忆基线的研究者。
@@ -48,8 +51,9 @@ uvx total-agent-memory                  # 无需预先安装，直接运行
 ```
 
 安装后可使用 `total-agent-memory` MCP 服务器命令（别名为 `tam`），
-以及 `tam-team`、`tam-remote` 和 `lookup-memory` 命令。
-可选的 cross-encoder 重排组件会引入 PyTorch，需要单独安装：
+以及 `tam-team`、`tam-remote` 和 `lookup-memory` 命令。默认 cross-encoder
+通过 fastembed 使用 ONNX 运行，无需额外依赖。另有一个基于
+sentence-transformers 的重排器会引入 PyTorch，需要单独安装：
 `pip install "total-agent-memory[rerank]"`。
 团队服务器的 PostgreSQL 后端对应 `[postgres]` 可选依赖。
 
@@ -133,11 +137,20 @@ TAM_MEMORY_DIR="$(mktemp -d)" python quickstart.py
 首次运行会下载默认嵌入模型。输出为 JSON，保存的决策位于 `results.decision`。
 更多示例见[工具与接口](docs/tools.md)。
 
+**首次启动。** 不带命令运行 `tam` 时，会通过 stdio 启动 MCP 服务器，这是 MCP
+客户端的运行方式。`tam --help` 会列出命令，`tam --version` 会显示版本号（从
+14.11 开始支持；更早版本对任意参数都会启动服务器，因此请使用
+`tam setup --help`）。首次启动会下载约 330 MB 模型：文本嵌入模型约 240 MB，
+cross-encoder 约 90 MB。cross-encoder 在后台加载，因此查询次数较少、很快退出的
+脚本可能只使用融合排序结果。fastembed 默认把模型保存在系统临时目录中；macOS
+可能会不时清理该目录。设置 `TAM_MODEL_CACHE=~/.tam/models` 可将模型保存在此处。
+
 ## 个人管理页面语言
 
-个人 Dashboard 支持 English 和简体中文，可通过页面上的语言菜单切换。
-也可以在地址后使用 `?lang=zh-CN` 或 `?lang=en` 显式选择。
+个人 Dashboard 支持 English、简体中文、日语和西班牙语，可通过页面上的语言菜单切换。
+也可以在地址后使用 `?lang=zh-CN`、`?lang=ja`、`?lang=es` 或 `?lang=en` 显式选择。
 语言选择依次取自 URL 参数、当前浏览器保存的选择、浏览器首选语言，最后回退英文。
+尚未支持的语言会显示英文；繁体中文地区标签不会自动映射为简体中文。
 
 界面翻译在浏览器本地完成，不调用翻译 API 或模型。
 用户记忆正文、项目名称和技术配置值保持原样。
@@ -175,14 +188,26 @@ export FASTEMBED_CACHE_PATH="$PWD/.tam-models" TAM_MEMORY_DIR="$PWD/.tam-test-me
 ## 复现基准测试
 
 检索基准（LoCoMo、LongMemEval、BEAM）无需 API 密钥，下载公开数据集后，
-即可使用 [benchmarks/](benchmarks) 下的脚本运行。
-以下为 v13.0.0 默认配置的结果：
+即可使用 [benchmarks/](benchmarks) 下的脚本运行。下表测量于 v13.0.0，早于
+14.5 版本将 cross-encoder 设为默认值，因此反映的是未使用 cross-encoder 的检索结果，
+并不代表当前版本的默认安装：
 
 | 基准 | 指标 | 结果 |
 |---|---|---:|
 | LongMemEval（470 个问题） | R@5（recall_any） | 95.1% |
 | LoCoMo（1,536 个问题） | R@5 | 0.607 |
 | BEAM，100 万 token 规模（625 个探针） | R@5 | 0.448 |
+
+默认设置在 LoCoMo 上得分更高，但每次查询耗时也明显更长。在
+[JOSS 对 v14.6.0 的评审](https://github.com/openjournals/joss-reviews/issues/11457)
+中，编辑测得默认设置的 R@5 约为 0.745、中位耗时约 495 ms；设置
+`MEMORY_CROSS_RERANK=off` 时，R@5 为 0.607、中位耗时约 18 ms。我们在 v14.6.0
+上的测试使用每种设置各三个全新记忆库：关闭 cross-encoder 时 R@5 为 0.611，
+默认设置和 `on` 设置均为 0.746；Apple M2 Max 上每次查询的中位耗时约为
+0.95–1.0 秒，具体值取决于 CPU。三次运行中，每种设置的所有问题都返回了相同排序。
+默认设置下，进程启动后的首次查询可能发生在 cross-encoder 加载完成前并沿用融合排序；
+这些运行中，1986 个问题有 1 个因此改变了结果
+（[数据行、报告和命令](benchmarks/results/rerank-modes)）。
 
 数据集位置、运行命令、端到端准确率（由 LLM 评判）、阴性对照、延迟和 14.x 研究结果见
 [docs/benchmarks.md](docs/benchmarks.md)。

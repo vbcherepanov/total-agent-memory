@@ -1767,7 +1767,7 @@ td.date-col { white-space: nowrap; color: var(--text-dim); font-size: 13px; }
                 <input type="checkbox" id="graph-show-labels" checked> <span data-i18n="Labels">Labels</span>
             </label>
             <label style="font-size:13px;color:var(--text-dim);display:flex;align-items:center;gap:4px;">
-                <input type="checkbox" id="graph-show-edges" checked> Edges
+                <input type="checkbox" id="graph-show-edges" checked> <span data-i18n="Edges">Edges</span>
             </label>
             <span class="graph-info" id="graph-info"><span data-i18n="Loading...">Loading...</span></span>
         </div>
@@ -2068,7 +2068,7 @@ async function loadStats() {
         }
     } catch (e) {
         document.getElementById('error-container').innerHTML =
-            '<div class="error-box">Cannot connect to memory database: ' + escapeHtml(e.message) + '</div>';
+            '<div class="error-box">' + escapeHtml(TAM_I18N.t('Cannot connect to memory database:')) + ' ' + escapeHtml(e.message) + '</div>';
     }
 }
 
@@ -2134,14 +2134,14 @@ async function openDetail(id) {
 
         const meta = document.getElementById('modal-meta');
         meta.innerHTML = [
-            metaItem('Type', '<span class="' + badgeClass(r.type) + '">' + escapeHtml(r.type) + '</span>'),
+            metaItem('Type', '<span class="' + badgeClass(r.type) + '">' + escapeHtml(TAM_I18N.t(r.type)) + '</span>'),
             metaItem('Project', escapeHtml(r.project)),
             metaItem('Confidence', r.confidence != null ? r.confidence.toFixed(2) : '--'),
             metaItem('Recalls', r.recall_count || 0),
             metaItem('Created', formatDate(r.created_at)),
             metaItem('Last Confirmed', formatDate(r.last_confirmed)),
             metaItem('Session', '<span style="font-family:monospace;font-size:12px">' + escapeHtml(truncate(r.session_id, 30)) + '</span>'),
-            metaItem('Status', escapeHtml(r.status)),
+            metaItem('Status', escapeHtml(TAM_I18N.t(r.status))),
         ].join('');
 
         document.getElementById('modal-content').textContent = r.content || '';
@@ -2172,7 +2172,7 @@ async function openDetail(id) {
             histSection.style.display = '';
             histEl.innerHTML = hist.map(h =>
                 '<div class="version-item">' +
-                '<div class="version-relation">' + escapeHtml(h.relation) + ' &mdash; #' + h.id + ' (' + escapeHtml(h.status) + ')</div>' +
+                '<div class="version-relation">' + escapeHtml(TAM_I18N.t(h.relation)) + ' &mdash; #' + h.id + ' (' + escapeHtml(TAM_I18N.t(h.status)) + ')</div>' +
                 '<div>' + escapeHtml(truncate(h.content, 200)) + '</div>' +
                 '<div style="color:var(--text-dim);font-size:12px;margin-top:4px">' + formatDate(h.created_at) + '</div>' +
                 '</div>'
@@ -2230,6 +2230,13 @@ let errorsTotalPages = 1;
 const errorsLimit = 50;
 let siLoaded = false;
 
+function categoryLabel(category) {
+    const value = category || '';
+    const builtin = ['code_error', 'logic_error', 'config_error', 'api_error',
+                     'timeout', 'loop_detected', 'wrong_assumption', 'missing_context'];
+    return builtin.includes(value) ? TAM_I18N.t(value) : value;
+}
+
 function severityBadge(severity) {
     const s = (severity || 'low').toLowerCase();
     return '<span class="badge badge-' + cssToken(s, 'low') + '">' + escapeHtml(TAM_I18N.t(s)) + '</span>';
@@ -2284,7 +2291,7 @@ async function loadErrors() {
             const tr = document.createElement('tr');
             tr.innerHTML =
                 '<td class="id-col">' + row.id + '</td>' +
-                '<td>' + escapeHtml(row.category || '') + '</td>' +
+                '<td>' + escapeHtml(categoryLabel(row.category)) + '</td>' +
                 '<td>' + severityBadge(row.severity) + '</td>' +
                 '<td class="content-col">' + escapeHtml(truncate(row.description, 80)) + '</td>' +
                 '<td class="content-col">' + escapeHtml(truncate(row.fix || '', 60)) + '</td>' +
@@ -2308,7 +2315,7 @@ async function loadErrors() {
             for (const c of [...cats].sort()) {
                 const opt = document.createElement('option');
                 opt.value = c;
-                opt.textContent = c;
+                opt.textContent = categoryLabel(c);
                 sel.appendChild(opt);
             }
         }
@@ -2334,7 +2341,7 @@ async function loadInsights() {
             tr.innerHTML =
                 '<td class="id-col">' + row.id + '</td>' +
                 '<td class="content-col">' + escapeHtml(truncate(row.content, 100)) + '</td>' +
-                '<td>' + escapeHtml(row.category || '') + '</td>' +
+                '<td>' + escapeHtml(categoryLabel(row.category)) + '</td>' +
                 '<td>' + importanceBadge(row.importance) + '</td>' +
                 '<td class="num-col">' + confPct + '%</td>' +
                 '<td>' + statusBadge(row.status) + '</td>' +
@@ -2383,7 +2390,7 @@ async function loadRules() {
             tr.innerHTML =
                 '<td class="id-col">' + row.id + '</td>' +
                 '<td class="content-col">' + escapeHtml(truncate(row.content, 100)) + '</td>' +
-                '<td>' + escapeHtml(row.category || '') + '</td>' +
+                '<td>' + escapeHtml(categoryLabel(row.category)) + '</td>' +
                 '<td>' + escapeHtml(row.scope || 'global') + '</td>' +
                 '<td>' + priorityBadge(row.priority) + '</td>' +
                 '<td class="num-col">' + (row.fire_count || 0) + '</td>' +
@@ -2579,7 +2586,7 @@ function graphUpdateLegend(items) {
         dot.className = 'cl-dot';
         dot.style.background = it.color;
         const label = document.createElement('span');
-        label.textContent = it.key + ' (' + it.count + ')';
+        label.textContent = (G.clusterMode === 'type' ? TAM_I18N.t(it.key) : it.key) + ' (' + it.count + ')';
         item.append(dot, label);
         return item;
     }));
@@ -2608,8 +2615,8 @@ function graphUpdateInfo() {
     const vis = G.visibleNodes();
     let text = TAM_I18N.t('{nodes} nodes, {edges} edges', {nodes: vis.length, edges: G.visibleEdges().length});
     if (G.filterProject) text += ' [' + G.filterProject + ']';
-    if (G.filterType) text += ' [' + G.filterType + ']';
-    if (G.searchQuery) text += ' (search: "' + G.searchQuery + '")';
+    if (G.filterType) text += ' [' + TAM_I18N.t(G.filterType) + ']';
+    if (G.searchQuery) text += ' ' + TAM_I18N.t('(search: "{query}")', {query: G.searchQuery});
     document.getElementById('graph-info').textContent = text;
 }
 
@@ -3097,7 +3104,7 @@ function initGraph() {
                 ctx.font = 'bold ' + fontSize + 'px system-ui';
                 ctx.textAlign = 'center';
                 ctx.fillStyle = color + 'aa';
-                ctx.fillText(key + ' (' + clNodes.length + ')', lcx, lcy - (Math.sqrt(clNodes.length) * 3 * G.zoom));
+                ctx.fillText((G.clusterMode === 'type' ? TAM_I18N.t(key) : key) + ' (' + clNodes.length + ')', lcx, lcy - (Math.sqrt(clNodes.length) * 3 * G.zoom));
             }
         }
 
@@ -3233,7 +3240,7 @@ function initGraph() {
                 ctx.fillStyle = typeColors[t] || '#64748b';
                 ctx.fill();
                 ctx.fillStyle = 'rgba(148,163,184,0.7)';
-                ctx.fillText(t, 28, ly + 4);
+                ctx.fillText(TAM_I18N.t(t), 28, ly + 4);
             });
         }
     };
@@ -3499,7 +3506,7 @@ function addFeedItem(type, data) {
     if (label.length > 150) label = label.substring(0, 150) + '...';
     item.innerHTML =
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
-        '<span style="color:' + color + ';font-weight:600;text-transform:uppercase;font-size:12px">' + escapeHtml(type) + '</span>' +
+        '<span style="color:' + color + ';font-weight:600;text-transform:uppercase;font-size:12px">' + escapeHtml(TAM_I18N.t(type)) + '</span>' +
         '<span style="color:var(--text-dim);font-size:12px">' + new Date().toLocaleTimeString() + '</span>' +
         '</div>' +
         '<div style="color:var(--text);font-size:14px">' + escapeHtml(label) + '</div>';
@@ -3563,7 +3570,7 @@ async function loadV5Graph() {
         const nodesDiv = document.getElementById('v5-nodes-by-type');
         nodesDiv.innerHTML = Object.entries(data.nodes_by_type || {}).map(([type, count]) =>
             '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">' +
-            '<span class="badge badge-' + cssToken(type, 'fact') + '">' + escapeHtml(type) + '</span>' +
+            '<span class="badge badge-' + cssToken(type, 'fact') + '">' + escapeHtml(TAM_I18N.t(type)) + '</span>' +
             '<span style="font-weight:600;color:var(--accent)">' + count + '</span></div>'
         ).join('') || "<div style=\"color:var(--text-dim)\"><span data-i18n=\"No graph nodes yet\">No graph nodes yet</span></div>";
 
@@ -3587,7 +3594,7 @@ async function loadV5Graph() {
         ).join('') || "<tr><td colspan=\"4\" style=\"color:var(--text-dim)\"><span data-i18n=\"No graph nodes yet\">No graph nodes yet</span></td></tr>";
     } catch (e) {
         document.getElementById('v5-top-nodes-body').innerHTML =
-            '<tr><td colspan="4" style="color:var(--text-dim)">Graph tables not available: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="4" style="color:var(--text-dim)">' + escapeHtml(TAM_I18N.t('Graph tables not available:')) + ' ' + escapeHtml(e.message) + '</td></tr>';
     }
 }
 
@@ -3608,7 +3615,7 @@ async function loadV5Episodes() {
             { label: TAM_I18N.t('Avg Impact'), value: (stats.avg_impact || 0).toFixed(1), color: 'var(--accent)' },
         ];
         Object.entries(stats.by_outcome || {}).forEach(([k, v]) => {
-            badges.push({ label: k, value: v, color: outcomeColors[k] || 'var(--text-dim)' });
+            badges.push({ label: TAM_I18N.t(k), value: v, color: outcomeColors[k] || 'var(--text-dim)' });
         });
         statsDiv.innerHTML = badges.map(b =>
             '<div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 20px;text-align:center">' +
@@ -3623,17 +3630,17 @@ async function loadV5Episodes() {
             const color = outcomeColors[oc] || 'var(--text-dim)';
             return '<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;border-left:4px solid ' + color + '">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
-                '<span style="color:' + color + ';font-weight:600;text-transform:uppercase;font-size:12px;padding:2px 8px;border:1px solid ' + color + ';border-radius:4px">' + escapeHtml(oc) + '</span>' +
+                '<span style="color:' + color + ';font-weight:600;text-transform:uppercase;font-size:12px;padding:2px 8px;border:1px solid ' + color + ';border-radius:4px">' + escapeHtml(TAM_I18N.t(oc)) + '</span>' +
                 '<span style="color:var(--text-dim);font-size:12px">' + formatDate(ep.created_at) + '</span></div>' +
                 '<div style="color:var(--text);font-size:14px;margin-bottom:6px">' + escapeHtml(truncate(ep.summary || ep.description || '', 200)) + '</div>' +
                 '<div style="display:flex;gap:12px;color:var(--text-dim);font-size:12px">' +
                 (ep.impact_score != null ? "<span><span data-i18n=\"Impact:\">Impact:</span> <strong style=\"color:var(--accent)\">" + ep.impact_score + '</strong></span>' : '') +
-                (ep.project ? '<span>Project: ' + escapeHtml(ep.project) + '</span>' : '') +
+                (ep.project ? '<span>' + escapeHtml(TAM_I18N.t('Project:')) + ' ' + escapeHtml(ep.project) + '</span>' : '') +
                 '</div></div>';
         }).join('') || "<div style=\"color:var(--text-dim);padding:20px;text-align:center\"><span data-i18n=\"No episodes recorded yet\">No episodes recorded yet</span></div>";
     } catch (e) {
         document.getElementById('v5-episodes-list').innerHTML =
-            '<div style="color:var(--text-dim);padding:20px">Episodes table not available: ' + escapeHtml(e.message) + '</div>';
+            '<div style="color:var(--text-dim);padding:20px">' + escapeHtml(TAM_I18N.t('Episodes table not available:')) + ' ' + escapeHtml(e.message) + '</div>';
     }
 }
 
@@ -3653,7 +3660,7 @@ function renderSkillCard(sk) {
             const steps = typeof sk.steps === 'string' ? JSON.parse(sk.steps) : sk.steps;
             if (Array.isArray(steps) && steps.length > 0 && steps[0] !== 'See full definition for details') {
                 stepsHtml = '<details style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">' +
-                    '<summary style="color:var(--text-dim);font-size:11px;text-transform:uppercase;cursor:pointer">Steps (' + steps.length + ')</summary>' +
+                    '<summary style="color:var(--text-dim);font-size:11px;text-transform:uppercase;cursor:pointer">' + escapeHtml(TAM_I18N.t('Steps ({count})', {count: steps.length})) + '</summary>' +
                     '<div style="margin-top:4px">' +
                     steps.map((s, i) => '<div style="color:var(--text);font-size:13px;padding:2px 0">' + (i+1) + '. ' + escapeHtml(s) + '</div>').join('') +
                     '</div></details>';
@@ -3667,7 +3674,7 @@ function renderSkillCard(sk) {
             const anti = typeof sk.anti_patterns === 'string' ? JSON.parse(sk.anti_patterns) : sk.anti_patterns;
             if (Array.isArray(anti) && anti.length > 0) {
                 antiHtml = '<details style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">' +
-                    '<summary style="color:var(--lesson);font-size:11px;text-transform:uppercase;cursor:pointer">Anti-patterns (' + anti.length + ')</summary>' +
+                    '<summary style="color:var(--lesson);font-size:11px;text-transform:uppercase;cursor:pointer">' + escapeHtml(TAM_I18N.t('Anti-patterns ({count})', {count: anti.length})) + '</summary>' +
                     '<div style="margin-top:4px">' +
                     anti.map(a => '<div style="color:var(--text-dim);font-size:13px;padding:2px 0">\u2718 ' + escapeHtml(a) + '</div>').join('') +
                     '</div></details>';
@@ -3690,9 +3697,9 @@ function renderSkillCard(sk) {
     return '<div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
         '<div style="display:flex;align-items:center;gap:8px">' +
-        '<span style="background:' + badgeColor + ';color:#000;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;text-transform:uppercase">' + badgeLabel + '</span>' +
+        '<span style="background:' + badgeColor + ';color:#000;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;text-transform:uppercase">' + escapeHtml(badgeLabel) + '</span>' +
         '<h4 style="color:var(--text);font-size:15px;margin:0">' + escapeHtml((sk.name || '').replace(/^(cmd:|agent:|rules:)/, '')) + '</h4></div>' +
-        '<span style="color:var(--text-dim);font-size:12px">' + (sk.times_used ? TAM_I18N.t('Used {count}x', {count: sk.times_used}) : sk.status || '') + '</span></div>' +
+        '<span style="color:var(--text-dim);font-size:12px">' + (sk.times_used ? escapeHtml(TAM_I18N.t('Used {count}x', {count: sk.times_used})) : escapeHtml(TAM_I18N.t(sk.status || ''))) + '</span></div>' +
         (sk.description ? '<div style="color:var(--text-dim);font-size:13px;margin-bottom:6px">' + escapeHtml(truncate(sk.description, 200)) + '</div>' : '') +
         (sk.trigger_pattern ? '<div style="color:var(--text-dim);font-size:12px;font-family:monospace;margin-bottom:10px;opacity:0.7">' + escapeHtml(sk.trigger_pattern) + '</div>' : '') +
         (sk.times_used > 0 ? '<div style="margin-bottom:4px;display:flex;justify-content:space-between;font-size:12px">' +
@@ -3736,7 +3743,7 @@ async function loadV5Skills() {
         }
     } catch (e) {
         document.getElementById('v5-skills-list').innerHTML =
-            '<div style="color:var(--text-dim);padding:20px">Skills table not available: ' + escapeHtml(e.message) + '</div>';
+            '<div style="color:var(--text-dim);padding:20px">' + escapeHtml(TAM_I18N.t('Skills table not available:')) + ' ' + escapeHtml(e.message) + '</div>';
     }
 }
 
@@ -3756,11 +3763,11 @@ async function loadV5SelfModel() {
             const trend = c.trend === 'improving' ? ' ↑' : c.trend === 'stable_low' ? ' ⚠' : '';
             return '<div style="margin-bottom:12px">' +
                 '<div style="display:flex;justify-content:space-between;margin-bottom:4px">' +
-                '<span style="color:var(--text);font-size:14px">' + escapeHtml(c.domain || c.name || 'Unknown') + '</span>' +
+                '<span style="color:var(--text);font-size:14px">' + escapeHtml(c.domain || c.name || TAM_I18N.t('Unknown')) + '</span>' +
                 '<span style="color:' + color + ';font-weight:600;font-size:14px">' + pct + '%' + trend + '</span></div>' +
                 '<div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden">' +
                 '<div style="height:100%;width:' + pct + '%;background:' + color + ';border-radius:4px;transition:width 0.5s"></div></div>' +
-                (c.based_on ? '<div style="color:var(--text-dim);font-size:11px;margin-top:2px">' + TAM_I18N.t('{count} evidence', {count: c.based_on}) + ' · ' + (c.trend || '') + '</div>' : '') +
+                (c.based_on ? '<div style="color:var(--text-dim);font-size:11px;margin-top:2px">' + escapeHtml(TAM_I18N.t('{count} evidence', {count: c.based_on})) + ' · ' + escapeHtml(TAM_I18N.t(c.trend || '')) + '</div>' : '') +
                 '</div>';
         }).join('') || "<div style=\"color:var(--text-dim)\"><span data-i18n=\"No competency data yet\">No competency data yet</span></div>";
 
@@ -3769,7 +3776,7 @@ async function loadV5SelfModel() {
         bsDiv.innerHTML = (data.blind_spots || []).map(bs => {
             const isMonitoring = bs.status === 'monitoring';
             const borderColor = isMonitoring ? 'var(--accent)' : 'var(--lesson)';
-            const statusLabel = isMonitoring ? TAM_I18N.t('📚 Learning') : TAM_I18N.t('⚠️ Unknown area');
+            const statusLabel = escapeHtml(isMonitoring ? TAM_I18N.t('📚 Learning') : TAM_I18N.t('⚠️ Unknown area'));
             const statusColor = isMonitoring ? 'var(--accent)' : 'var(--lesson)';
             return '<div style="background:var(--card);border:1px solid var(--border);border-left:3px solid ' + borderColor + ';border-radius:8px;padding:12px;margin-bottom:8px">' +
             '<div style="color:' + statusColor + ';font-weight:600;font-size:13px;margin-bottom:4px">' + statusLabel + '</div>' +
@@ -3789,7 +3796,7 @@ async function loadV5SelfModel() {
         ).join('') || "<div style=\"color:var(--text-dim)\"><span data-i18n=\"No user model data yet\">No user model data yet</span></div>";
     } catch (e) {
         document.getElementById('v5-competencies').innerHTML =
-            '<div style="color:var(--text-dim)">Self model tables not available: ' + escapeHtml(e.message) + '</div>';
+            '<div style="color:var(--text-dim)">' + escapeHtml(TAM_I18N.t('Self model tables not available:')) + ' ' + escapeHtml(e.message) + '</div>';
     }
 }
 
@@ -3822,12 +3829,12 @@ async function loadV5Reflection() {
             '<span style="color:var(--text-dim);font-size:12px">' + formatDate(p.created_at) + '</span></div>' +
             '<div style="color:var(--text);font-size:14px;margin-bottom:8px">' + escapeHtml(truncate(p.content || p.description || '', 300)) + '</div>' +
             '<div style="display:flex;gap:8px">' +
-            '<span style="color:var(--text-dim);font-size:12px;padding:4px 12px;border:1px solid var(--border);border-radius:4px">Status: ' + escapeHtml(p.status || 'pending') + '</span>' +
+            '<span style="color:var(--text-dim);font-size:12px;padding:4px 12px;border:1px solid var(--border);border-radius:4px">' + escapeHtml(TAM_I18N.t('Status:')) + ' ' + escapeHtml(TAM_I18N.t(p.status || 'pending')) + '</span>' +
             '</div></div>'
         ).join('') || "<div style=\"color:var(--text-dim)\"><span data-i18n=\"No pending proposals\">No pending proposals</span></div>";
     } catch (e) {
         document.getElementById('v5-reports').innerHTML =
-            '<div style="color:var(--text-dim)">Reflection tables not available: ' + escapeHtml(e.message) + '</div>';
+            '<div style="color:var(--text-dim)">' + escapeHtml(TAM_I18N.t('Reflection tables not available:')) + ' ' + escapeHtml(e.message) + '</div>';
     }
 }
 
@@ -3950,7 +3957,7 @@ body {
     </div>
 </div>
 
-<div id="loading">Loading graph data...</div>
+<div id="loading" data-i18n="Loading graph data...">Loading graph data...</div>
 <div id="graph-container"></div>
 
 <div class="legend" id="legend"></div>
@@ -4031,7 +4038,9 @@ function renderGraph(filterType) {
     const visNodes = nodes.map(n => ({
         id: n.id,
         label: n.name.length > 30 ? n.name.slice(0, 28) + '..' : n.name,
-        title: `${n.name}\nType: ${n.type}\nImportance: ${(n.importance || 0).toFixed(2)}\nMentions: ${n.mention_count || 0}`,
+        title: escHtml(n.name + '\n' + TAM_I18N.t('Type: {type}', {type: TAM_I18N.t(n.type)}) +
+            '\n' + TAM_I18N.t('Importance: {value}', {value: (n.importance || 0).toFixed(2)}) +
+            '\n' + TAM_I18N.t('Mentions: {count}', {count: n.mention_count || 0})),
         color: { background: getColor(n.type), border: getColor(n.type), highlight: { background: '#fff', border: getColor(n.type) } },
         font: { color: '#e2e8f0', size: Math.max(10, Math.min(16, 8 + (n.importance || 0.5) * 14)) },
         size: Math.max(8, Math.min(30, 5 + (n.importance || 0.5) * 40)),
@@ -4044,7 +4053,8 @@ function renderGraph(filterType) {
             from: e.source_id,
             to: e.target_id,
             label: e.relation_type.replace(/_/g, ' '),
-            title: `${e.relation_type} (weight: ${(e.weight || 1).toFixed(1)})${e.context ? '\n' + e.context : ''}`,
+            title: escHtml(e.relation_type + ' (' + TAM_I18N.t('Weight: {value}', {value: (e.weight || 1).toFixed(1)}) + ')' +
+                (e.context ? '\n' + e.context : '')),
             arrows: 'to',
             color: { color: '#475569', highlight: '#3b82f6', opacity: 0.6 },
             font: { color: '#64748b', size: 9, strokeWidth: 0 },
@@ -4232,7 +4242,7 @@ fetch("/api/knowledge/" + KID)
       '<span class="tag">' + esc(t) + '</span>').join("");
     const related = (data.related || []).map(r =>
       '<li class="related"><a href="/knowledge/' + r.id + '">#' + r.id +
-      ' ' + esc(r.title) + '</a><span class="via">via ' + esc(r.via) + '</span></li>'
+      ' ' + esc(r.title) + '</a><span class="via">' + esc(TAM_I18N.t('via')) + ' ' + esc(r.via) + '</span></li>'
     ).join("") || "<li style=\"color:#666\"><span data-i18n=\"No related records\">No related records</span></li>";
     b.innerHTML =
       '<h1>' + esc(TAM_I18N.t('Knowledge #{id}', {id: data.id})) + ' — ' + esc(TAM_I18N.t(data.type)) + '</h1>' +

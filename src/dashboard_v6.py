@@ -554,8 +554,8 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&am
           html += `<details style="margin-top:8px;font-size:11px;color:#aaa;">
             <summary style="cursor:pointer;color:#f55;">${esc(TAM_I18N.t('Recent failures ({count})', {count: enrich.recent_failures.length}))}</summary>`;
           enrich.recent_failures.forEach(f => {
-            html += `<div style="margin:4px 0 0 12px;">id=${f.id} kid=${f.knowledge_id}
-              attempts=${f.attempts}<br/><code style="color:#ea7;">${esc(f.last_error)}</code></div>`;
+            html += `<div style="margin:4px 0 0 12px;">${esc(TAM_I18N.t('ID:'))} ${f.id} · ${esc(TAM_I18N.t('Knowledge ID:'))} ${f.knowledge_id}
+              · ${esc(TAM_I18N.t('Attempts:'))} ${f.attempts}<br/><code style="color:#ea7;">${esc(f.last_error)}</code></div>`;
           });
           html += `</details>`;
         }
@@ -789,8 +789,8 @@ function initGraph() {
     .nodeLabel(n => `<div style="background:rgba(20,20,30,.95);padding:6px 10px;
                          border:1px solid #444;border-radius:4px;color:#fff;font-size:12px;">
                          <b style="color:${NODE_COLORS[n.nodeType] || '#fff'}">${esc(n.label)}</b><br>
-                         type: ${esc(n.nodeType)} · mentions: ${esc(n.mention_count || 0)}<br>
-                         degree: ${edgesByNode.get(n.id) || 0}
+                         ${esc(TAM_I18N.t('type:'))} ${esc(TAM_I18N.t(n.nodeType))} · ${esc(TAM_I18N.t('Mentions: {count}', {count: n.mention_count || 0}))}<br>
+                         ${esc(TAM_I18N.t('Degree: {count}', {count: edgesByNode.get(n.id) || 0}))}
                        </div>`)
     .nodeResolution(12)             // smoother spheres
     // Edges visible against background — was #3a3a3a (dark grey on near-black).
@@ -1004,7 +1004,7 @@ function updateStats(extra) {
   const phase = bulkDone
     ? TAM_I18N.t('🟢 live (loaded {time})', {time: fmtSec(performance.now() - bulkStartedAt)})
     : TAM_I18N.t('⏳ {loaded}/{total} workers:{workers}', {loaded: eTot, total: totalEdges, workers: activeWorkers});
-  statsEl.innerHTML = `<b>${total}</b> <span data-i18n="nodes ·">nodes ·</span> <b>${eTot}</b> <span data-i18n="edges">edges</span>  <span style="color:#888">${phase}</span>` +
+  statsEl.innerHTML = `<b>${total}</b> <span data-i18n="nodes ·">nodes ·</span> <b>${eTot}</b> <span data-i18n="edges">edges</span>  <span style="color:#888">${esc(phase)}</span>` +
     (extra ? ` · ${extra}` : '');
 }
 
@@ -1047,9 +1047,9 @@ async function deltaPoll() {
                 (lastTs ? `&since=${encodeURIComponent(lastTs)}` : '');
     const data = await fetch(url).then(r => r.json());
     const {newN, newE} = ingest(data);
-    updateStats(newN || newE ? `+${newN}n/+${newE}e` : '');
+    updateStats(newN || newE ? esc(TAM_I18N.t('+{nodes} nodes / +{edges} edges', {nodes: newN, edges: newE})) : '');
   } catch (e) {
-    statsEl.textContent = '⚠ delta: ' + e.message;
+    statsEl.textContent = TAM_I18N.t('⚠ Update failed:') + ' ' + e.message;
   }
 }
 
@@ -1071,7 +1071,7 @@ async function startBulk() {
     ingest(initial);
     if (totalEdges <= CHUNK_SIZE && nodesById.size >= totalNodes - 100) bulkDone = true;
   } catch (e) {
-    statsEl.textContent = '⚠ initial: ' + e.message;
+    statsEl.textContent = TAM_I18N.t('⚠ Initial load failed:') + ' ' + e.message;
     return;
   }
   const workers = [];
@@ -1409,7 +1409,7 @@ cv.addEventListener('mousemove', e => {
   }
   const w = cellAt.get(`${si},${ti}`);
   if (!w) { tooltip.style.display = 'none'; return; }
-  tooltip.innerHTML = `<b>${esc(nodes[si].name)}</b> → <b>${esc(nodes[ti].name)}</b><br>weight: ${esc(w)}<br>${esc(TAM_I18N.t(nodes[si].type))} → ${esc(TAM_I18N.t(nodes[ti].type))}`;
+  tooltip.innerHTML = `<b>${esc(nodes[si].name)}</b> → <b>${esc(nodes[ti].name)}</b><br>${esc(TAM_I18N.t('Weight: {value}', {value: w}))}<br>${esc(TAM_I18N.t(nodes[si].type))} → ${esc(TAM_I18N.t(nodes[ti].type))}`;
   tooltip.style.display = 'block';
   tooltip.style.left = (e.clientX + 14) + 'px';
   tooltip.style.top = (e.clientY + 14) + 'px';
