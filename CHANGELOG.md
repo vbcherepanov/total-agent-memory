@@ -42,6 +42,7 @@ and versions use [Semantic Versioning](https://semver.org/).
 - **PostgreSQL date functions follow SQLite 3.50 (#46).** Fractional seconds are truncated, not rounded, at sub-millisecond boundaries, and midnight values are normalized the same way on both backends (PostgreSQL compat migrations 0002–0003).
 - `ingest_codebase` runs off the transport loop, so indexing a folder with media no longer stalls other stdio and HTTP calls.
 - An incident's structured rows are written in the same transaction as its record; a failure leaves neither behind.
+- `install.ps1` looks for `python` before `python3`, so it uses the interpreter on PATH instead of the Microsoft Store alias or another installation.
 - A server without `/healthz` (HTTP 404) gets the upgrade message instead of "retry".
 - `benchmark` reports runner failures as `{"status": "error"}` like `memory_eval_locomo`, and its description names the packaged scenarios.
 - Concurrent recalls that differ only in letter case no longer share one result; a lost representation claim is counted as `lost_claims`, not `failed`; cancelling a call while it re-acquires the Store lease no longer raises at shutdown.

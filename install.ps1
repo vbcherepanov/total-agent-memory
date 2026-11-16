@@ -166,7 +166,9 @@ Write-Host "  OK: $MemoryDir" -ForegroundColor Green
 Write-Host "-> Step 2: Setting up Python environment..." -ForegroundColor Yellow
 
 $pythonCmd = $null
-foreach ($cmd in @("python3", "python")) {
+# "python" first: on Windows it is the interpreter on PATH (python.org, venv,
+# setup-python), while "python3" is often the Microsoft Store alias or another install.
+foreach ($cmd in @("python", "python3")) {
     try {
         $ver = & $cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
         if ($ver) {

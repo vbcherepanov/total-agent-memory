@@ -15,6 +15,7 @@ include benchmarks/fixtures/LICENSE.tree-sitter-language-pack
 include *.sh *.ps1 requirements*.txt Dockerfile docker-compose*.yml Makefile server.json .env.example .gitignore .dockerignore .mcp.json
 include docs/installation.md
 include docs/UPGRADE_15.md
+include docs/whats-new.md
 graft docs/benchmarks/tam_bench_common
 graft docs/benchmarks/ama-bench
 graft docs/benchmarks/longmemeval-v2
