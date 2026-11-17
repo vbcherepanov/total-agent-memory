@@ -5,6 +5,29 @@ Per-question rows (`*.rows.jsonl.gz`) and run reports (`*.json`) from
 ingests locomo10 into a fresh store, asks all 1,986 questions and grades the
 1,536 that are not adversarial and have evidence. No LLM is involved.
 
+## v15.0.0 (commit dc8ecf9), 2026-11-17
+
+Apple M2 Max, 12 cores, macOS 27.2.1, Python 3.13.5, onnxruntime 1.30.0,
+fastembed 0.8.0. One run per condition, serial, onnxruntime default threads.
+The default cross-encoder is now multilingual
+(`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`, INT8 ONNX on ARM64). Commands:
+
+```
+MEMORY_LLM_ENABLED=false python benchmarks/locomo_rerank_modes.py --tree . --version-label v15.0.0 --commit dc8ecf9 --db-root <store root> --mode auto --label warm-run1 --wait-for-encoder --warmup-queries 3
+MEMORY_LLM_ENABLED=false python benchmarks/locomo_rerank_modes.py --tree . --version-label v15.0.0 --commit dc8ecf9 --db-root <store root> --mode off --label run1
+```
+
+| Condition | Runs | R@1 | R@5 | R@10 | p50 ms | p95 ms | Queries before encoder ready |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `off` | 1 | 0.3314 | 0.6094 | 0.7012 | 53 | 68 | all |
+| `auto`, warm | 1 | 0.4883 | 0.7454 | 0.8190 | 901 | 1122 | 0 |
+
+- Against v14.6.0 with the English `Xenova/ms-marco-MiniLM-L-6-v2`, the
+  multilingual default raises R@1 (0.4733 to 0.4883), keeps R@5 (0.7461 to
+  0.7454) and lowers R@10 (0.8262 to 0.8190), at a similar median.
+- The `off` figures match v14.10.0 (`main 7d41e51` below) within one question
+  at R@1 and exactly at R@5 and R@10.
+
 ## v14.6.0 (commit 7482d8a), 2026-11-07
 
 Apple M2 Max, 12 cores, macOS 27.2, Python 3.13.5, onnxruntime 1.30.0,
