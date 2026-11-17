@@ -219,7 +219,10 @@ median per query on an Apple M2 Max; the median depends on the CPU. Each setting
 returned the same ranking for every question in all three runs. With the default,
 the first query of a process can arrive before the cross-encoder has loaded and
 keeps the fused order; in these runs that changed one question out of 1,986
-([rows, reports and commands](benchmarks/results/rerank-modes)).
+([rows, reports and commands](benchmarks/results/rerank-modes)). On v15.0.0,
+whose default cross-encoder is multilingual, the same machine gave R@5 0.745 at
+about 0.9 s median with the default and 0.609 at about 50 ms with the
+cross-encoder off.
 
 Dataset locations, commands, end-to-end (LLM-judged) accuracy, negative
 controls, latency and the 14.x studies are in
