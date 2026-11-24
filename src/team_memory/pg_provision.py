@@ -380,7 +380,7 @@ class PgWorkspaceProvisioner:
             "FROM pg_roles r JOIN pg_namespace n ON n.nspname = %(schema)s WHERE r.rolname = %(role)s",
             {"limit": self.settings.workspace_connection_limit, "key": target.key, "schema": target.schema,
              "role": target.role, "fingerprint": fingerprint}).fetchone()
-        if row is None or not all(row):
+        if row is None or not all(row) or not self._has_database_access(connection, target):
             return False
         return not migrate or self._ledger_current(connection, target)
 
@@ -441,6 +441,7 @@ class PgWorkspaceProvisioner:
         # role anyway, so inheriting grants it nothing new. Workspace data is otherwise read
         # only as the workspace role itself (gateway readers, workers).
         connection.execute(sql.SQL("GRANT {} TO CURRENT_USER WITH INHERIT TRUE, SET TRUE").format(role))
+        self._grant_database_access(connection, target)
         owner = connection.execute("SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = %s",
                                    (target.schema,)).fetchone()
         adopted = False
@@ -458,6 +459,33 @@ class PgWorkspaceProvisioner:
                            "VALUES (%s, %s, %s, %s) ON CONFLICT (key) DO UPDATE SET fingerprint = excluded.fingerprint",
                            (key, target.schema, target.role, fingerprint))
         return not exists, adopted
+
+    @staticmethod
+    def _has_database_access(connection, target: WorkspaceTarget) -> bool:
+        return connection.execute(
+            "SELECT has_database_privilege(%(role)s, current_database(), 'CONNECT') "
+            "AND has_database_privilege(%(role)s, current_database(), 'TEMPORARY')", {"role": target.role}).fetchone()[0]
+
+    def _grant_database_access(self, connection, target: WorkspaceTarget) -> None:
+        """CONNECT and TEMPORARY on the database for the workspace role.
+
+        PUBLIC holds both by default, but the DBA SQL (docs/TEAM_POSTGRES.md) revokes them. The
+        role must log in, and the workspace migrations create a temporary table. A database
+        owner can grant them; an admin that cannot gets the statement for the DBA instead of a
+        workspace that never connects.
+        """
+        from psycopg import sql
+
+        if self._has_database_access(connection, target):
+            return
+        database = connection.execute("SELECT current_database()").fetchone()[0]
+        connection.execute(sql.SQL("GRANT CONNECT, TEMPORARY ON DATABASE {} TO {}").format(
+            _identifier(database), _identifier(target.role)))
+        if not self._has_database_access(connection, target):
+            admin = connection.execute("SELECT current_user").fetchone()[0]
+            statement = sql.SQL("GRANT CONNECT, TEMPORARY ON DATABASE {} TO {} WITH GRANT OPTION;").format(
+                _identifier(database), _identifier(admin)).as_string(connection)
+            raise PrerequisitesMissing("Workspace roles cannot connect to the database", dba_sql=(statement,))
 
     @staticmethod
     def _adopt(connection, target: WorkspaceTarget) -> None:
