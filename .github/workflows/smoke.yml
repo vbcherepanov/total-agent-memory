@@ -85,9 +85,21 @@ jobs:
       - name: Install OCR on Windows
         if: runner.os == 'Windows'
         shell: pwsh
+        # The installer comes from the upstream GitHub release, pinned by
+        # checksum: the Chocolatey community feed answered 503 for an hour and
+        # failed every Windows cell.
+        env:
+          TESSERACT_INSTALLER_URL: https://github.com/UB-Mannheim/tesseract/releases/download/v5.4.0.20240606/tesseract-ocr-w64-setup-5.4.0.20240606.exe
+          TESSERACT_INSTALLER_SHA256: c885fff6998e0608ba4bb8ab51436e1c6775c2bafc2559a19b423e18678b60c9
         run: |
-          choco install tesseract --yes --no-progress
-          if ($LASTEXITCODE -notin @(0, 1641, 3010)) { exit $LASTEXITCODE }
+          $installer = Join-Path $env:RUNNER_TEMP 'tesseract-setup.exe'
+          Invoke-WebRequest -Uri $env:TESSERACT_INSTALLER_URL -OutFile $installer -MaximumRetryCount 5 -RetryIntervalSec 10
+          $actual = (Get-FileHash -Path $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:TESSERACT_INSTALLER_SHA256) {
+            throw "Tesseract installer checksum mismatch: $actual"
+          }
+          $setup = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { exit $setup.ExitCode }
           $ocrPath = Join-Path $env:ProgramFiles 'Tesseract-OCR'
           if (-not (Test-Path (Join-Path $ocrPath 'tesseract.exe'))) {
             throw 'Tesseract installation did not produce tesseract.exe'
