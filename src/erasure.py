@@ -4,8 +4,8 @@
 rows (triggers take the FTS index, atomic facts, graph links and evidence passages),
 vectors in every embedding space, queue and log rows, quotes of it inside later
 versions, agent action log rows that quote it, and the copies of its text in the raw
-call log. `secure_delete` zeroes the freed pages and a WAL checkpoint truncates the
-log, so the text is not left on disk.
+call log. `secure_delete` zeroes what this pass frees, a VACUUM rebuilds the database so
+text freed by earlier ordinary writes goes too, and a WAL checkpoint truncates the log.
 """
 
 from __future__ import annotations
@@ -13,8 +13,11 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import struct
 import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from ambient.actions import ActionLog
@@ -73,6 +76,21 @@ def _merge_fts(db) -> None:
 CHROMA_DELETE_OPERATION = 3
 
 
+def compact_sqlite(db) -> str | None:
+    """Rebuild the database file and truncate the WAL; the SQLite error text when that is refused.
+
+    A row updated or deleted before the erasure leaves its old bytes in the free space of its
+    page: `secure_delete` was off then, so only a rebuild removes them.
+    """
+    refused = None
+    try:
+        db.execute("VACUUM")
+    except sqlite3.Error as error:
+        refused = str(error)
+    db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    return refused
+
+
 def compact_chroma(chroma_dir: Path, ids: list[int]) -> None:
     """Remove the erased documents' text from Chroma's own SQLite file.
 
@@ -96,6 +114,139 @@ def compact_chroma(chroma_dir: Path, ids: list[int]) -> None:
         db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     finally:
         db.close()
+
+
+HNSW_VECTOR_FILE = "data_level0.bin"
+HNSW_HEADER_FILE = "header.bin"
+HNSW_HEADER = struct.Struct("<IQQQQQQ")  # version, offset_level0, max_elements, count, element_size, label_offset, data_offset
+HNSW_HEADER_VERSION = 1
+
+
+HNSW_LOCK_FILE = ".tam-hnsw.lock"
+HNSW_LOCK_WAIT_SEC = 2.0
+HNSW_LOCK_POLL_SEC = 0.05
+SCRUB_CHUNK_BYTES = 1 << 20
+
+_THREAD_LOCK = threading.RLock()
+_HELD = threading.local()
+
+
+def _try_file_lock(handle) -> bool:
+    handle.seek(0)
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    return True
+
+
+@contextmanager
+def chroma_write_lock(chroma_dir: Path, wait: float | None = None):
+    """Serialise Chroma index writes and the HNSW scrub across threads and processes; yields whether it was taken.
+
+    A thread lock plus an OS lock on a file inside `chroma_dir`, waited for at most `wait` seconds.
+    Callers that get False carry on as they would without it. Re-entrant per thread. Processes of
+    older versions do not take the lock. A missing `chroma_dir` is not created: only the thread lock applies.
+    """
+    wait = HNSW_LOCK_WAIT_SEC if wait is None else wait
+    if getattr(_HELD, "depth", 0):
+        _HELD.depth += 1
+        try:
+            yield True
+        finally:
+            _HELD.depth -= 1
+        return
+    if not _THREAD_LOCK.acquire(timeout=wait):
+        yield False
+        return
+    handle = None
+    acquired = False
+    try:
+        if chroma_dir.is_dir():
+            try:
+                handle = (chroma_dir / HNSW_LOCK_FILE).open("a+b")
+                if not handle.seek(0, os.SEEK_END):
+                    handle.write(b"\0")
+                    handle.flush()
+                deadline = time.monotonic() + wait
+                acquired = _try_file_lock(handle)
+                while not acquired and time.monotonic() < deadline:
+                    time.sleep(HNSW_LOCK_POLL_SEC)
+                    acquired = _try_file_lock(handle)
+            except OSError:
+                acquired = False
+        else:
+            acquired = True
+        _HELD.depth = 1
+        try:
+            yield acquired
+        finally:
+            _HELD.depth = 0
+    finally:
+        if handle is not None:
+            handle.close()
+        _THREAD_LOCK.release()
+
+
+def _zero_tail(handle, start: int, end: int) -> bool:
+    """Zero `handle[start:end]` in chunks; False when it was all zero already."""
+    changed = False
+    handle.seek(start)
+    position = start
+    zeros = bytes(SCRUB_CHUNK_BYTES)
+    while position < end:
+        chunk = handle.read(min(SCRUB_CHUNK_BYTES, end - position))
+        if not chunk:
+            break
+        if any(chunk):
+            handle.seek(position)
+            handle.write(zeros[:len(chunk)])
+            changed = True
+        position += len(chunk)
+        handle.seek(position)
+    if changed:
+        handle.flush()
+        os.fsync(handle.fileno())
+    return changed
+
+
+def scrub_hnsw_tail(chroma_dir: Path) -> tuple[int, list[str]]:
+    """Zero the unused slots of every HNSW vector file; returns (files changed, files left as they were).
+
+    The index allocates `max_elements` slots with plain `malloc` and writes the whole block when
+    it is created, so slots past `cur_element_count` hold whatever the process heap held at that
+    moment, including freed SQLite pages with record text. Later flushes write only the live
+    prefix, and a resize rewrites the file at its live size, so one scrub is enough. Only the
+    prefix described by the sibling `header.bin` is kept; files that do not match that layout are
+    left alone. A file that cannot be opened for writing (locked on Windows), or every file when
+    `chroma_write_lock` cannot be taken, is reported instead of raising.
+    """
+    scrubbed, failed = 0, []
+    with chroma_write_lock(chroma_dir) as locked:
+        for vectors in chroma_dir.glob(f"*/{HNSW_VECTOR_FILE}"):
+            if not locked:
+                failed.append(str(vectors))
+                continue
+            try:
+                header = (vectors.parent / HNSW_HEADER_FILE).read_bytes()[:HNSW_HEADER.size]
+                if len(header) < HNSW_HEADER.size:
+                    continue
+                version, _, capacity, count, element_size, _, _ = HNSW_HEADER.unpack(header)
+                live = count * element_size
+                size = vectors.stat().st_size
+                if version != HNSW_HEADER_VERSION or element_size == 0 or count > capacity \
+                        or size != capacity * element_size or live >= size:
+                    continue
+                with vectors.open("r+b") as handle:
+                    scrubbed += _zero_tail(handle, live, size)
+            except OSError:
+                failed.append(str(vectors))
+    return scrubbed, failed
 
 
 def _linked_call_ids(paths: list[Path], record_ids: set[int]) -> set[str]:
@@ -194,6 +345,7 @@ def erase_many(store, record_ids: list[int], raw_dir: Path, chroma_dir: Path | N
 
     tables = _existing_tables(db)
     actions_erased = 0
+    secure_delete_before = db.execute("PRAGMA secure_delete").fetchone()[0]
     db.execute("PRAGMA secure_delete=ON")
     try:
         for kid in ids:
@@ -220,11 +372,13 @@ def erase_many(store, record_ids: list[int], raw_dir: Path, chroma_dir: Path | N
         db.rollback()
         raise
     finally:
-        db.execute("PRAGMA secure_delete=OFF")
-    db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        db.execute(f"PRAGMA secure_delete={int(secure_delete_before)}")
+    not_compacted = compact_sqlite(db)
 
     result = {"erased": ids, "projects": projects, "raw_logs_rewritten": scrub_raw_logs(raw_dir, texts, ids),
               "actions_erased": actions_erased}
+    if not_compacted is not None:
+        result["sqlite_not_compacted"] = not_compacted
     for space in sorted({"text", *spaces}):
         collection = store._chroma_collection_for(space)
         if collection is None:
@@ -238,6 +392,9 @@ def erase_many(store, record_ids: list[int], raw_dir: Path, chroma_dir: Path | N
             compact_chroma(chroma_dir, ids)
         except sqlite3.Error as error:
             result.setdefault("vector_store_errors", []).append(f"compact: {error}")
+        _, unscrubbed = scrub_hnsw_tail(chroma_dir)
+        if unscrubbed:
+            result["hnsw_files_not_scrubbed"] = unscrubbed
     return result
 
 

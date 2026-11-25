@@ -31,6 +31,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import get_embed_threads
+from erasure import chroma_write_lock
 from paths import memory_dir
 
 MEMORY_DIR = memory_dir()
@@ -300,7 +301,8 @@ def main():
                 }
                 for r, _, _ in valid
             ]
-            collection.upsert(ids=ids, embeddings=embs_list, documents=docs, metadatas=metas)
+            with chroma_write_lock(CHROMA_PATH):
+                collection.upsert(ids=ids, embeddings=embs_list, documents=docs, metadatas=metas)
 
         upserted += len(valid)
 

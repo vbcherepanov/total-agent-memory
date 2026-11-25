@@ -98,8 +98,12 @@ rate for the last 24 hours under `tool_calls`.
 - quotes of it inside later versions, which become `[erased]`;
 - copies of its text in the raw call logs and in Chroma's write queue.
 
-Full-text indexes are merged, freed database pages are zeroed, the write-ahead log is truncated and
-Chroma's database is vacuumed. Search queries that mention the
+Full-text indexes are merged, freed database pages are zeroed, the database is rebuilt with `VACUUM`
+(this needs free disk space of about the database size), the write-ahead log is truncated, Chroma's
+database is vacuumed and the unused part of its vector files is zeroed. If another process is writing
+and SQLite refuses the rebuild, the record is still erased and the result carries `sqlite_not_compacted`:
+old bytes may then stay in the file's free space until the next hard delete rebuilds the database.
+Search queries that mention the
 record are not rewritten; set a raw-log retention period to limit how long those are kept. Hard erasure
 is for personal (SQLite) memory. Team records keep their audited history and are removed through
 offboarding.
