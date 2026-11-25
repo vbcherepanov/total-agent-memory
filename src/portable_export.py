@@ -47,6 +47,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
 
+from erasure import chroma_write_lock
 from importers.records import ImportRecord, parse_timestamp
 from memory_core.timestamps import utc_now
 from memory_core.export_snapshot import ExportFormatError, read_pages, read_snapshot, record_state, snapshot_header, snapshot_lines
@@ -504,7 +505,7 @@ def _rebuild_embeddings(store: Any) -> dict[str, Any]:
         server.store = previous
 
 
-def _mirror_chroma(store: Any) -> int:
+def _mirror_chroma(store: Any, chroma_dir: Path) -> int:
     """Repopulate the Chroma mirror from the embeddings table (only used when binary search is not active)."""
     import struct
 
@@ -522,13 +523,14 @@ def _mirror_chroma(store: Any) -> int:
             continue
         for start in range(0, len(items), CHROMA_BATCH):
             chunk = items[start:start + CHROMA_BATCH]
-            collection.upsert(
-                ids=[str(row[0]) for row in chunk],
-                embeddings=[list(struct.unpack(f"{len(row[1]) // 4}f", row[1])) for row in chunk],
-                documents=[row[3] for row in chunk],
-                metadatas=[{"type": row[4], "project": row[5], "status": "active", "session_id": row[6] or "",
-                            "created_at": row[7], "embedding_space": space} for row in chunk],
-            )
+            with chroma_write_lock(chroma_dir):
+                collection.upsert(
+                    ids=[str(row[0]) for row in chunk],
+                    embeddings=[list(struct.unpack(f"{len(row[1]) // 4}f", row[1])) for row in chunk],
+                    documents=[row[3] for row in chunk],
+                    metadatas=[{"type": row[4], "project": row[5], "status": "active", "session_id": row[6] or "",
+                                "created_at": row[7], "embedding_space": space} for row in chunk],
+                )
             mirrored += len(chunk)
     return mirrored
 
@@ -610,7 +612,7 @@ def _replace(memory_dir: Path, staged: StagedBundle) -> dict[str, Any]:
         mirrored = 0
         if store._chroma_client is not None and not store._check_binary_search():
             try:
-                mirrored = _mirror_chroma(store)
+                mirrored = _mirror_chroma(store, chroma)
             except Exception as error:  # noqa: BLE001 — chromadb raises its own hierarchy; the store is intact
                 LOGGER.warning(json.dumps({"event": "bundle_chroma_mirror_failed", "error": str(error)}))
                 warnings.append(f"Chroma mirror not rebuilt ({error}); run memory_rebuild_embeddings")

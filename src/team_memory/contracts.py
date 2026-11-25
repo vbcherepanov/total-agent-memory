@@ -13,6 +13,10 @@ class DomainError(Exception):
     code = "invalid_request"
 
 
+class InvalidInput(DomainError, ValueError):
+    """Malformed user-supplied value; stays a ValueError for callers that already catch that."""
+
+
 class Unauthorized(DomainError):
     code = "unauthorized"
 

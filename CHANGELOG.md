@@ -6,11 +6,17 @@ and versions use [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [15.0.1] - 2026-11-25
+
 ### Fixed
 
 - **Team server on PostgreSQL: workspaces work when the database was prepared with the DBA SQL from `docs/TEAM_POSTGRES.md`.** That SQL revokes all database privileges from `PUBLIC`, and the per-workspace roles were never granted any, so every memory call returned "Workspace unavailable". TAM now grants each workspace role `CONNECT` and `TEMPORARY`, repairs existing workspaces on the next start, and revokes the privileges again when a workspace is dropped. A TAM role that neither owns the database nor may grant the two privileges fails the **Test** button's privileges check with the statement for the DBA. Thanks @alex09x (#61).
 - A login refused for lack of `CONNECT` on the database is reported as a missing privilege, not as "The server could not be reached".
 - **`src/team_memory/remote.py` runs again as a single copied file**, as the team server guide says. Since 15.0.0 it imported a second module and failed with `ModuleNotFoundError` on a client that had only that file; `tam-remote` from an installed package was not affected.
+- **Hard delete no longer leaves record text in ChromaDB's vector files.** ChromaDB writes a new HNSW index with its unused slots holding whatever the process memory held, which could include the text of records, also ones deleted later. `memory_delete` with `hard=true` now zeroes that unused part of every `data_level0.bin`. A file that cannot be opened for writing is listed in the result as `hnsw_files_not_scrubbed`, and the delete still succeeds.
+- **Hard delete no longer leaves record text in the free space of `memory.db`.** A record that was updated, or a queue row removed during normal work, left its old bytes inside the database page, and `secure_delete` during the erasure did not reach them. `memory_delete` with `hard=true` and `tam forget-auto` now rebuild the database with `VACUUM` once per call; on a large database this takes time and needs free disk space of about the database size. If SQLite refuses the rebuild because another process is writing, the delete still succeeds and the result carries `sqlite_not_compacted` with the reason. The `secure_delete` setting of the connection is no longer switched off after an erasure.
+- **`tam-team restore` of a PostgreSQL backup refuses a data directory that already runs on PostgreSQL while `TAM_TEAM_DATABASE_URL` names another database than the restore target.** Restore writes `database.json`, which outranks the variable, so the server using that directory was silently pointed at the restored database. The command now stops before `pg_restore` and says to use a new `--root` or to point the variable at the restored database; a refused restore leaves no data directory behind.
+- **`tam-team` reports expected mistakes in one line.** A duplicate user or team, an unknown user or token, an invalid id or name, and an output file that exists or a directory that does not, end with one error line and exit code 1 instead of a Python traceback.
 
 ## [15.0.0] - 2026-11-16
 

@@ -36,6 +36,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from erasure import chroma_write_lock  # noqa: E402
 from paths import memory_dir  # noqa: E402
 from tool_support import ollama_binary  # noqa: E402
 
@@ -476,7 +477,8 @@ def reembed_all(db_path: str | Path = DB_PATH, model: str = "auto") -> dict[str,
                         metas.append({"type": "", "project": "", "status": "active"})
                         docs.append("")
 
-                collection.upsert(ids=ids, embeddings=embs, documents=docs, metadatas=metas)
+                with chroma_write_lock(chroma_path):
+                    collection.upsert(ids=ids, embeddings=embs, documents=docs, metadatas=metas)
 
             chroma_count = collection.count()
             print(f"  ChromaDB updated: {chroma_count} embeddings")

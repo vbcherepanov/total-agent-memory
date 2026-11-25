@@ -90,6 +90,7 @@ from rule_surfaces import (
 )
 import http_auth
 import provenance
+import erasure
 from erasure import RAW_CALL_TYPE, RAW_RESULT_TYPE
 from path_roots import cwd_root
 from privacy_filter import redact_private_value
@@ -1211,19 +1212,20 @@ class Store:
         try:
             coll = self._chroma_collection_for(record_vector["space"])
             if coll is not None:
-                coll.upsert(
-                    ids=[str(rid)], embeddings=[record_vector["vector"]], documents=[content],
-                    metadatas=[{
-                        "type": ktype, "project": project, "status": "active",
-                        "session_id": sid, "created_at": created_at, "confidence": 1.0,
-                        # v11 §J multi-embedding-space metadata
-                        "embedding_provider": record_vector["provider"],
-                        "embedding_model": record_vector["model"],
-                        "embedding_dimension": len(record_vector["vector"]),
-                        "embedding_space": record_vector["space"],
-                        "content_type": record_vector["content_type"],
-                        "language": record_vector["language"] or "",
-                    }])
+                with erasure.chroma_write_lock(MEMORY_DIR / "chroma"):
+                    coll.upsert(
+                        ids=[str(rid)], embeddings=[record_vector["vector"]], documents=[content],
+                        metadatas=[{
+                            "type": ktype, "project": project, "status": "active",
+                            "session_id": sid, "created_at": created_at, "confidence": 1.0,
+                            # v11 §J multi-embedding-space metadata
+                            "embedding_provider": record_vector["provider"],
+                            "embedding_model": record_vector["model"],
+                            "embedding_dimension": len(record_vector["vector"]),
+                            "embedding_space": record_vector["space"],
+                            "content_type": record_vector["content_type"],
+                            "language": record_vector["language"] or "",
+                        }])
         except Exception as _ce:  # noqa: BLE001 — chroma raises its own types; the SQL vector is stored
             self._swallowed("save.chroma_upsert", _ce, "chroma per-space upsert failed")
 

@@ -157,6 +157,33 @@ def restore(snapshot: Path, destination: Path, dsn=None, environ=None):
     return restore_sqlite(snapshot, destination)
 
 
+def database_identity(dsn) -> tuple[tuple[tuple[str, int], ...], str]:
+    """Hosts (case-folded, with ports, in any order) and database name: what makes two DSNs name the same database."""
+    return tuple(sorted((host.host.lower(), host.port) for host in dsn.hosts)), dsn.database
+
+
+def refuse_environment_conflict(root: Path, env, dsn) -> None:
+    """database.json (written by restore) outranks TAM_TEAM_DATABASE_URL, so restoring into a data
+    directory that already runs on PostgreSQL, while the environment names another database, would
+    repoint that server. A directory without the PostgreSQL marker is new: the environment is ignored."""
+    from team_memory.database_config import read_postgres_marker
+    from team_memory.database_contracts import DATABASE_URL_ENV, DatabaseDsn, DsnOrigin, InvalidDsn
+
+    marker = read_postgres_marker(root)
+    raw = env.get(DATABASE_URL_ENV, '').strip()
+    if marker is None or not raw:
+        return
+    advice = f'restore into a new data directory (--root), or point {DATABASE_URL_ENV} at the restored database'
+    try:
+        configured = DatabaseDsn.parse(raw, DsnOrigin.ENV)
+    except InvalidDsn as exc:
+        raise Conflict(f'{DATABASE_URL_ENV} is not a usable DSN ({exc}) and this data directory runs on '
+                       f'{marker.target}; {advice}') from exc
+    if database_identity(configured) != database_identity(dsn):
+        raise Conflict(f'This data directory runs on {marker.target} through {DATABASE_URL_ENV}, which names '
+                       f'another database than the restore target; restoring would repoint the server: {advice}')
+
+
 def restore_postgres(snapshot: Path, root: Path, dsn, environ=None):
     """pg_restore into ``dsn``, re-provision every workspace role, then point ``root`` at the database.
 
@@ -177,6 +204,7 @@ def restore_postgres(snapshot: Path, root: Path, dsn, environ=None):
     snapshot, root = snapshot.resolve(), root.resolve()
     if (root / 'identity.db').exists() or (root / DATABASE_CONFIG_FILE).exists():
         raise FileExistsError(root)
+    refuse_environment_conflict(root, env, dsn)
     manifest = pg_backup.read_manifest(snapshot)
     if manifest.instance_id is None:
         raise Conflict('The backup names no installation id; it cannot be restored as a TAM server')
@@ -186,12 +214,14 @@ def restore_postgres(snapshot: Path, root: Path, dsn, environ=None):
         raise Conflict('Restore needs the master key of the backed-up server: set TAM_TEAM_MASTER_KEY '
                        'or copy master.key into the data directory') from exc
     settings = DatabaseSettings.from_environ(env)
-    restored = pg_backup.restore(snapshot, dsn, lambda: PgWorkspaceProvisioner(
-        dsn.to_uri(), manifest.instance_id, master_key, settings), env)
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    store = FileDatabaseConfigStore(root, env)
-    store.save(DatabaseConfig(backend=Backend.POSTGRES, dsn_token=store.seal(dsn), instance_id=UUID(manifest.instance_id),
-                              generation=1, updated_at=datetime.now(UTC), updated_by=RESTORE_ACTOR))
+    # The lease creates ``root``, so it is taken only once every refusal that needs no lease has passed.
+    with ServerLease(root):
+        restored = pg_backup.restore(snapshot, dsn, lambda: PgWorkspaceProvisioner(
+            dsn.to_uri(), manifest.instance_id, master_key, settings), env)
+        store = FileDatabaseConfigStore(root, env)
+        store.save(DatabaseConfig(backend=Backend.POSTGRES, dsn_token=store.seal(dsn),
+                                  instance_id=UUID(manifest.instance_id), generation=1,
+                                  updated_at=datetime.now(UTC), updated_by=RESTORE_ACTOR))
     return restored
 
 
