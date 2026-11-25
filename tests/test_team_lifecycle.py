@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+from cryptography.fernet import Fernet
 
 from team_memory.contracts import Conflict
 from team_memory.lifecycle import ServerLease, backup, restore
@@ -393,3 +394,135 @@ def test_request_shutdown_runs_the_installed_sigterm_handler():
     finally:
         signal.signal(signal.SIGTERM, previous)
     assert received == [signal.SIGTERM]
+
+
+def assert_one_line_error(code, out, err, expected):
+    assert code == 1
+    assert out == ''
+    assert 'Traceback' not in err
+    assert len(err.strip().splitlines()) == 1
+    assert expected in err
+
+
+def test_cli_reports_duplicate_user_as_one_line(tmp_path, monkeypatch, capsys):
+    assert run_cli(monkeypatch, capsys, tmp_path, 'user-add', 'ann', 'Ann')[0] == 0
+    code, out, err = run_cli(monkeypatch, capsys, tmp_path, 'user-add', 'ann', 'Ann')
+    assert_one_line_error(code, out, err, 'User already exists')
+
+
+def test_cli_reports_token_file_that_already_exists(tmp_path, monkeypatch, capsys):
+    run_cli(monkeypatch, capsys, tmp_path, 'user-add', 'ann', 'Ann')
+    target = tmp_path / 'token.txt'
+    target.write_text('keep me', encoding='utf-8')
+    code, out, err = run_cli(monkeypatch, capsys, tmp_path, 'token-create', 'ann', '--client', 'c', '--out', str(target))
+    assert_one_line_error(code, out, err, 'File exists')
+    assert str(target) in err
+    assert target.read_text(encoding='utf-8') == 'keep me'
+
+
+def test_cli_reports_missing_token_directory_and_file(tmp_path, monkeypatch, capsys):
+    run_cli(monkeypatch, capsys, tmp_path, 'user-add', 'ann', 'Ann')
+    code, out, err = run_cli(monkeypatch, capsys, tmp_path, 'token-create', 'ann', '--client', 'c',
+                             '--out', str(tmp_path / 'absent' / 'token.txt'))
+    assert_one_line_error(code, out, err, 'No such file')
+    code, out, err = run_cli(monkeypatch, capsys, tmp_path, 'token-revoke', '--file', str(tmp_path / 'nope'))
+    assert_one_line_error(code, out, err, 'No such file')
+
+
+@pytest.mark.parametrize('args,expected', [
+    (('token-create', 'ghost', '--client', 'c', '--out', 'ghost.token'), 'Unknown or disabled user'),
+    (('member', 'ann', 'no-team', 'reader'), 'Unknown user or team'),
+    (('user-role', 'ghost', 'superadmin'), 'Unknown user'),
+    (('invite', 'ghost'), 'Unknown or disabled user'),
+    (('user-disable', 'ghost'), 'Unknown user'),
+    (('team-add', 'dev', 'Dev'), 'Team already exists'),
+])
+def test_cli_reports_domain_errors_as_one_line(tmp_path, monkeypatch, capsys, args, expected):
+    run_cli(monkeypatch, capsys, tmp_path, 'user-add', 'ann', 'Ann')
+    run_cli(monkeypatch, capsys, tmp_path, 'team-add', 'dev', 'Dev')
+    args = tuple(str(tmp_path / a) if a == 'ghost.token' else a for a in args)
+    code, out, err = run_cli(monkeypatch, capsys, tmp_path, *args)
+    assert_one_line_error(code, out, err, expected)
+
+
+def mark_postgres_root(root, dsn):
+    from team_memory.database_config import write_postgres_marker
+    from team_memory.database_contracts import PostgresMarker
+
+    root.mkdir()
+    write_postgres_marker(root, PostgresMarker(instance_id=uuid4(), target=dsn.host_db()))
+
+
+def stub_manifest(monkeypatch):
+    from types import SimpleNamespace
+
+    from team_memory import pg_backup
+
+    monkeypatch.setattr(pg_backup, 'read_manifest', lambda snapshot: SimpleNamespace(instance_id=str(uuid4())))
+
+
+def test_postgres_restore_refuses_a_postgres_directory_whose_environment_names_another_database(tmp_path, monkeypatch):
+    pytest.importorskip('psycopg')
+    from team_memory import pg_backup
+    from team_memory.database_contracts import DATABASE_URL_ENV, DatabaseDsn, DsnOrigin
+    from team_memory.lifecycle import restore_postgres
+
+    def unreachable(*args, **kwargs):
+        raise AssertionError('the target database must not be touched')
+
+    monkeypatch.setattr(pg_backup, 'read_manifest', unreachable)
+    monkeypatch.setattr(pg_backup, 'restore', unreachable)
+    target = DatabaseDsn.parse('postgresql://tam@db.internal/restored', DsnOrigin.ENV)
+    root = tmp_path / 'data'
+    mark_postgres_root(root, DatabaseDsn.parse('postgresql://tam@db.internal/live', DsnOrigin.ENV))
+    for configured in ('postgresql://tam@db.internal/live', 'postgresql://tam@other.internal/restored',
+                       'postgresql://tam@db.internal:6432/restored', 'not a dsn'):
+        with pytest.raises(Conflict, match=DATABASE_URL_ENV):
+            restore_postgres(tmp_path / 'snapshot', root, target, {DATABASE_URL_ENV: configured})
+    assert not (root / 'database.json').exists()
+    # The same database spelled differently, or no variable at all, passes the check and reaches the snapshot.
+    for environ in ({DATABASE_URL_ENV: 'postgresql://other@DB.internal:5432/restored'}, {}):
+        with pytest.raises(AssertionError, match='must not be touched'):
+            restore_postgres(tmp_path / 'snapshot', root, target, environ)
+
+
+def test_postgres_restore_into_a_new_directory_ignores_the_environment(tmp_path, monkeypatch):
+    pytest.importorskip('psycopg')
+    from team_memory import pg_backup
+    from team_memory.database_contracts import DATABASE_URL_ENV, DatabaseDsn, DsnOrigin
+    from team_memory.lifecycle import restore_postgres
+
+    def reached(*args, **kwargs):
+        raise AssertionError('reached the snapshot')
+
+    monkeypatch.setattr(pg_backup, 'read_manifest', reached)
+    target = DatabaseDsn.parse('postgresql://tam@db.internal/restored', DsnOrigin.ENV)
+    with pytest.raises(AssertionError, match='reached the snapshot'):
+        restore_postgres(tmp_path / 'snapshot', tmp_path / 'new', target,
+                         {DATABASE_URL_ENV: 'postgresql://tam@db.internal/live'})
+
+
+def test_postgres_restore_refuses_a_data_directory_in_use(tmp_path, monkeypatch):
+    pytest.importorskip('psycopg')
+    from team_memory.database_contracts import DatabaseDsn, DsnOrigin
+    from team_memory.lifecycle import restore_postgres
+    from team_memory.settings import MASTER_KEY_ENV
+
+    stub_manifest(monkeypatch)
+    target = DatabaseDsn.parse('postgresql://tam@db.internal/restored', DsnOrigin.ENV)
+    env = {MASTER_KEY_ENV: Fernet.generate_key().decode('ascii')}
+    with ServerLease(tmp_path), pytest.raises(Conflict, match='Server data is in use'):
+        restore_postgres(tmp_path / 'snapshot', tmp_path, target, env)
+
+
+def test_refused_postgres_restore_leaves_no_data_directory(tmp_path, monkeypatch):
+    pytest.importorskip('psycopg')
+    from team_memory.database_contracts import DatabaseDsn, DsnOrigin
+    from team_memory.lifecycle import restore_postgres
+
+    stub_manifest(monkeypatch)
+    target = DatabaseDsn.parse('postgresql://tam@db.internal/restored', DsnOrigin.ENV)
+    root = tmp_path / 'data'
+    with pytest.raises(Conflict, match='master key'):
+        restore_postgres(tmp_path / 'snapshot', root, target, {})
+    assert not root.exists()

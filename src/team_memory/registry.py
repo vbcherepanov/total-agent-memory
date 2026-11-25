@@ -21,6 +21,7 @@ from team_memory.contracts import (
     Conflict,
     DomainError,
     Forbidden,
+    InvalidInput,
     Scope,
     ScopeKind,
     Unauthorized,
@@ -242,7 +243,7 @@ class Registry:
     @classmethod
     def apply_org_role(cls, db: CompatConnection, user_id: str, role: str) -> None:
         if role not in ORG_ROLES:
-            raise ValueError("org_role must be member, company_viewer or superadmin")
+            raise InvalidInput("org_role must be member, company_viewer or superadmin")
         cls._require_user(db, user_id)
         if role != "superadmin":
             cls._keep_superadmin(db, user_id)
@@ -282,7 +283,7 @@ class Registry:
     @serializable
     def membership(self, user_id: str, team_id: str, role: str | None) -> None:
         if role is not None and role not in TEAM_ROLES:
-            raise ValueError("role must be reader, editor or manager")
+            raise InvalidInput("role must be reader, editor or manager")
         with self.connect() as db:
             if role is None:
                 db.execute("DELETE FROM membership WHERE user_id=? AND team_id=?", (user_id, team_id))
@@ -505,12 +506,12 @@ class Registry:
     @staticmethod
     def _identifier(value: str) -> None:
         if re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", value) is None:
-            raise ValueError("ID must contain 1–64 letters, digits, underscores or hyphens")
+            raise InvalidInput("ID must contain 1–64 letters, digits, underscores or hyphens")
 
     @staticmethod
     def _name(value: str) -> None:
         if not value.strip() or len(value) > 128:
-            raise ValueError("Name must contain 1–128 characters")
+            raise InvalidInput("Name must contain 1–128 characters")
 
     @staticmethod
     def _require_user(db: CompatConnection, user_id: str) -> None:

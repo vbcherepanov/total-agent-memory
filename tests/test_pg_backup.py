@@ -201,3 +201,64 @@ def test_backup_never_runs_a_workspace_row_security_policy(pg_database, tmp_path
             superuser.execute(sql.SQL("REASSIGN OWNED BY {} TO CURRENT_USER").format(sql.Identifier(admin_role)))
             superuser.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(admin_role)))
             superuser.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(admin_role)))
+
+
+def _restore_environment(url: str | None) -> dict[str, str]:
+    from cryptography.fernet import Fernet
+
+    from team_memory.database_contracts import DATABASE_URL_ENV
+    from team_memory.settings import MASTER_KEY_ENV
+
+    env = {key: value for key, value in os.environ.items() if key != DATABASE_URL_ENV}
+    env[MASTER_KEY_ENV] = Fernet.generate_key().decode("ascii")
+    if url is not None:
+        env[DATABASE_URL_ENV] = url
+    return env
+
+
+def _mark_root(root, url: str) -> None:
+    from team_memory.database_config import write_postgres_marker
+    from team_memory.database_contracts import PostgresMarker
+
+    root.mkdir()
+    write_postgres_marker(root, PostgresMarker(instance_id=uuid.uuid4(), target=DatabaseDsn.parse(url).host_db()))
+
+
+@pytest.mark.postgres
+def test_restore_refuses_a_postgres_directory_the_environment_points_at_another_database(
+        installation, tmp_path, pg_server):
+    from team_memory.lifecycle import restore_postgres
+
+    database, _ = installation
+    pg_backup.backup(DatabaseDsn.parse(database.url), tmp_path / "snapshot")
+    root = tmp_path / "data"
+    _mark_root(root, database.url)
+    with fresh_database(pg_server) as target:
+        with pytest.raises(Conflict, match="TAM_TEAM_DATABASE_URL"):
+            restore_postgres(tmp_path / "snapshot", root, DatabaseDsn.parse(target.url),
+                             _restore_environment(database.url))
+        assert not (root / "database.json").exists()
+        with psycopg.connect(target.url, autocommit=True) as connection:
+            assert connection.execute("SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'tam\\_%'").fetchone()[0] == 0
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("marked", [False, True], ids=["new-root-other-env", "marker-same-database"])
+def test_restore_is_allowed_for_a_new_root_or_an_environment_naming_the_target(
+        installation, tmp_path, pg_server, marked):
+    from team_memory.database_config import FileDatabaseConfigStore
+    from team_memory.lifecycle import restore_postgres
+
+    database, _ = installation
+    pg_backup.backup(DatabaseDsn.parse(database.url), tmp_path / "snapshot")
+    original_url = database.url
+    with psycopg.connect(pg_server.admin_url, autocommit=True) as admin:
+        admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database.name)))
+    root = tmp_path / "data"
+    with fresh_database(pg_server) as target:
+        if marked:
+            _mark_root(root, original_url)
+        env = _restore_environment(target.url if marked else original_url)
+        restore_postgres(tmp_path / "snapshot", root, DatabaseDsn.parse(target.url), env)
+        config = FileDatabaseConfigStore(root, env).load()
+        assert config is not None and config.backend.value == "postgres"

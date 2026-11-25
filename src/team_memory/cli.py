@@ -27,6 +27,8 @@ DSN_ENV_HELP = "name of the environment variable holding the postgresql:// DSN (
 CLI_ACTOR = "cli"
 # Non-zero so systemd/compose restart the server after another one took the PostgreSQL lease.
 EXIT_LEASE_LOST = 75
+# Expected user mistakes (duplicate, unknown ID, bad path): one stderr line, no traceback.
+EXIT_USER_ERROR = 1
 MUTATING_COMMANDS = frozenset({"user-add", "team-add", "member", "bootstrap-admin", "user-role", "invite",
                                "user-disable", "user-enable", "user-purge", "setup-token", "token-create",
                                "token-revoke", "login-unlock"})
@@ -342,6 +344,40 @@ def main():
     serve.add_argument("--host", default=os.environ.get("MCP_HTTP_HOST", DEFAULT_HOST))
     serve.add_argument("--port", type=int, default=int(os.environ.get("MCP_HTTP_PORT", DEFAULT_PORT)))
     args = parser.parse_args()
+    try:
+        dispatch(parser, args)
+    except DomainError as exc:
+        parser.exit(EXIT_USER_ERROR, f"{exc}\n")
+    except (FileExistsError, FileNotFoundError, PermissionError) as exc:
+        parser.exit(EXIT_USER_ERROR, f"{describe_path_error(exc)}\n")
+
+
+def describe_path_error(exc: OSError) -> str:
+    hints = {
+        FileExistsError: "choose a path that does not exist yet",
+        FileNotFoundError: "check the path and that its directory exists",
+        PermissionError: "check the file permissions",
+    }
+    hint = next(text for kind, text in hints.items() if isinstance(exc, kind))
+    return f"{exc.strerror or exc}: {exc.filename or ''}".rstrip(": ") + f" ({hint})"
+
+
+def write_token_file(registry: Registry, user_id: str, client: str, out: Path) -> None:
+    """Create ``out`` exclusively, then issue the token; a failure leaves neither the new file nor a live token."""
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    token = None
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as destination:
+            token = registry.issue_token(user_id, client)
+            destination.write(token + "\n")
+    except BaseException:
+        out.unlink(missing_ok=True)
+        if token is not None:
+            registry.revoke(token)
+        raise
+
+
+def dispatch(parser: argparse.ArgumentParser, args) -> None:
     if args.command == "remote":
         from team_memory.remote import run
         run(args, parser)
@@ -352,14 +388,11 @@ def main():
         return
     if args.command in ("backup", "restore"):
         from team_memory.lifecycle import backup, restore
-        try:
-            if args.command == "backup":
-                backup(args.root, args.out)
-            else:
-                dsn = dsn_from_env(parser, args.dsn_env) if args.dsn_env else None
-                restore(args.snapshot, args.root, dsn)
-        except (DomainError, FileExistsError) as exc:
-            parser.exit(1, f"{exc}\n")
+        if args.command == "backup":
+            backup(args.root, args.out)
+        else:
+            dsn = dsn_from_env(parser, args.dsn_env) if args.dsn_env else None
+            restore(args.snapshot, args.root, dsn)
         return
     if args.command == "db-check":
         db_check(parser, args)
@@ -383,10 +416,7 @@ def main():
     elif args.command == "user-role":
         registry.set_org_role(args.id, args.role)
     elif args.command in ("user-disable", "user-enable"):
-        try:
-            effect = registry.set_active(args.id, args.command == "user-enable")
-        except (Conflict, DomainError) as exc:
-            parser.exit(1, f"{exc}\n")
+        effect = registry.set_active(args.id, args.command == "user-enable")
         if args.command == "user-disable":
             sys.stdout.write(f"Disabled {args.id}: {effect['tokens_revoked']} tokens revoked, "
                              f"{effect['sessions_ended']} sessions ended, {effect['invites_voided']} invites voided.\n")
@@ -394,20 +424,17 @@ def main():
             sys.stdout.write(f"Enabled {args.id}. Issue a new invite or token; earlier ones stay revoked.\n")
     elif args.command in ("user-export", "user-purge"):
         from team_memory.offboarding import export_personal, purge_personal
-        try:
-            if args.command == "user-export":
-                done = export_personal(registry, args.id, args.out)
-                sys.stdout.write(f"Exported {done['records']} records, {done['history']} history events and "
-                                 f"{done['onboarding_notes']} onboarding notes to {args.out}\n")
-            else:
-                done = purge_personal(registry, args.id, args.confirm)
-                sys.stdout.write(f"Deleted the personal area of {args.id} ({done['records']} records, "
-                                 f"{done['onboarding_notes']} onboarding notes). Backups taken earlier still contain it.\n")
-                if os.environ.get(REPLICA_URL_ENV):
-                    sys.stdout.write("The Litestream replica keeps it until you run: tam-team replication drop "
-                                     f"--user {args.id} --confirm {args.id}\n")
-        except (DomainError, FileExistsError) as exc:
-            parser.exit(1, f"{exc}\n")
+        if args.command == "user-export":
+            done = export_personal(registry, args.id, args.out)
+            sys.stdout.write(f"Exported {done['records']} records, {done['history']} history events and "
+                             f"{done['onboarding_notes']} onboarding notes to {args.out}\n")
+        else:
+            done = purge_personal(registry, args.id, args.confirm)
+            sys.stdout.write(f"Deleted the personal area of {args.id} ({done['records']} records, "
+                             f"{done['onboarding_notes']} onboarding notes). Backups taken earlier still contain it.\n")
+            if os.environ.get(REPLICA_URL_ENV):
+                sys.stdout.write("The Litestream replica keeps it until you run: tam-team replication drop "
+                                 f"--user {args.id} --confirm {args.id}\n")
     elif args.command == "login-unlock":
         removed = Accounts(registry, AccountPolicy.from_env()).unlock(args.id, args.ip)
         sys.stdout.write(f"Cleared {removed} sign-in counters for {args.id}.\n")
@@ -416,17 +443,12 @@ def main():
     elif args.command == "setup-token":
         from team_memory.metrics import Metrics
         from team_memory.setup import SetupPolicy, SetupService
-        try:
-            issued = SetupService(registry, Accounts(registry, AccountPolicy.from_env()), Metrics(),
-                                  SetupPolicy.from_env()).issue_token()
-        except Conflict as exc:
-            parser.exit(1, f"{exc}\n")
+        issued = SetupService(registry, Accounts(registry, AccountPolicy.from_env()), Metrics(),
+                              SetupPolicy.from_env()).issue_token()
         sys.stdout.write(f"Setup code: {issued.token}\nValid until {issued.expires_at}; single use. "
                          "Open /dashboard/ on the server and enter it.\n")
     elif args.command == "token-create":
-        fd = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as destination:
-            destination.write(registry.issue_token(args.user, args.client) + "\n")
+        write_token_file(registry, args.user, args.client, args.out)
     elif args.command == "token-revoke":
         registry.revoke(args.file.read_text(encoding="utf-8").strip())
     elif args.command == "serve":
