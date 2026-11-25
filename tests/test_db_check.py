@@ -62,6 +62,8 @@ def test_redact_removes_every_form_of_the_password():
     ("no pg_hba.conf entry for host, no encryption", "28000", ErrorCategory.SSL_REQUIRED),
     ("database \"tam\" does not exist", "3D000", ErrorCategory.NO_DATABASE),
     ("permission denied", "42501", ErrorCategory.PERMISSION),
+    ("connection failed: FATAL:  permission denied for database \"tam\"\nDETAIL:  User does not have CONNECT privilege.",
+     None, ErrorCategory.PERMISSION),
     ("canceling statement due to statement timeout", "57014", ErrorCategory.TIMEOUT),
 ])
 def test_driver_errors_map_to_fixed_categories(message, sqlstate, expected):
@@ -116,6 +118,50 @@ def test_prepared_database_passes_every_check(pg_database):
 def test_minimal_admin_role_passes(pg_database):
     with pg_admin(pg_database, superuser=False) as url:
         report = PgDatabaseChecker().check(DatabaseDsn.parse(url), instance_id=None)
+    assert report.ok, report.model_dump_json(indent=1)
+
+
+def _revoke_public_database_privileges(database):
+    """What the DBA SQL in docs/TEAM_POSTGRES.md does."""
+    with psycopg.connect(database.url, autocommit=True) as dba:
+        dba.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(sql.Identifier(database.name)))
+
+
+@pytest.mark.postgres
+def test_admin_that_cannot_give_workspace_roles_database_access_gets_dba_sql(pg_database):
+    with pg_admin(pg_database, superuser=False) as url:
+        dsn = DatabaseDsn.parse(url)
+        _revoke_public_database_privileges(pg_database)
+        with psycopg.connect(pg_database.url, autocommit=True) as dba:
+            dba.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                sql.Identifier(pg_database.name), sql.Identifier(dsn.user)))
+        statement = f'GRANT CONNECT, TEMPORARY ON DATABASE "{pg_database.name}" TO "{dsn.user}" WITH GRANT OPTION;'
+        privileges = PgDatabaseChecker().check(dsn, instance_id=None).check(CheckId.PRIVILEGES)
+        assert privileges.status is CheckStatus.FAILED
+        assert privileges.dba_sql == (statement,)
+        with psycopg.connect(pg_database.url, autocommit=True) as dba:
+            dba.execute(statement)
+        report = PgDatabaseChecker().check(dsn, instance_id=None)
+        assert report.ok, report.model_dump_json(indent=1)
+
+
+@pytest.mark.postgres
+def test_database_owner_passes_when_public_database_privileges_are_revoked(pg_database):
+    """The documented setup: the TAM role owns the database, so it can grant what PUBLIC lost."""
+    with pg_admin(pg_database, superuser=False) as url:
+        dsn = DatabaseDsn.parse(url)
+        with psycopg.connect(pg_database.url, autocommit=True) as dba:
+            previous = dba.execute("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = %s",
+                                   (pg_database.name,)).fetchone()[0]
+            dba.execute(sql.SQL("ALTER DATABASE {} OWNER TO {}").format(
+                sql.Identifier(pg_database.name), sql.Identifier(dsn.user)))
+        try:
+            _revoke_public_database_privileges(pg_database)
+            report = PgDatabaseChecker().check(dsn, instance_id=None)
+        finally:
+            with psycopg.connect(pg_database.url, autocommit=True) as dba:
+                dba.execute(sql.SQL("ALTER DATABASE {} OWNER TO {}").format(
+                    sql.Identifier(pg_database.name), sql.Identifier(previous)))
     assert report.ok, report.model_dump_json(indent=1)
 
 

@@ -65,6 +65,7 @@ ISOLATED_STARTUP_SECONDS = 20
 MAX_STDERR_CHARS = 2000
 EMPTY_PASSFILE = "empty.pgpass"
 META_INSTANCE_KEY = "instance_id"
+WORKSPACE_DATABASE_PRIVILEGES = ("CONNECT", "TEMPORARY")
 
 AUTH_SQLSTATES = frozenset({"28P01", "28000"})
 NO_DATABASE_SQLSTATES = frozenset({"3D000"})
@@ -72,6 +73,7 @@ PERMISSION_SQLSTATES = frozenset({"42501"})
 TIMEOUT_SQLSTATES = frozenset({"57014", "55P03"})
 SSL_MARKERS = ("ssl", "encryption", "certificate")
 TIMEOUT_MARKERS = ("timeout", "timed out")
+PERMISSION_MARKER = "permission denied"
 
 CATEGORY_MESSAGES = {
     ErrorCategory.AUTH_FAILED: "Authentication failed: check the user name and password, and pg_hba.conf.",
@@ -79,7 +81,7 @@ CATEGORY_MESSAGES = {
     ErrorCategory.SSL_REQUIRED: "The TLS settings do not match the server: check sslmode and the certificates.",
     ErrorCategory.TIMEOUT: f"The server did not answer within {CHECK_TIMEOUT_SECONDS} seconds.",
     ErrorCategory.NO_DATABASE: "The database does not exist; ask the DBA to create it (see the SQL).",
-    ErrorCategory.PERMISSION: "The user lacks a privilege this check needs.",
+    ErrorCategory.PERMISSION: "The user lacks a privilege; when the connection itself is refused, CONNECT on the database.",
     ErrorCategory.UNEXPECTED: "The server returned an unexpected error; see the server log for details.",
 }
 
@@ -119,6 +121,9 @@ def categorize(exc: BaseException) -> ErrorCategory:
             return ErrorCategory.AUTH_FAILED
         if "does not exist" in text and "database" in text:
             return ErrorCategory.NO_DATABASE
+        # libpq reports a refused login (no CONNECT on the database) without a SQLSTATE.
+        if PERMISSION_MARKER in text:
+            return ErrorCategory.PERMISSION
         return ErrorCategory.UNREACHABLE
     return ErrorCategory.UNEXPECTED
 
@@ -134,6 +139,12 @@ def quote_literal(value: str) -> str:
 def create_database_sql(database: str, owner: str) -> str:
     return (f"CREATE DATABASE {quote_ident(database)} OWNER {quote_ident(owner)} TEMPLATE template0 "
             "ENCODING 'UTF8' LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8';")
+
+
+def workspace_database_access_sql(database: str, admin: str) -> str:
+    """What lets a TAM role that does not own the database give workspace roles access to it."""
+    return (f"GRANT {', '.join(WORKSPACE_DATABASE_PRIVILEGES)} ON DATABASE {quote_ident(database)} "
+            f"TO {quote_ident(admin)} WITH GRANT OPTION;")
 
 
 def extension_sql() -> tuple[str, ...]:
@@ -170,6 +181,7 @@ class ServerFacts:
     superuser: bool
     createrole: bool
     create_on_database: bool
+    workspace_database_access: bool
     extensions: tuple[ExtensionState, ...]
     extensions_schema_usable: bool
     control_schema: bool
@@ -191,6 +203,12 @@ def read_facts(connection) -> ServerFacts:
         "SELECT rolsuper, rolcreaterole FROM pg_roles WHERE rolname = current_user").fetchone()
     create_on_database = connection.execute(
         "SELECT has_database_privilege(current_database(), 'CREATE')").fetchone()[0]
+    # Workspace roles log in and their migrations create a temporary table: each privilege must
+    # be held by PUBLIC or be grantable by this user (pg_provision._grant_database_access).
+    workspace_database_access = connection.execute(
+        "SELECT bool_and(has_database_privilege('public', current_database(), privilege) "
+        "OR has_database_privilege(current_database(), privilege || ' WITH GRANT OPTION')) "
+        "FROM unnest(%s::text[]) AS privilege", (list(WORKSPACE_DATABASE_PRIVILEGES),)).fetchone()[0]
     extensions = []
     for name in REQUIRED_EXTENSIONS:
         installed = connection.execute(
@@ -222,7 +240,8 @@ def read_facts(connection) -> ServerFacts:
                 meta_readable = False
     return ServerFacts(version_num=version_num, version=version, encoding=encoding, provider=provider,
                        collate=collate, ctype=ctype, locale=locale, superuser=bool(superuser), createrole=bool(createrole),
-                       create_on_database=bool(create_on_database), extensions=tuple(extensions),
+                       create_on_database=bool(create_on_database),
+                       workspace_database_access=bool(workspace_database_access), extensions=tuple(extensions),
                        extensions_schema_usable=bool(usable and usable[0]), control_schema=bool(control),
                        instance_id=instance_id, meta_readable=meta_readable)
 
@@ -292,6 +311,10 @@ def check_privileges(facts: ServerFacts, dsn: DatabaseDsn) -> DatabaseCheck:
     if not facts.create_on_database:
         missing.append("CREATE on the database (schemas per workspace)")
         sql.append(f"GRANT CREATE ON DATABASE {quote_ident(dsn.database)} TO {quote_ident(dsn.user)};")
+    if not facts.workspace_database_access:
+        missing.append("the right to grant " + " and ".join(WORKSPACE_DATABASE_PRIVILEGES) +
+                       " on the database (workspace roles must log in; PUBLIC does not hold them)")
+        sql.append(workspace_database_access_sql(dsn.database, dsn.user))
     if not missing:
         return _passed(CheckId.PRIVILEGES, "The user may create roles and schemas")
     return _failed(CheckId.PRIVILEGES, "The user lacks " + " and ".join(missing) + ".", *sql)

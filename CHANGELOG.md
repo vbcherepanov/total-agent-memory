@@ -6,6 +6,12 @@ and versions use [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Team server on PostgreSQL: workspaces work when the database was prepared with the DBA SQL from `docs/TEAM_POSTGRES.md`.** That SQL revokes all database privileges from `PUBLIC`, and the per-workspace roles were never granted any, so every memory call returned "Workspace unavailable". TAM now grants each workspace role `CONNECT` and `TEMPORARY`, repairs existing workspaces on the next start, and revokes the privileges again when a workspace is dropped. A TAM role that neither owns the database nor may grant the two privileges fails the **Test** button's privileges check with the statement for the DBA. Thanks @alex09x (#61).
+- A login refused for lack of `CONNECT` on the database is reported as a missing privilege, not as "The server could not be reached".
+- **`src/team_memory/remote.py` runs again as a single copied file**, as the team server guide says. Since 15.0.0 it imported a second module and failed with `ModuleNotFoundError` on a client that had only that file; `tam-remote` from an installed package was not affected.
+
 ## [15.0.0] - 2026-11-16
 
 ### Upgrade notes

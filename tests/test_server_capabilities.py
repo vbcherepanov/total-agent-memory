@@ -14,6 +14,17 @@ from server_capabilities import (PERSONAL_CAPABILITIES, UNREACHABLE_EXIT, UNSUPP
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_remote_bridge_runs_as_a_single_copied_file(tmp_path):
+    """docs/team-server.md: copy src/team_memory/remote.py to the client; it needs Python and nothing else."""
+    copied = tmp_path / "remote.py"
+    copied.write_bytes((ROOT / "src" / "team_memory" / "remote.py").read_bytes())
+    result = subprocess.run([sys.executable, "-I", str(copied), "--help"], cwd=tmp_path, capture_output=True, text=True,
+                            env={key: os.environ[key] for key in ("PATH", "SYSTEMROOT") if key in os.environ},
+                            timeout=30, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "--token-file" in result.stdout
+
+
 @pytest.fixture
 def endpoint_server():
     state = {"health": {"status": "ok"}, "posts": [], "paths": []}
