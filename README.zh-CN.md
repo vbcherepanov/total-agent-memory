@@ -11,7 +11,7 @@
 >
 > 网站与文档：**[totalmemory.dev](https://totalmemory.dev)** · [快速开始](https://totalmemory.dev/docs/quick-start) · [Claude Code 指南](https://totalmemory.dev/docs/claude-code) · [基准测试](https://totalmemory.dev/benchmarks) · [与其他工具比较](https://totalmemory.dev/compare)
 
-[![版本](https://img.shields.io/badge/version-15.0.0-8ad.svg)](https://pypi.org/project/total-agent-memory/)
+[![版本](https://img.shields.io/badge/version-15.0.1-8ad.svg)](https://pypi.org/project/total-agent-memory/)
 [![PyPI](https://img.shields.io/badge/PyPI-total--agent--memory-3776AB.svg)](https://pypi.org/project/total-agent-memory/)
 [![npm](https://img.shields.io/badge/npm-total--agent--memory-cb3837.svg)](https://www.npmjs.com/package/total-agent-memory)
 [![Docker GHCR](https://img.shields.io/badge/docker-ghcr.io-2496ED.svg)](https://github.com/vbcherepanov/total-agent-memory/pkgs/container/total-agent-memory)
@@ -66,7 +66,7 @@ sentence-transformers 的重排器会引入 PyTorch，需要单独安装：
 
 | 方式 | 命令 |
 |---|---|
-| Docker（linux/amd64、linux/arm64） | `docker run -p 127.0.0.1:3737:3737 -p 127.0.0.1:37737:37737 -v ~/.tam:/data ghcr.io/vbcherepanov/total-agent-memory:15.0.0` — HTTP MCP 地址为 `:3737/mcp`，管理页面为 `:37737`；两者均需使用 `~/.tam/state/http-token` 中的令牌。MCP 使用 `Authorization: Bearer`；管理页面打开 `/login#token=...`，令牌保留在 URL 片段中，并换取不透明的会话 Cookie |
+| Docker（linux/amd64、linux/arm64） | `docker run -p 127.0.0.1:3737:3737 -p 127.0.0.1:37737:37737 -v ~/.tam:/data ghcr.io/vbcherepanov/total-agent-memory:15.0.1` — HTTP MCP 地址为 `:3737/mcp`，管理页面为 `:37737`；两者均需使用 `~/.tam/state/http-token` 中的令牌。MCP 使用 `Authorization: Bearer`；管理页面打开 `/login#token=...`，令牌保留在 URL 片段中，并换取不透明的会话 Cookie |
 | npx 连接器 | `npx -y total-agent-memory connect claude-code`（也可选择 `codex`、`cursor`、`cline`、`continue`、`aider`、`windsurf`、`gemini-cli`、`opencode`） |
 | Claude Code 插件（含服务器、Skill 和自动捕获钩子） | `/plugin marketplace add vbcherepanov/total-agent-memory`<br>`/plugin install total-agent-memory@vbcherepanov` |
 | 来自[独立插件仓库](https://github.com/vbcherepanov/total-agent-memory-plugin)的 Claude Code 和 Cowork 插件（含服务器和 Skill，不含钩子；需要 [uv](https://docs.astral.sh/uv/)） | `/plugin marketplace add vbcherepanov/total-agent-memory-plugin`<br>`/plugin install total-agent-memory@vbcherepanov` |
@@ -232,7 +232,7 @@ export FASTEMBED_CACHE_PATH="$PWD/.tam-models" TAM_MEMORY_DIR="$PWD/.tam-test-me
 介绍 TAM 的论文正在 Journal of Open Source Software 审稿，见 [paper/paper.md](paper/paper.md)。
 正式发表前，请引用软件和预印本：
 
-> Cherepanov, V. total-agent-memory (version 15.0.0) [software].
+> Cherepanov, V. total-agent-memory (version 15.0.1) [software].
 > https://github.com/vbcherepanov/total-agent-memory
 >
 > 预印本：[doi:10.5281/zenodo.23011523](https://doi.org/10.5281/zenodo.23011523)

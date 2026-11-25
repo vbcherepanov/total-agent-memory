@@ -4,6 +4,7 @@ Release summaries for the 14.x series and 15.0, moved here from the README. The
 [CHANGELOG](../CHANGELOG.md) is the complete, authoritative record; this page
 keeps the measurements and usage notes that the summaries added.
 
+- [15.0.1](#version-1501--team-server-fixes-and-a-cleaner-hard-delete)
 - [15.0.0](#version-1500--indexed-resources-warm-recall-checked-clients-snapshot-exports)
 - [14.9.0](#version-1490--memory-through-the-hooks-rules-that-are-measured-a-warm-daemon)
 - [14.8.0](#version-1480--every-recall-tier-measured-two-of-them-fixed)
@@ -16,6 +17,36 @@ keeps the measurements and usage notes that the summaries added.
 - [14.2.0](#version-1420--facts-that-change-over-time)
 - [14.1.0](#version-1410--what-is-new)
 - [14.0.0](#version-1400--what-is-new)
+
+## Version 15.0.1 — team server fixes and a cleaner hard delete
+
+**Release date: 2026-11-25.** No migrations; upgrade the package or the image and restart the server.
+
+Fixes for the team server, found while a reviewer installed it from the documentation, and one for hard delete:
+
+- **Workspaces on a database prepared with the DBA SQL (#61).** The SQL in
+  [TEAM_POSTGRES.md](TEAM_POSTGRES.md) revokes all database privileges from `PUBLIC`, and the
+  per-workspace roles were granted none, so every memory call returned "Workspace unavailable".
+  The server now grants each workspace role `CONNECT` and `TEMPORARY`, repairs existing
+  workspaces on the next start and revokes the privileges when a workspace is dropped. The TAM
+  role must own the database or hold both privileges `WITH GRANT OPTION`; otherwise the **Test**
+  button's privileges check fails with the statement for the DBA.
+- **A refused login names the cause.** A login refused for lack of `CONNECT` is reported as a
+  missing privilege, not as "The server could not be reached".
+- **`remote.py` as one file.** `src/team_memory/remote.py` runs again when copied alone to a
+  client, as the team server guide describes.
+- **Restore does not repoint a configured server.** `tam-team restore` of a PostgreSQL backup
+  refuses a data directory that already runs on PostgreSQL while `TAM_TEAM_DATABASE_URL` names
+  another database; use a new `--root`, or point the variable at the restored database.
+- **One-line CLI errors.** `tam-team` answers a duplicate user, an unknown token, an invalid
+  name or an existing output file with one line and exit code 1, not a traceback.
+- **Hard delete and ChromaDB.** A new ChromaDB index file could hold leftover process memory,
+  including record text, in its unused part. `memory_delete` with `hard=true` now zeroes it.
+- **Hard delete and the free space of `memory.db`.** Bytes of a record changed or removed earlier
+  could stay inside a database page. Hard delete now rebuilds the database (`VACUUM`); it reports
+  `sqlite_not_compacted` when another process is writing at that moment.
+
+---
 
 ## Version 15.0.0 — indexed resources, warm recall, checked clients, snapshot exports
 
