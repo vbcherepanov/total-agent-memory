@@ -81,6 +81,39 @@ def test_role_sees_its_own_schema_through_search_path(installation):
     assert path == f"{schema_for(KEY_B)}, {COMPAT_SCHEMA}, {EXTENSIONS_SCHEMA}"
 
 
+def _revoke_public_database_privileges(database):
+    """What the DBA SQL in docs/TEAM_POSTGRES.md and docker/postgres-init/01-tam.sql do."""
+    with psycopg.connect(database.url, autocommit=True) as superuser:
+        superuser.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM PUBLIC").format(sql.Identifier(database.name)))
+
+
+def test_workspace_role_works_when_public_database_privileges_are_revoked(pg_database):
+    _revoke_public_database_privileges(pg_database)
+    instance_id = str(uuid.uuid4())
+    PgProvisioner(pg_database.url).bootstrap(instance_id)
+    provisioner = PgWorkspaceProvisioner(pg_database.url, instance_id, MASTER_KEY)
+    # ensure() logs in as the role and runs the workspace migrations, one of which uses a temporary table.
+    provisioner.ensure(KEY_A)
+    with psycopg.connect(provisioner.store_database(KEY_A).url, autocommit=True) as a:
+        assert a.execute("SELECT has_database_privilege(current_user, current_database(), 'CONNECT')").fetchone()[0]
+        a.execute("CREATE TEMP TABLE scratch (x int)")
+
+
+def test_admin_that_cannot_grant_database_access_gets_the_dba_statement(pg_database):
+    with pg_admin(pg_database, superuser=False) as url:
+        admin_role = DatabaseDsn.parse(url).user
+        _revoke_public_database_privileges(pg_database)
+        with psycopg.connect(pg_database.url, autocommit=True) as superuser:
+            superuser.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                sql.Identifier(pg_database.name), sql.Identifier(admin_role)))
+        instance_id = str(uuid.uuid4())
+        PgProvisioner(url).bootstrap(instance_id)
+        with pytest.raises(PrerequisitesMissing) as raised:
+            PgWorkspaceProvisioner(url, instance_id, MASTER_KEY).ensure(KEY_A)
+        assert raised.value.dba_sql == (
+            f'GRANT CONNECT, TEMPORARY ON DATABASE "{pg_database.name}" TO "{admin_role}" WITH GRANT OPTION;',)
+
+
 def test_other_workspace_is_denied_by_qualified_name_and_search_path(installation):
     other = schema_for(KEY_B)
     with as_role(installation, KEY_A) as a:
