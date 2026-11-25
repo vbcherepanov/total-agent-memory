@@ -44,6 +44,7 @@ from team_memory.db_check import (
     TRANSACTION_POOLING_MESSAGE,
     categorize,
     extension_sql,
+    workspace_database_access_sql,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -483,9 +484,8 @@ class PgWorkspaceProvisioner:
             _identifier(database), _identifier(target.role)))
         if not self._has_database_access(connection, target):
             admin = connection.execute("SELECT current_user").fetchone()[0]
-            statement = sql.SQL("GRANT CONNECT, TEMPORARY ON DATABASE {} TO {} WITH GRANT OPTION;").format(
-                _identifier(database), _identifier(admin)).as_string(connection)
-            raise PrerequisitesMissing("Workspace roles cannot connect to the database", dba_sql=(statement,))
+            raise PrerequisitesMissing("Workspace roles cannot connect to the database",
+                                       dba_sql=(workspace_database_access_sql(database, admin),))
 
     @staticmethod
     def _adopt(connection, target: WorkspaceTarget) -> None:
@@ -586,7 +586,9 @@ class PgWorkspaceProvisioner:
         """DROP SCHEMA ... CASCADE, DROP ROLE and the map row in one transaction.
 
         The schema is dropped while acting as its owner, so a non-superuser admin needs no
-        ownership of workspace objects. Sessions of the role must be gone (server stopped).
+        ownership of workspace objects. DROP OWNED then revokes the role's database privileges
+        (_grant_database_access); PostgreSQL refuses to drop a role that still holds any.
+        Sessions of the role must be gone (server stopped).
         """
         from psycopg import sql
 
@@ -604,6 +606,7 @@ class PgWorkspaceProvisioner:
                 if acting:
                     connection.execute("RESET ROLE")
             if role_exists is not None:
+                connection.execute(sql.SQL("DROP OWNED BY {}").format(_identifier(target.role)))
                 connection.execute(sql.SQL("DROP ROLE {}").format(_identifier(target.role)))
             connection.execute(f"DELETE FROM {CONTROL_SCHEMA}.{WORKSPACE_TABLE} WHERE key = %s", (key,))
         LOGGER.info(json.dumps({"event": "workspace_dropped", "schema": target.schema}))

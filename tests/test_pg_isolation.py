@@ -114,6 +114,42 @@ def test_admin_that_cannot_grant_database_access_gets_the_dba_statement(pg_datab
             f'GRANT CONNECT, TEMPORARY ON DATABASE "{pg_database.name}" TO "{admin_role}" WITH GRANT OPTION;',)
 
 
+@pytest.mark.parametrize("superuser", [True, False])
+def test_purge_and_reprovision_work_when_public_database_privileges_are_revoked(pg_database, superuser):
+    """PostgreSQL refuses to drop a role that still holds privileges on the database."""
+    with pg_admin(pg_database, superuser=superuser) as url:
+        _revoke_public_database_privileges(pg_database)
+        if not superuser:
+            with psycopg.connect(pg_database.url, autocommit=True) as dba:
+                dba.execute(sql.SQL("GRANT CONNECT, TEMPORARY ON DATABASE {} TO {} WITH GRANT OPTION").format(
+                    sql.Identifier(pg_database.name), sql.Identifier(DatabaseDsn.parse(url).user)))
+        instance_id = str(uuid.uuid4())
+        PgProvisioner(url).bootstrap(instance_id)
+        provisioner = PgWorkspaceProvisioner(url, instance_id, MASTER_KEY)
+        provisioner.ensure(KEY_A)
+        provisioner.drop(KEY_A)
+        with psycopg.connect(url, autocommit=True) as admin:
+            assert admin.execute("SELECT 1 FROM pg_roles WHERE rolname = %s",
+                                 (role_for(KEY_A, instance_id),)).fetchone() is None
+        provisioner.ensure(KEY_A)
+        with psycopg.connect(provisioner.store_database(KEY_A).url, autocommit=True) as a:
+            a.execute("CREATE TEMP TABLE scratch (x int)")
+
+
+def test_database_access_revoked_after_provisioning_is_repaired_by_ensure(pg_database):
+    """An installation provisioned while PUBLIC still held the privileges, hardened afterwards."""
+    instance_id = str(uuid.uuid4())
+    PgProvisioner(pg_database.url).bootstrap(instance_id)
+    provisioner = PgWorkspaceProvisioner(pg_database.url, instance_id, MASTER_KEY)
+    provisioner.ensure(KEY_A)
+    _revoke_public_database_privileges(pg_database)
+    with pytest.raises(psycopg.OperationalError):
+        psycopg.connect(provisioner.store_database(KEY_A).url).close()
+    provisioner.ensure(KEY_A)
+    with psycopg.connect(provisioner.store_database(KEY_A).url, autocommit=True) as a:
+        a.execute("CREATE TEMP TABLE scratch (x int)")
+
+
 def test_other_workspace_is_denied_by_qualified_name_and_search_path(installation):
     other = schema_for(KEY_B)
     with as_role(installation, KEY_A) as a:

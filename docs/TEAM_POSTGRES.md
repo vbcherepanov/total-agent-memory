@@ -27,9 +27,10 @@ Workspaces are created lazily, on the first request that needs them, just like `
 | | Required | Why |
 |---|---|---|
 | PostgreSQL | 17 or newer (CI runs 18) | the builtin `C.UTF-8` locale provider |
+| TAM server | the `[postgres]` extra: `pip install "total-agent-memory[postgres]"` (the Docker image already has it) | the PostgreSQL driver (psycopg) and the pgvector adapter; without it `tam-team` says so and exits |
 | Database | `ENCODING 'UTF8'`, `LOCALE_PROVIDER builtin`, `BUILTIN_LOCALE 'C.UTF-8'` (libc `C`/`POSIX` collation also passes) | bytewise text ordering, identical to SQLite; any other collation changes `ORDER BY` and comparisons |
 | Extension | `vector` (pgvector; tested with 0.8.1), in schema `extensions`, usable by everyone | embeddings |
-| TAM role | `LOGIN`, `CREATEROLE`, `CREATE` on the database | one role and one schema per workspace |
+| TAM role | `LOGIN`, `CREATEROLE`, `CREATE` on the database; owner of the database, or `CONNECT` and `TEMPORARY` on it `WITH GRANT OPTION` when `PUBLIC` does not hold them | one role and one schema per workspace; TAM grants each workspace role `CONNECT` and `TEMPORARY` |
 | Connections | direct or session-mode pooling; **not** transaction-mode poolers (PgBouncer `pool_mode=transaction`, Supabase port 6543, Neon "pooled" endpoints) | TAM uses session settings, advisory locks and per-workspace roles |
 | Network | same host, VPC or availability zone as the server; TLS (`sslmode=require` or `verify-full`) for any non-local host | a save issues about 57 SQL statements and a recall about 58: every millisecond of round trip adds roughly 60 ms to each |
 
