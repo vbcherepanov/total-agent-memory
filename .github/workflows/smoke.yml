@@ -163,10 +163,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build candidate image
-        run: docker build -t tam-compose-candidate:15.0.1 .
+        run: docker build -t tam-compose-candidate:15.0.2 .
       - name: Compose cold start, real MCP, restart and persistence
         env:
-          TAM_TEAM_IMAGE: tam-compose-candidate:15.0.1
+          TAM_TEAM_IMAGE: tam-compose-candidate:15.0.2
         run: bash tests/smoke/compose-candidate.sh
 
   browser:

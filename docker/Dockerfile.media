@@ -1,4 +1,4 @@
-ARG DEVELOPMENT_IMAGE=tam-development:15.0.1
+ARG DEVELOPMENT_IMAGE=tam-development:15.0.2
 FROM postgres:18 AS postgres_tools
 FROM ${DEVELOPMENT_IMAGE}
 COPY requirements.txt /tmp/tam-media-requirements.txt

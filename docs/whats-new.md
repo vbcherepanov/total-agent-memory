@@ -4,6 +4,7 @@ Release summaries for the 14.x series and 15.0, moved here from the README. The
 [CHANGELOG](../CHANGELOG.md) is the complete, authoritative record; this page
 keeps the measurements and usage notes that the summaries added.
 
+- [15.0.2](#version-1502--the-plugin-connects-codex-docs-match-the-installer)
 - [15.0.1](#version-1501--team-server-fixes-and-a-cleaner-hard-delete)
 - [15.0.0](#version-1500--indexed-resources-warm-recall-checked-clients-snapshot-exports)
 - [14.9.0](#version-1490--memory-through-the-hooks-rules-that-are-measured-a-warm-daemon)
@@ -17,6 +18,35 @@ keeps the measurements and usage notes that the summaries added.
 - [14.2.0](#version-1420--facts-that-change-over-time)
 - [14.1.0](#version-1410--what-is-new)
 - [14.0.0](#version-1400--what-is-new)
+
+## Version 15.0.2 — the plugin connects, Codex docs match the installer
+
+**Release date: 2026-11-26.** No migrations; upgrade the package or the image and restart the server.
+
+Fixes found while a reviewer installed the Claude Code plugin and the Codex integration from the
+documentation, and one for a new parser release:
+
+- **The plugin from the marketplace connects (#64).** The server path in `.mcp.json` used
+  `${CLAUDE_PLUGIN_ROOT:-.}`, which Claude Code expands to the user's project directory, so the
+  server never started. `plugin.json` now declares the server with `${CLAUDE_PLUGIN_ROOT}`.
+- **The plugin's hooks find their interpreter (#65).** With `uv` installed and no earlier install,
+  the server ran through `uvx` and no venv existed, so the hooks failed on a missing
+  `snowballstemmer` without a notice. The bootstrap now builds the venv in the memory directory
+  first and keeps `uvx` and `npx` as the fallback. The first start takes longer while it builds.
+- **Codex CLI is documented as it is installed (#66).** `install.sh --ide codex` registers the MCP
+  server and installs the skills. It registers no hooks and does not touch `~/.codex/AGENTS.md`;
+  the installation guide and the skill references said otherwise. The manual snippet now uses
+  `[mcp_servers.memory]`, the table Codex reads. Capturing finished Codex turns through `notify`
+  is described as an optional manual step.
+- **The installer's closing text.** The dashboard address is printed only when the dashboard
+  service was installed, which is with Claude Code; the stop and start commands name the service
+  that `install.sh` installs.
+- **Python docstrings with `tree-sitter-language-pack` 1.27.** Its Python grammar reports a
+  docstring as a `docstring` node, so the parser left the `docstring` field of every Python chunk
+  empty. Both node shapes are read now. The indexed chunk text includes the docstring and was not
+  affected, so nothing needs to be indexed again.
+
+---
 
 ## Version 15.0.1 — team server fixes and a cleaner hard delete
 
