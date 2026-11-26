@@ -233,7 +233,9 @@ def _extract_docstring(language: str, source: bytes, node, body_node) -> str | N
         return raw
 
     for child in block.children:
-        if child.type == "string":
+        # The Python grammar in tree-sitter-language-pack 1.27 wraps the first string of a body in a
+        # `docstring` node; older grammars give `expression_statement` > `string`.
+        if child.type in ("string", "docstring"):
             return _extract_string_text(child)
         if child.type == "expression_statement":
             for grand in child.children:

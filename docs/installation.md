@@ -187,23 +187,32 @@ Open <http://127.0.0.1:37737/> — dashboard, knowledge graph, token savings.
 ### Installer IDE matrix
 
 The same MCP server, same tools, same protocol — different installation
-locations and hook wiring per IDE. The installer (`install.sh --ide <name>`)
-automates all of it.
+locations per IDE. The installer (`install.sh --ide <name>`) registers the
+MCP server and installs the skill or rules file. It installs the capture
+hooks, the dashboard service and the background jobs for Claude Code only;
+the "Hooks installed" column says what the installer sets up, not what the
+IDE could run.
 
-| IDE | Skill API | Hook API | Sub-agents | Install command |
+| IDE | Skill API | Hooks installed | Sub-agents | Install command |
 |---|:-:|:-:|:-:|---|
 | Claude Code | ✅ | ✅ full | ✅ | `./install.sh --ide claude-code` |
-| Codex CLI | ✅ | ✅ | ❌ | `./install.sh --ide codex` |
+| Codex CLI | ✅ | ❌ ² | ❌ | `./install.sh --ide codex` |
 | Cursor | rules-pane | ❌ | composer | `./install.sh --ide cursor` |
 | Cline (VS Code) | `.clinerules/` | ❌ | ❌ | `./install.sh --ide cline` |
 | Continue | rules file | ❌ | ❌ | `./install.sh --ide continue` |
 | Aider | `.aider.conf.yml` read | ❌ ¹ | ❌ | `./install.sh --ide aider` |
 | Windsurf | `.windsurfrules` | ❌ | cascade | `./install.sh --ide windsurf` |
-| Gemini CLI | `.gemini/rules/` | ⚠️ partial | ❌ | `./install.sh --ide gemini-cli` |
-| OpenCode | `.opencode/skills/` | ✅ | custom | `./install.sh --ide opencode` |
+| Gemini CLI | `.gemini/rules/` | ❌ | ❌ | `./install.sh --ide gemini-cli` |
+| OpenCode | `.opencode/skills/` | ❌ | custom | `./install.sh --ide opencode` |
 
 ¹ Aider has no MCP yet — the bridge is via `lookup_memory.sh` /
 `save_memory.sh` shell scripts.
+
+² Codex CLI gets the MCP server in `~/.codex/config.toml` and the skills in
+`~/.codex/skills/` and `~/.agents/skills/`. No hooks are registered and
+`~/.codex/AGENTS.md` is not touched. To capture finished Codex turns, add
+`hooks/codex-notify.sh` as the `notify` program yourself, see
+[configuration.md](configuration.md).
 
 Full per-IDE setup, manual fallbacks, and template snippets:
 [`skills/memory-protocol/references/ide-setup.md`](../skills/memory-protocol/references/ide-setup.md).

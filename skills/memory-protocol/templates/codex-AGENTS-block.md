@@ -1,7 +1,8 @@
 # Memory Protocol
 
-Append the block below into your `~/.codex/AGENTS.md` (the installer
-does this automatically with `install.sh --ide codex`).
+Optional. `install.sh --ide codex` installs the `memory-protocol` skill
+and does not touch `~/.codex/AGENTS.md`; append the block below yourself
+if you also want the protocol stated there.
 
 ---
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -181,6 +182,32 @@ def test_ide_codex_writes_codex_toml_with_env_overrides(sandbox_home: Path):
     # Fence markers for idempotent replace
     assert "# --- total-agent-memory MCP Server ---" in content
     assert "# --- End total-agent-memory ---" in content
+
+
+def test_ide_codex_install_claims_no_dashboard_service_hooks_or_agents_file(sandbox_home: Path):
+    """The dashboard service and the hooks belong to the Claude Code install."""
+    result = _run_install(sandbox_home, "--ide", "codex")
+    assert result.returncode == 0, result.stderr
+
+    assert "Web dashboard (not started by this install" in result.stdout
+    assert "Dashboard management" not in result.stdout
+    assert "launchctl" not in result.stdout
+    codex_home = sandbox_home / ".codex"
+    assert "hooks" not in (codex_home / "config.toml").read_text(encoding="utf-8")
+    assert not (codex_home / "hooks").exists()
+    assert not (codex_home / "AGENTS.md").exists()
+
+
+def test_dashboard_service_names_in_the_banner_are_the_shipped_ones():
+    """The banner prints stop/start commands; they must name the service the installer registers."""
+    script = INSTALL_SH.read_text(encoding="utf-8")
+    label = re.search(r'^DASHBOARD_LAUNCHD_LABEL="([^"]+)"$', script, re.MULTILINE).group(1)
+    unit = re.search(r'^DASHBOARD_SYSTEMD_UNIT="([^"]+)"$', script, re.MULTILINE).group(1)
+    plist = ROOT / "launchagents" / f"{label}.plist"
+    assert f"<string>{label}</string>" in plist.read_text(encoding="utf-8")
+    assert (ROOT / "systemd" / unit).is_file()
+    # The helper prints the names of its own, separately installed service.
+    assert "print-management" not in script
 
 
 def test_install_codex_shim_still_works(sandbox_home: Path):

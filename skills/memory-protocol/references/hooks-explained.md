@@ -10,7 +10,9 @@ Each hook ships in two forms:
 - `hooks/<name>.sh` — bash, for macOS / Linux / WSL2 / cygwin
 - `hooks/<name>.ps1` — PowerShell 5.1+ / 7+ for native Windows
 
-The same hook is wired up differently per IDE (see `ide-setup.md`).
+The installer wires these hooks for Claude Code only; the Claude Code
+plugin brings the same set. Codex CLI gets one optional script,
+`codex-notify` (section 9), which you register yourself.
 
 ---
 
@@ -37,9 +39,8 @@ indefinitely.
 
 ## 1. `session-start.{sh,ps1}`
 
-**Fires:** every time a new agent session starts (Claude Code: on
-`claude` launch; Codex: on `codex`; Cursor / Cline: on first prompt
-of the session).
+**Fires:** every time a new Claude Code session starts (on `claude`
+launch).
 
 **Reads:** event JSON containing `cwd`, sometimes `git_branch`.
 
@@ -197,10 +198,10 @@ reflection processing. Different from `on-stop` — this is
 
 ---
 
-## 7. `on-bash-error.ps1` (Codex / Windows)
+## 7. `on-bash-error.{sh,ps1}`
 
-**Fires:** Codex `BashErrorHook` — bash exited non-zero, error worth
-recording.
+**Fires:** Claude Code `PostToolUse` and `PostToolUseFailure` on Bash —
+the command exited non-zero, error worth recording.
 
 **Reads:** command, exit code, stderr.
 
@@ -253,50 +254,42 @@ no-op.
 
 ---
 
-## Hook compatibility matrix
+## What the installer registers
 
-| Hook | Claude Code | Codex CLI | Cursor | Cline | Continue | Aider | Windsurf | Gemini CLI | OpenCode |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `session-start` | ✅ | ✅ | ⚠️ ¹ | ⚠️ ¹ | ⚠️ ¹ | ❌ | ⚠️ ¹ | ⚠️ ¹ | ✅ |
-| `pre-edit` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ ² |
-| `rule-reminder` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `codex-notify` | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `post-tool-use` | ✅ | ⚠️ ³ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `user-prompt-submit` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ ² |
-| `on-stop` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| `on-bash-error` | ❌ ⁴ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| `auto-capture` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Hook | Claude Code | Codex CLI |
+|---|:-:|:-:|
+| `session-start` | ✅ | ❌ |
+| `session-end` | ✅ | ❌ |
+| `on-stop` | ✅ | ❌ |
+| `user-prompt-submit` | ✅ | ❌ |
+| `pre-edit` | ✅ | ❌ |
+| `rule-reminder` | ✅ | ❌ |
+| `inject-provenance` | ✅ | ❌ |
+| `post-tool-use` | ✅ | ❌ |
+| `on-bash-error` | ✅ | ❌ |
+| `memory-trigger` | ✅ | ❌ |
+| `auto-capture` | ✅ | ❌ |
+| `codex-notify` | ❌ | manual ¹ |
 
-¹ No native hook API — `session_init` runs at first user message
-through skill activation instead. The agent calls it, not the IDE.
+¹ Not registered by the installer. Add it to `~/.codex/config.toml`
+yourself: `notify = ["/path/to/total-agent-memory/hooks/codex-notify.sh"]`.
 
-² OpenCode supports custom commands; the hook is wired as a manual
-command rather than an event.
-
-³ Codex `PostToolUse` is rate-limited — keep `MEMORY_POST_TOOL_CAPTURE=0`
-or use sampling.
-
-⁴ Claude Code surfaces bash errors via tool result — use the
-agent-side `learn_error` call instead of an IDE hook.
+For Cursor, Cline, Continue, Aider, Windsurf, Gemini CLI and OpenCode the
+installer registers no hooks: the agent follows the protocol from the
+skill or rules file and calls `session_init`, `memory_recall` and
+`memory_save` itself.
 
 ---
 
-## Where to install hooks per IDE
+## Where the hooks are registered
 
-| IDE | Hooks live in |
+| Client | Hooks live in |
 |---|---|
-| Claude Code | `~/.claude/settings.json` → `"hooks"` map |
-| Codex CLI | `~/.codex/config.toml` → `[hooks]` section |
-| Cursor | not supported — use skill triggers |
-| Cline | not supported — manual recall in user prompts |
-| Continue | not supported |
-| Aider | not supported |
-| Windsurf | not supported (planned) |
-| Gemini CLI | not supported |
-| OpenCode | `.opencode/hooks/<event>.json` (custom event API) |
+| Claude Code (`install.sh --ide claude-code`) | `~/.claude/settings.json` → `"hooks"` map, scripts in `~/.claude/hooks/` |
+| Claude Code (plugin) | the plugin's own `hooks/hooks.json` |
+| Codex CLI | `notify` in `~/.codex/config.toml`, set by hand |
 
-The installer (`install.sh --ide <name>`) writes the right config in
-each case. Manual setup blueprints are in `templates/`.
+Manual setup blueprints are in `templates/`.
 
 ---
 

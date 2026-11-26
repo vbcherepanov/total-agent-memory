@@ -458,7 +458,13 @@ switch ($Ide) {
     "codex"       { Write-Host "  Codex CLI now has persistent memory. Type /mcp to verify." }
 }
 Write-Host ""
-Write-Host "  Web dashboard: http://localhost:37737"
+# The dashboard task is registered with Claude Code only; other clients get the manual command.
+if ($Ide -eq "claude-code" -and -not $TestMode) {
+    Write-Host "  Web dashboard: http://localhost:37737"
+} else {
+    Write-Host "  Web dashboard (not started by this install; start it when you need it):"
+    Write-Host "    .venv\Scripts\python.exe src\dashboard.py   then open http://localhost:37737"
+}
 Write-Host ""
 Write-Host "  Scheduled tasks (PowerShell, as current user):"
 Write-Host "    Get-ScheduledTask -TaskName $TaskReflection"
