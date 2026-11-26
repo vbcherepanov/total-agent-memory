@@ -1,22 +1,17 @@
-# Append to ~/.codex/config.toml. The installer
-# (~/total-agent-memory/install.sh --ide codex) does this automatically.
+# Manual fallback for ~/.codex/config.toml. The installer
+# (~/total-agent-memory/install.sh --ide codex) writes the
+# [mcp_servers.memory] table for you; it registers no hooks.
 
-[mcp.servers.memory]
+# Optional — capture every finished Codex turn into the action log
+# (and, with TAM_TURN_AUTOSAVE, a turn summary). `notify` is a top-level
+# key: keep it above the first [table].
+# notify = ["/path/to/total-agent-memory/hooks/codex-notify.sh"]
+
+[mcp_servers.memory]
 command = "total-agent-memory"
 args = []
 
-[mcp.servers.memory.env]
+[mcp_servers.memory.env]
 MEMORY_ASYNC_ENRICHMENT = "false"
 MEMORY_QUALITY_GATE_ENABLED = "auto"
 MEMORY_CONTRADICTION_DETECT_ENABLED = "auto"
-
-[hooks]
-SessionStart     = "~/.codex/hooks/session-start.sh"
-PreToolUse       = "~/.codex/hooks/pre-edit.sh"
-UserPromptSubmit = "~/.codex/hooks/user-prompt-submit.sh"
-Stop             = "~/.codex/hooks/on-stop.sh"
-BashErrorHook    = "~/.codex/hooks/on-bash-error.sh"
-
-# Optional — opt in if you want every tool call observed by the
-# reflection cycle. Cumulative cost (~30ms/call), so off by default.
-# PostToolUse    = "~/.codex/hooks/post-tool-use.sh"

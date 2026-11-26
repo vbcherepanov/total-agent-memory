@@ -6,6 +6,13 @@ and versions use [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The docs no longer promise Codex CLI hooks and an `AGENTS.md` section that the installer never set up** (#66). `install.sh --ide codex` registers the MCP server and installs the skills; `docs/installation.md`, `ide-setup.md` and `hooks-explained.md` now say so, and the installer matrix shows which hooks are installed, which is Claude Code only. The optional `notify` capture for Codex is described as a manual step.
+- The manual Codex snippet and `templates/codex-config.toml` used `[mcp.servers.memory]`, a table Codex ignores. They use `[mcp_servers.memory]`, the one the installer writes, and no longer show a `[hooks]` table with event names Codex does not have.
+- `install.sh` and `install.ps1` printed the dashboard address for every client, although the dashboard service is installed with Claude Code only. Other clients now get the command that starts it by hand.
+- The stop and start commands `install.sh` prints for the dashboard named a service the installer does not create (`com.claude-total-memory.dashboard`, `claude-total-memory-dashboard`). They name the installed ones: `com.total-agent-memory.dashboard` and `claude-memory-dashboard.service`.
+
 ## [15.0.1] - 2026-11-25
 
 ### Fixed

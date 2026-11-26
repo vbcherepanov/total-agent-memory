@@ -99,7 +99,11 @@ else
     MEMORY_DIR="$HOME/.tam"
 fi
 VENV_DIR="$INSTALL_DIR/.venv"
-DASHBOARD_SERVICE="$INSTALL_DIR/scripts/dashboard-service.sh"
+
+# The dashboard service this installer sets up: launchagents/ and systemd/ carry the same names.
+DASHBOARD_PORT_DEFAULT=37737
+DASHBOARD_LAUNCHD_LABEL="com.total-agent-memory.dashboard"
+DASHBOARD_SYSTEMD_UNIT="claude-memory-dashboard.service"
 
 # Test mode: skip heavy steps (pip, model DL, launchctl, dashboard install)
 TEST_MODE="${INSTALL_TEST_MODE:-0}"
@@ -426,6 +430,8 @@ fi
 # the canonical `com.total-agent-memory.dashboard.plist` shipped under
 # launchagents/. Both fought for port 37737. dashboard-service.sh remains
 # in scripts/ for manual use but isn't invoked automatically anymore.
+# Which service manager got the dashboard; empty when this run installed no dashboard service.
+DASHBOARD_SERVICE_KIND=""
 if [ "$TEST_MODE" != "1" ] && [ "$IDE" = "claude-code" ] && [ "$OS_NAME" = "Darwin" ] && [ -d "$INSTALL_DIR/launchagents" ]; then
     echo "-> Step 5: Installing background LaunchAgents (dashboard, reflection, orphan-backfill, check-updates)..."
     LA_DIR="$HOME/Library/LaunchAgents"
@@ -446,9 +452,11 @@ if [ "$TEST_MODE" != "1" ] && [ "$IDE" = "claude-code" ] && [ "$OS_NAME" = "Darw
         launchctl load "$DEST" 2>/dev/null || true
     done
     echo "  OK: Background agents installed"
+    DASHBOARD_SERVICE_KIND="launchd"
 elif [ "$IDE" = "claude-code" ] && [ "$OS_NAME" = "Linux" ] && [ -d "$INSTALL_DIR/systemd" ]; then
     echo "-> Step 5: Installing background systemd --user services (reflection, dashboard, orphan-backfill, check-updates)..."
     install_systemd_user_services
+    DASHBOARD_SERVICE_KIND="systemd"
 fi
 
 # -- 6. Verify --
@@ -537,12 +545,33 @@ echo "  MCP command:"
 echo "    $PY_PATH -m total_agent_memory.server"
 echo "    (or: $PY_PATH $SRV_PATH)"
 echo ""
-echo "  Web dashboard:"
-echo "    http://localhost:37737"
-echo ""
-if [ "$TEST_MODE" != "1" ]; then
-    "$DASHBOARD_SERVICE" print-management "$MEMORY_DIR" 2>/dev/null || true
-fi
+# The dashboard service is installed with Claude Code only; other clients get the manual command.
+case "$DASHBOARD_SERVICE_KIND" in
+    launchd)
+        echo "  Web dashboard:"
+        echo "    http://localhost:$DASHBOARD_PORT_DEFAULT"
+        echo ""
+        echo "  Dashboard management:"
+        echo "    Stop:    launchctl bootout gui/\$(id -u)/$DASHBOARD_LAUNCHD_LABEL"
+        echo "    Start:   launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/$DASHBOARD_LAUNCHD_LABEL.plist"
+        echo "    Logs:    tail -f $MEMORY_DIR/logs/dashboard.log"
+        ;;
+    systemd)
+        echo "  Web dashboard:"
+        echo "    http://localhost:$DASHBOARD_PORT_DEFAULT"
+        echo ""
+        echo "  Dashboard management:"
+        echo "    Status:  systemctl --user status $DASHBOARD_SYSTEMD_UNIT"
+        echo "    Stop:    systemctl --user stop $DASHBOARD_SYSTEMD_UNIT"
+        echo "    Start:   systemctl --user start $DASHBOARD_SYSTEMD_UNIT"
+        echo "    Logs:    tail -f $MEMORY_DIR/logs/dashboard.log"
+        ;;
+    *)
+        echo "  Web dashboard (not started by this install; start it when you need it):"
+        echo "    $PY_PATH $INSTALL_DIR/src/dashboard.py"
+        echo "    then open http://localhost:$DASHBOARD_PORT_DEFAULT"
+        ;;
+esac
 echo ""
 echo "  Optional: Copy CLAUDE.md.template to your project"
 echo "  to instruct Claude to use memory automatically."

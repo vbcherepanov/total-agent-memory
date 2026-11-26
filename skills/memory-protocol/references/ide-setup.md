@@ -1,10 +1,10 @@
 # IDE setup guide — total-agent-memory v10.5
 
 Same MCP server, same tools, same protocol — different installation
-locations and hook wiring per IDE. The installer
-(`install.sh --ide <name>`) automates all of this; this document is
-both the manual fallback and the reference for what the installer
-does.
+locations per IDE. The installer (`install.sh --ide <name>`) registers
+the MCP server and installs the skill or rules file; it wires the
+capture hooks for Claude Code only. This document is both the manual
+fallback and the reference for what the installer does.
 
 If your IDE is not listed: contributions welcome. The protocol still
 works as long as the client speaks MCP — just paste the SKILL.md
@@ -72,8 +72,9 @@ listed.
 
 ## 2. Codex CLI
 
-**Hook API:** ✅ via `[hooks]` in TOML
-**Skill API:** custom — load via `AGENTS.md` reference
+**Hooks installed:** ❌ — the installer registers no hooks with Codex;
+the optional `notify` program below captures finished turns
+**Skill API:** ✅ `~/.codex/skills/` and `~/.agents/skills/`
 **Sub-agents:** N/A
 
 ### Install
@@ -84,28 +85,41 @@ listed.
 
 Writes:
 
-- `~/.codex/skills/memory-protocol/` (mirror of the Claude Code skill)
-- `~/.codex/config.toml` — adds MCP server + hook entries
-- `~/.codex/AGENTS.md` — appends a `## Memory protocol` section
-  (compact version of SKILL.md)
+- `~/.codex/skills/` — `memory-protocol` and the other shipped skills
+  (mirror of the Claude Code skills)
+- `~/.agents/skills/` — the Codex `memory` skill and the agent skills
+- `~/.codex/config.toml` — the `[mcp_servers.memory]` table and its
+  `env`, between two marker comments
+
+It does not write hooks, `~/.codex/AGENTS.md` or a dashboard service.
 
 ### Manual `~/.codex/config.toml`:
 
 ```toml
-[mcp.servers.memory]
+[mcp_servers.memory]
 command = "total-agent-memory"
 args = []
-
-[hooks]
-SessionStart    = "~/.codex/hooks/session-start.sh"
-PreToolUse      = "~/.codex/hooks/pre-edit.sh"
-UserPromptSubmit = "~/.codex/hooks/user-prompt-submit.sh"
-Stop            = "~/.codex/hooks/on-stop.sh"
-BashErrorHook   = "~/.codex/hooks/on-bash-error.sh"
 ```
 
-`~/.codex/AGENTS.md`: append the `## Memory protocol` block — a
-distilled version is in `templates/codex-AGENTS-block.md`.
+The full snippet is in `../templates/codex-config.toml`.
+
+### Optional: capture finished turns
+
+Codex runs a `notify` program after each agent turn. Pointing it at the
+checkout's `hooks/codex-notify.sh` (`codex-notify.ps1` on Windows)
+records each turn in the action log and, with `TAM_TURN_AUTOSAVE`, saves
+a turn summary. `notify` is a top-level key, so it goes above the first
+`[table]` of `config.toml`:
+
+```toml
+notify = ["/path/to/total-agent-memory/hooks/codex-notify.sh"]
+```
+
+### Optional: `~/.codex/AGENTS.md`
+
+The skill already carries the protocol. To state it in `AGENTS.md` as
+well, append the block from `../templates/codex-AGENTS-block.md`
+yourself.
 
 ---
 
