@@ -12,8 +12,10 @@ Resolution order, cheapest and most predictable first:
    ``install.sh``, and the only branch that touches no network.
 2. ``total-agent-memory`` already on PATH (pipx, brew, a global pip).
 3. The plugin's own checkout, when its dependencies happen to be importable.
-4. ``uvx`` / ``npx``, which fetch a pinned release on first run.
-5. A venv this script creates under the memory dir and installs into.
+4. A venv this script creates under the memory dir and installs into. The
+   capture hooks run with this venv's interpreter.
+5. ``uvx`` / ``npx``, when the venv cannot be built. The server runs, but the
+   hooks have no interpreter with the package.
 
 Every branch ends in exec, so the MCP client sees one process either way.
 """
@@ -24,9 +26,12 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 PACKAGE = "total-agent-memory"
+MIN_PYTHON = "3.11"  # requires-python in pyproject.toml
+BUILD_GRACE_SECONDS = 900  # a build marker older than this belongs to a killed build
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -76,8 +81,15 @@ def _exec(argv: list[str]) -> None:
     os.execv(argv[0], argv)
 
 
+def _build_marker(venv: Path) -> Path:
+    """Exists while `_bootstrap_venv` builds `venv`, and stays when that build was killed."""
+    return venv.with_name(venv.name + ".building")
+
+
 def _from_existing_venv() -> list[str] | None:
     for venv in _candidate_venvs():
+        if _build_marker(venv).exists():
+            continue  # being built, or left half-built by a killed start
         entry = _exe(venv, "total-agent-memory")
         if entry.is_file():
             return [str(entry)]
@@ -118,30 +130,72 @@ def _from_runner() -> list[str] | None:
     return None
 
 
+def _venv_commands(venv: Path) -> list[list[str]]:
+    """The commands that create `venv` and install the package into it.
+
+    uv, when present, also supplies a Python new enough for the package, so an old system
+    interpreter does not block the install.
+    """
+    python = str(_exe(venv, "python"))
+    uv = shutil.which("uv")
+    if uv:
+        return [
+            [uv, "venv", "--quiet", "--python", f">={MIN_PYTHON}", str(venv)],
+            [uv, "pip", "install", "--quiet", "--python", python, PACKAGE],
+        ]
+    return [
+        [sys.executable, "-m", "venv", str(venv)],
+        [python, "-m", "pip", "install", "--quiet", "--upgrade", PACKAGE],
+    ]
+
+
 def _bootstrap_venv() -> list[str] | None:
-    """Last resort: build a venv under the memory dir and install into it."""
+    """Build a venv under the memory dir and install into it.
+
+    The capture hooks look for their interpreter in this venv (hooks/lib/common.sh), so it is
+    tried before a runner: a server started by uvx or npx leaves the hooks with a system Python
+    that cannot import the package.
+    """
     venv = _memory_home() / ".venv"
+    marker = _build_marker(venv)
+    try:
+        if time.time() - marker.stat().st_mtime < BUILD_GRACE_SECONDS:
+            log(f"{venv} is being built by another start")
+            return None
+    except OSError:
+        pass  # no marker: nobody is building
     log(f"no runnable install found — creating {venv}")
+    entry = _exe(venv, "total-agent-memory")
+    ready = False
     try:
         venv.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(
-            [sys.executable, "-m", "venv", str(venv)],
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            [str(_exe(venv, "python")), "-m", "pip", "install", "--quiet",
-             "--upgrade", PACKAGE],
-            check=True,
-        )
+        marker.touch()
+        shutil.rmtree(venv, ignore_errors=True)  # what a killed build left behind
+        for command in _venv_commands(venv):
+            # Captured: stdout is the MCP frame channel.
+            subprocess.run(command, check=True, capture_output=True)
+        ready = entry.is_file()
     except (OSError, subprocess.CalledProcessError) as e:
         detail = getattr(e, "stderr", b"") or b""
         if isinstance(detail, bytes):
             detail = detail.decode("utf-8", "replace")
         log(f"bootstrap failed: {e}. {detail.strip()[:400]}")
-        return None
-    entry = _exe(venv, "total-agent-memory")
-    return [str(entry)] if entry.is_file() else None
+    finally:
+        # Reached on KeyboardInterrupt too: Claude Code interrupts a server that takes longer
+        # than MCP_TIMEOUT (30 s by default) to start. A half-built venv would be taken for an
+        # existing install on the next start, so it does not stay.
+        if not ready:
+            shutil.rmtree(venv, ignore_errors=True)
+        try:
+            if ready or not venv.exists():
+                marker.unlink(missing_ok=True)
+            else:
+                # An installer that was still writing kept part of it: the marker stays, aged
+                # so that the next start rebuilds at once.
+                os.utime(marker, (0, 0))
+        except OSError:
+            pass
+    return [str(entry)] if ready else None
 
 
 def main() -> int:
@@ -149,8 +203,8 @@ def main() -> int:
         _from_existing_venv,
         _from_path,
         _from_plugin_checkout,
-        _from_runner,
         _bootstrap_venv,
+        _from_runner,
     ):
         argv = resolve()
         if argv:
