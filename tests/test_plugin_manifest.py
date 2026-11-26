@@ -62,16 +62,40 @@ def test_plugin_has_no_top_level_bin_dir():
 # ── Wiring ──────────────────────────────────────────────────────────
 
 
-def test_mcp_config_points_at_an_existing_bootstrap():
-    cfg = json.loads((ROOT / ".mcp.json").read_text(encoding="utf-8"))
-    server = cfg["mcpServers"]["memory"]
+PROJECT_PREFIX = "${CLAUDE_PLUGIN_ROOT:-.}/"
+
+
+def _bootstrap_arg(server: dict, prefix: str) -> Path:
     assert server["command"] == "python3"
     (arg,) = server["args"]
-    # The root variable defaults to "." so the file also works when launched from the repo root.
-    prefix = "${CLAUDE_PLUGIN_ROOT:-.}/"
-    assert arg.startswith(prefix)
-    target = ROOT / arg.removeprefix(prefix)
+    assert arg.startswith(prefix), arg
+    return ROOT / arg.removeprefix(prefix)
+
+
+def test_plugin_server_points_at_an_existing_bootstrap():
+    """The installed plugin starts the server from its own directory.
+
+    Claude Code replaces the exact token ``${CLAUDE_PLUGIN_ROOT}``. A shell-style default
+    (``${CLAUDE_PLUGIN_ROOT:-.}``) expands to ``.``, the user's project directory, where the script
+    does not exist, and the server never connects.
+    """
+    target = _bootstrap_arg(PLUGIN["mcpServers"]["memory"], "${CLAUDE_PLUGIN_ROOT}/")
+    assert target.is_file(), f"{target} referenced by plugin.json does not exist"
+
+
+def test_project_mcp_config_points_at_an_existing_bootstrap():
+    """.mcp.json serves the checkout opened as a project: outside a plugin the variable is unset,
+    so its default "." makes the path relative to the repository root."""
+    cfg = json.loads((ROOT / ".mcp.json").read_text(encoding="utf-8"))
+    target = _bootstrap_arg(cfg["mcpServers"]["memory"], PROJECT_PREFIX)
     assert target.is_file(), f"{target} referenced by .mcp.json does not exist"
+
+
+def test_plugin_and_project_servers_differ_only_in_the_path():
+    cfg = json.loads((ROOT / ".mcp.json").read_text(encoding="utf-8"))
+    project, plugin = cfg["mcpServers"]["memory"], PLUGIN["mcpServers"]["memory"]
+    assert {**project, "args": None} == {**plugin, "args": None}
+    assert _bootstrap_arg(project, PROJECT_PREFIX) == _bootstrap_arg(plugin, "${CLAUDE_PLUGIN_ROOT}/")
 
 
 def test_every_hook_command_exists_and_is_executable():
