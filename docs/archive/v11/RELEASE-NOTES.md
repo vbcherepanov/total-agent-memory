@@ -38,7 +38,7 @@ Every MCP tool you used in v10.x still exists with the same signature. What chan
 - **Silent Ollama fallback in `Store.embed` is GATED** — set `MEMORY_ALLOW_OLLAMA_IN_HOT_PATH=true` to re-enable.
 - **`USE_ADVANCED_RAG=auto` no longer auto-fires HyDE / `analyze_query`** — explicit opt-in via `deep` mode or env.
 
-Full per-stage migration: [`docs/v11/MIGRATION-FROM-V10.md`](MIGRATION-FROM-V10.md).
+Full per-stage migration: [`docs/archive/v11/MIGRATION-FROM-V10.md`](MIGRATION-FROM-V10.md).
 
 ---
 
@@ -77,7 +77,7 @@ Two new migrations, both **idempotent** and applied automatically on next start:
 ./bin/memory-bench --warmup --rounds 200
 ```
 
-Output goes to `docs/v11/benchmark.md`. CI gate (fails the build if any p95 regresses by more than 25 %):
+Output goes to `docs/archive/v11/benchmark.md`. CI gate (fails the build if any p95 regresses by more than 25 %):
 
 ```bash
 ./bin/memory-perf-gate
@@ -99,13 +99,13 @@ If you want LLM enrichment but not on the critical path:
 export MEMORY_MODE=balanced
 ```
 
-Otherwise the default `fast` is what you want. Full guide: [`docs/v11/MIGRATION-FROM-V10.md`](MIGRATION-FROM-V10.md).
+Otherwise the default `fast` is what you want. Full guide: [`docs/archive/v11/MIGRATION-FROM-V10.md`](MIGRATION-FROM-V10.md).
 
 ---
 
 ## Links
 
-- Migration guide: [`docs/v11/MIGRATION-FROM-V10.md`](MIGRATION-FROM-V10.md)
-- Architecture audit: [`docs/v11/audit.md`](audit.md)
-- Bench artifact: [`docs/v11/benchmark.md`](benchmark.md)
-- CHANGELOG: [`CHANGELOG.md`](../../CHANGELOG.md)
+- Migration guide: [`docs/archive/v11/MIGRATION-FROM-V10.md`](MIGRATION-FROM-V10.md)
+- Architecture audit: [`docs/archive/v11/audit.md`](audit.md)
+- Bench artifact: [`docs/archive/v11/benchmark.md`](benchmark.md)
+- CHANGELOG: [`CHANGELOG.md`](../../../CHANGELOG.md)

@@ -1,12 +1,14 @@
 # What is new in 14.x and 15.0
 
-Release summaries for the 14.x series and 15.0, moved here from the README. The
-[CHANGELOG](../CHANGELOG.md) is the complete, authoritative record; this page
-keeps the measurements and usage notes that the summaries added.
+Release summaries for the 14.x series and 15.0, newest first. The
+[CHANGELOG](../CHANGELOG.md) is the complete, authoritative record; this page adds the
+measurements and usage notes. Figures are as measured at that release, not for the
+current default; for current results see [benchmarks](benchmarks.md).
 
 - [15.0.2](#version-1502--the-plugin-connects-codex-docs-match-the-installer)
 - [15.0.1](#version-1501--team-server-fixes-and-a-cleaner-hard-delete)
 - [15.0.0](#version-1500--indexed-resources-warm-recall-checked-clients-snapshot-exports)
+- [14.10.0](#version-14100--a-review-release-docker-on-loopback-with-a-token-hardened-dashboard-and-team-server)
 - [14.9.0](#version-1490--memory-through-the-hooks-rules-that-are-measured-a-warm-daemon)
 - [14.8.0](#version-1480--every-recall-tier-measured-two-of-them-fixed)
 - [14.7.0](#version-1470--whole-records-fill-the-context-budget)
@@ -88,6 +90,7 @@ The [CHANGELOG](../CHANGELOG.md) lists every change.
 |---|---|
 | **Resource index** | `ingest_codebase` indexes a project root incrementally into separate tables: unchanged files are not reparsed, edits and deletions are reconciled, PDF, Office XML and archives are read locally, and `preview`, `search` and `status` actions inspect it. Search is lexical and separate from knowledge recall. Optional `[media]` adds OCR and audio transcription. |
 | **AST for PHP and Vue** | Functions, classes, interfaces, traits, enums and methods in PHP, and the scripts of Vue single-file components, keep their original line numbers. |
+| **Multilingual cross-encoder by default** | `MEMORY_CROSS_RERANK_MODEL` now defaults to `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` (INT8 ONNX on ARM64), so Russian, Ukrainian and other non-Latin queries are reranked too. Set `MEMORY_CROSS_RERANK_MODEL=Xenova/ms-marco-MiniLM-L-6-v2` for the previous English model. The one-time download is about 130 MB. See [configuration](configuration.md#two-rerankers-two-switches). |
 | **Recall under load** | Personal tool calls run on one Store owner thread with a bounded queue, inference runs in a worker pool, and the cross-encoder batches by text length and caches scores. `MEMORY_CROSS_RERANK_BATCH_SIZE=0` and `MEMORY_CROSS_RERANK_CACHE_SCORES=0` restore the old behaviour. |
 | **Model identity** | Vectors from a different model, provider or pooling are never mixed in a search; legacy vectors are re-queued. On PostgreSQL, build the HNSW index with `scripts/prepare_vector_index.py`; until then searches are exact. |
 | **Clients that fail closed (#40)** | `tam-team` and the remote CLI check the server's advertised `capabilities` and refuse a flag an older server would ignore. |
@@ -96,6 +99,31 @@ The [CHANGELOG](../CHANGELOG.md) lists every change.
 | **One team router (#45)** | Team MCP calls go through the REST router; `?readonly=1` removes write tools. |
 | **Quieter ambient recall (#47)** | Automation prompts get no recall and weak matches are dropped. |
 | **Review fixes (#54–#58)** | Cross-project leak in `expand_context`, tags lost on repeat save, `benchmark` and `memory_eval_locomo` on pip and Docker installs, container health, and six smaller API problems. Auto-consolidated rules now reach `self_rules_context`. |
+
+---
+
+## Version 14.10.0 — a review release: Docker on loopback with a token, hardened dashboard and team server
+
+**Release date: 2026-10-26.** A full code review of the server, retrieval, team server, background workers and
+integrations, plus four contributor pull requests. The 79 MCP tools and their input schemas are unchanged; some
+responses gain fields. Migrations 043–046, PostgreSQL workspace 0007–0010 and control 0005–0006 are additive.
+
+| Change | What you do |
+|---|---|
+| **Docker binds to loopback and wants a token** | The container's MCP and dashboard servers require a bearer token whenever they listen beyond loopback (`TAM_HTTP_TOKEN`, at least 32 characters, or the generated `<memory dir>/state/http-token`, mode 0600). The documented port mappings publish on `127.0.0.1` only. Clients on another host send `Authorization: Bearer <token>`. |
+| **Local dashboard sign-in** | Sign in again: old `tam_dashboard_token` cookies stop working. The cookie now holds an opaque session id. Use `/login#token=...`; the query form `/login?token=...` was kept for this release only. |
+| **Team server sessions and tokens** | A dashboard session opened with an access token can no longer create tokens or invites, change roles or settings, or change the password; sign in with the password for those. New access tokens expire after 180 days (`TAM_TEAM_TOKEN_TTL_DAYS=0` restores never-expiring tokens). Behind a proxy on a public address, list it in `TAM_TEAM_TRUSTED_PROXIES`. |
+| **Team server sign-in limits** | Sign-in is locked per account across all IPs, a known browser is throttled by its own counter so an attacker cannot lock a user out, and an anonymous flood no longer starves signed-in users. `tam-team login-unlock <id>` clears a lockout. |
+| **Provenance of writes** | A `memory_provenance` table records which client, session and tool wrote each memory. Re-run the installer once (`update.sh`, `tam setup --reconfigure` or `install-docker.sh`) to turn on the provenance hook. |
+| **Privacy** | `<private>...</private>` text is stripped from the raw call log, the transcript extractor and every background writer; hooks redact the failed command line and stderr; `ingest_codebase`, `benchmark` and the eval tools accept paths only under allowed roots (`TAM_ALLOWED_PATH_ROOTS`). |
+| **Windows** | Every text file is read and written as UTF-8, so Cyrillic and other non-Latin text no longer fails or is stored garbled without `PYTHONUTF8=1`; the legacy data directory migration leaves a junction when symlinks are not allowed. |
+| **Contention settings** | SQLite `busy_timeout` 15 s, `journal_size_limit` 48 MB and a short startup checkpoint, tunable with `MEMORY_DB_BUSY_TIMEOUT_MS`, `MEMORY_DB_JOURNAL_SIZE_LIMIT_BYTES` and `MEMORY_DB_STARTUP_CHECKPOINT_TIMEOUT_MS`. |
+| **Optional image OCR through `pymacos`** | `pip install pymacos` makes Apple Vision reachable through it first, with pyobjc as the fallback. It is not part of the `[ocr]` extra. |
+
+Fixed, among others: `learn_error` filed fixed errors as open (migration 043 closes existing rows; restart running
+servers after upgrading), a false "re-embed required" after a provider fallback, graph views that never loaded on a
+58k-node graph (one request took over three minutes, now 0.2 s), and hard delete leaving the text of a record in the
+raw call log. Restart running memory servers after upgrading. Details: [CHANGELOG](../CHANGELOG.md).
 
 ---
 
@@ -396,4 +424,4 @@ At release time v14 was distributed as a prepared wheel and a source checkout. L
 
 **Performance limits:** BGE is optional. On the measured Linux ARM64 setup, its one-thread p95 was about **2,179 ms**, above the 200 ms target. Limiting threads reduces parallel CPU load; it does not eliminate CPU work. No top-10 ranking or new default answer-quality improvement is claimed. [CPU measurements](benchmarks/grounded-v14/CPU_RESULTS.md).
 
-[Full v14 release notes](RELEASE_V14.md) · [Changelog and previous releases](../CHANGELOG.md)
+[Full v14 release notes](archive/RELEASE_V14.md) · [Changelog and previous releases](../CHANGELOG.md)

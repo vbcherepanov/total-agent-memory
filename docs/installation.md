@@ -1,162 +1,118 @@
-# Installation Guide
+# Installation guide
 
-total-agent-memory runs on macOS, Linux and Windows, including WSL2. Install it
-from a package (pip, pipx, uvx, npx, Homebrew, Docker, or an agent plugin), or
-from a source checkout with an installer that also wires IDE hooks and
-background services (LaunchAgents, systemd `--user` or Windows Task Scheduler).
+total-agent-memory runs on macOS, Linux and Windows, including WSL2. Python 3.11, 3.12 or 3.13 is required (all three are tested in CI).
 
-> **Legacy paths.** The per-platform sections from [Platform matrix](#platform-matrix)
-> onward were written for v8 and use the old layout: clone directory
-> `~/claude-memory-server` and data directory `~/.claude-memory`. Current
-> versions use `~/total-agent-memory` and `~/.tam`, and migrate a legacy data
-> directory on first run.
+## Quick start
 
----
+```bash
+pipx install total-agent-memory     # or: pip install total-agent-memory (in a virtual environment)
+tam setup
+```
 
-## Table of contents
+`tam setup` asks whether the memory is for you alone or for a company server, finds your
+agent clients (Claude Code, Claude Desktop, Codex, Cursor, Windsurf, Gemini CLI, Cline,
+OpenCode), registers the server with the ones you pick, and checks that it starts. Restart
+the client afterwards; in Claude Code, `/mcp` should show `memory` as **Connected** with 79 tools.
 
-- [Install channels](#install-channels)
-- [From a source checkout](#from-a-source-checkout)
-- [Platform matrix](#platform-matrix)
-- [Prerequisites](#prerequisites)
-- [macOS (10.15+, Apple Silicon or Intel)](#macos-1015-apple-silicon-or-intel)
-- [Linux (Ubuntu 22.04+, Debian 12+, Fedora 38+)](#linux-ubuntu-2204-debian-12-fedora-38)
-- [Windows 10/11 native (without WSL)](#windows-1011-native-without-wsl)
-- [WSL2 (Windows 11 + Ubuntu/Debian inside WSL)](#wsl2-windows-11--ubuntudebian-inside-wsl)
-- [IDE coverage matrix](#ide-coverage-matrix)
-- [Background services comparison](#background-services-comparison)
-- [Post-install verification](#post-install-verification)
-- [Uninstall](#uninstall)
-- [Troubleshooting](#troubleshooting)
+The first start downloads two local models, about 370 MB in total: the text embedder
+(about 240 MB) and the cross-encoder that re-ranks results (about 130 MB, ARM64 build;
+the x86-64 size was not measured). After that the server works offline.
+`TAM_MODEL_CACHE=~/.tam/models` keeps the models out of the system temp directory, which
+macOS clears from time to time. Nothing else is required: Ollama and cloud LLMs are optional.
 
----
+Check it with `memory_save(content="install works", type="fact")` and `memory_stats()` in
+any MCP client, or run the [diagnostic script](#verify-the-installation).
+
+## Where to go next
+
+| You want to | Go to |
+|---|---|
+| Pick a different install channel (uvx, npx, Homebrew, Docker, plugin) | [Install channels](#install-channels) |
+| Understand what `tam setup` asks | [First run: `tam setup`](#first-run-tam-setup) |
+| Install the optional extras (OCR, media, PostgreSQL, legacy reranker) | [Optional extras](#optional-extras) |
+| Install from a clone with hooks and background services | [From a source checkout](#from-a-source-checkout) |
+| Use Docker | [Docker](#docker) |
+| Use the Claude Code or Codex plugin | [Claude Code and Codex plugins](#claude-code-and-codex-plugins) |
+| See what each OS does | [Platform matrix](#platform-matrix): [macOS](#macos), [Linux](#linux), [Windows](#windows-1011-native-without-wsl), [WSL2](#wsl2) |
+| Find where each client keeps its MCP config | [Client configuration files](#client-configuration-files) |
+| Run a server for several people | [team-server.md](team-server.md) |
+| Fix a problem | [Troubleshooting](#troubleshooting) |
+| Remove it | [Uninstall](#uninstall) |
 
 ## Install channels
 
-These are the published distribution channels. Python 3.11 or newer is required (3.11, 3.12 and 3.13 are tested in CI). For a server shared by several people, see [team-server.md](team-server.md).
+All channels land at the same MCP server with the same 79 tools. `npx`, the plugins and
+the checkout installers also wire the client for you; with the others, `tam setup`
+does it.
 
-| Channel | Command | What it does |
+| Channel | Command | Notes |
 |---|---|---|
-| **pip** | `pip install total-agent-memory` | Installs the package into the current Python environment with the same entry points as pipx. Use a virtual environment. |
-| **npx** (Node) | `npx -y total-agent-memory connect claude-code` | Zero-install. Bootstraps a Python venv in `~/.tam/.venv` via uv (or python3 fallback), pulls the PyPI server, wires the MCP entry into your IDE. Replace `claude-code` with `codex` / `cursor` / `cline` / `continue` / `aider` / `windsurf` / `gemini-cli` / `opencode`. |
-| **uvx** (Python via uv) | `uvx total-agent-memory` | One-off run with no install. Best for trying without commitment. |
-| **pipx** (Python isolated) | `pipx install total-agent-memory` | Installs the `total-agent-memory`, `tam`, `tam-lookup`, `lookup-memory` binaries on PATH in an isolated venv. |
-| **brew** (macOS / Linuxbrew) | `brew install vbcherepanov/tap/total-memory` | Builds from the PyPI source tarball in a Homebrew virtualenv (needs `cmake` and `rust` at build time), with `tam` and legacy `claude-total-memory` symlinks. |
-| **Docker** (multi-arch) | `docker run -p 127.0.0.1:3737:3737 -p 127.0.0.1:37737:37737 -v ~/.tam:/data ghcr.io/vbcherepanov/total-agent-memory:14.10.0` | Containerized (linux/amd64 + linux/arm64). MCP over HTTP on `:3737/mcp`, dashboard on `:37737`. |
-| **Claude Code plugin** | `/plugin marketplace add vbcherepanov/total-agent-memory`<br>`/plugin install total-agent-memory@vbcherepanov` | Installs the MCP server, the `memory-protocol` skill and all seven capture hooks in one step, from inside Claude Code. The bootstrap reuses an existing install if it finds one, so nothing is downloaded twice. |
-| **Claude plugin (directory edition)** | `/plugin marketplace add vbcherepanov/total-agent-memory-plugin`<br>`/plugin install total-agent-memory@vbcherepanov` | A small separate repository, [total-agent-memory-plugin](https://github.com/vbcherepanov/total-agent-memory-plugin), for Claude Code, Cowork and Codex (see the next row). Runs the pinned server with `uvx total-agent-memory==14.8.0` and adds the `memory-protocol` skill; no hooks. Needs [uv](https://docs.astral.sh/uv/). Use either this or the plugin above, not both. |
-| **Codex plugin** | `codex plugin marketplace add vbcherepanov/total-agent-memory-plugin`<br>`codex plugin add total-agent-memory@vbcherepanov` | The same plugin repository for Codex CLI: the pinned server and the `memory-protocol` skill. Data goes to `~/.tam/`, shared with Claude Code. Needs [uv](https://docs.astral.sh/uv/). |
-| **Manual clone** | `git clone https://github.com/vbcherepanov/total-agent-memory ~/total-agent-memory && cd ~/total-agent-memory && ./install.sh --ide claude-code` | Full control. Lets you hack on the server, run benchmarks, and pick which background services to enable. Detailed walkthrough below. |
-
-All channels land at the same MCP server. The `npx` and `./install.sh` paths
-additionally configure IDE-specific MCP entries and hooks. Other channels start
-the server bare — you wire the IDE afterwards (see [IDE coverage matrix](#ide-coverage-matrix)).
+| **pip** | `pip install total-agent-memory` | Use a virtual environment. |
+| **pipx** | `pipx install total-agent-memory` | Isolated environment; puts `total-agent-memory`, `tam`, `tam-lookup` and `lookup-memory` on PATH. |
+| **uvx** | `uvx total-agent-memory` | One-off run with no install. |
+| **npx** | `npx -y total-agent-memory connect claude-code` | Creates a Python environment in `~/.tam/.venv` (with uv, or python3 as the fallback), installs the PyPI server and writes the MCP entry. Replace `claude-code` with `codex`, `cursor`, `cline`, `continue`, `aider`, `windsurf`, `gemini-cli` or `opencode`. |
+| **Homebrew** (macOS, Linuxbrew) | `brew install vbcherepanov/tap/total-memory` | Builds from the PyPI source tarball in a Homebrew virtualenv (needs `cmake` and `rust` at build time); installs `tam` and the legacy `claude-total-memory`. |
+| **Docker** | see [Docker](#docker) | linux/amd64 and linux/arm64. |
+| **Claude Code plugin** | `/plugin marketplace add vbcherepanov/total-agent-memory` then `/plugin install total-agent-memory@vbcherepanov` | See [plugins](#claude-code-and-codex-plugins). |
+| **Source checkout** | `git clone https://github.com/vbcherepanov/total-agent-memory ~/total-agent-memory && cd ~/total-agent-memory && ./install.sh --ide claude-code` | Hooks, background services and benchmarks; see [From a source checkout](#from-a-source-checkout). |
 
 ### First run: `tam setup`
 
-After a pip, pipx, uvx, brew or checkout install, run `tam setup`. A plain `tam` typed at a terminal starts the same wizard the first time. It never starts in MCP stdio sessions, in pipes, or in CI. The wizard asks one question first: **Just me** (personal memory on this machine) or **Company server** (shared memory for teams).
+After a pip, pipx, uvx, Homebrew or checkout install, run `tam setup`. A plain `tam`
+typed at a terminal starts the same wizard the first time; it never starts in MCP stdio
+sessions, in pipes or in CI. The first question is **Just me** or **Company server**.
 
-* **Just me:** detects Claude Code, Claude Desktop, Codex, Cursor, Windsurf, Gemini CLI, Cline and OpenCode and registers the server with the ones you pick. Then it asks for the language/embedding preset and an optional LLM provider (keys are typed hidden). From a checkout it also offers the hooks and skills. At the end it starts the server once on a throwaway directory to check it.
-* **Company server:** sets the data directory, address, public URL and how the server runs (service unit, Docker Compose or `tam-team serve`). Then it creates the first superadmin, departments and the encrypted provider settings, and prints the admin's invite code once.
+* **Just me:** detects the clients above and registers the server with the ones you pick, then asks for the language and embedding preset and an optional LLM provider (keys are typed hidden). From a checkout it also offers the hooks and skills. At the end it starts the server once on a throwaway directory to check it.
+* **Company server:** sets the data directory, address, public URL and how the server runs (service unit, Docker Compose or `tam-team serve`), then creates the first superadmin, departments and the encrypted provider settings, and prints the admin's invite code once.
 
-Change anything later with `tam setup --reconfigure`. Installers and containers use `tam setup --non-interactive ...` with flags. A team server started without an administrator prints a one-time setup code, and `/dashboard/` then shows the same setup as a web wizard. Details: [docs/SETUP_WIZARD.md](SETUP_WIZARD.md).
+Change anything later with `tam setup --reconfigure`. Installers and containers use
+`tam setup --non-interactive ...` with flags. A team server started without an
+administrator prints a one-time setup code, and `/dashboard/` then shows the same setup as
+a web wizard. Details: [SETUP_WIZARD.md](SETUP_WIZARD.md). `tam --help` and `tam --version`
+print and exit without starting the server.
 
-### Optional reranker
+### Optional extras
 
-The reranker is an extra, not a dependency. A base install is 97 packages
-and ~113 MB of wheels: fastembed runs the embeddings through ONNX and no torch
-is resolved anywhere. The CrossEncoder / BGE reranker needs the torch stack,
-which on Linux drags in the whole `nvidia-cu*` set — 147 packages and ~3.1 GB —
-so it ships separately, and the default `MEMORY_MODE=fast` does not use it. Turn
-it on with `MEMORY_MODE=deep` (or `MEMORY_RERANK_ENABLED=true`) and install it:
+A base install needs no extra: fastembed runs the embedder and the default cross-encoder
+through ONNX, and no PyTorch is installed.
 
-```bash
-pip install "total-agent-memory[rerank]"      # pip / uvx / pipx
-pip install -r requirements-rerank.txt        # clone / Docker
-```
+| Extra | Install | What it adds |
+|---|---|---|
+| `[rerank]` | `pip install "total-agent-memory[rerank]"` or `pip install -r requirements-rerank.txt` | The legacy sentence-transformers reranker. It pulls in PyTorch (on Linux the CUDA wheels too, about 3 GB) and is off by default; turn it on with `MEMORY_MODE=deep` or `MEMORY_RERANK_ENABLED=true`. It is **not** the cross-encoder that re-ranks by default; see [configuration](configuration.md#two-rerankers-two-switches). |
+| `[ocr]` | `pip install "total-agent-memory[ocr]"` or `pip install -r requirements-ocr.txt` | Apple Vision OCR for images and PDFs in the file watcher (macOS only, through pyobjc). Without it images are stored without their text (pytesseract is used when installed). |
+| `[media]` | `pip install "total-agent-memory[media]"` | Image and scanned-PDF OCR, audio and video transcription, RTF and XLS for `ingest_codebase`. Tesseract and its language data are system prerequisites. |
+| `[postgres]` | `pip install "total-agent-memory[postgres]"` | PostgreSQL backend for the team server ([team-server.md](team-server.md)). |
 
-### Optional image OCR (macOS)
+`pymacos` is an optional alternative OCR backend that is not part of `[ocr]`; when it is
+importable it is tried first, otherwise pyobjc is used. Install it yourself with
+`pip install pymacos`. It is a new package with a single maintainer, so review it before
+putting it into the process that serves your memory.
 
-The file watcher reads the text out of images and PDFs with Apple Vision. It
-needs pyobjc, which is an extra because it exists only on macOS. Without it,
-images are still stored but without their text (pytesseract is used instead
-when it is installed).
-
-```bash
-pip install "total-agent-memory[ocr]"         # pip / uvx / pipx
-pip install -r requirements-ocr.txt           # clone
-```
-
-pymacos is an optional alternative backend that avoids installing pyobjc. It is
-not part of the `[ocr]` extra: when it is importable it is tried first,
-otherwise pyobjc is used. Install it yourself with `pip install pymacos`. It is
-a new package with a single maintainer, so review it before putting it into the
-process that serves your memory.
-
-### Upgrading from v11.x
-
-Whatever channel you pick will auto-migrate
-`~/.claude-memory/` → `~/.tam/` on first run and keep a symlink for backward
-compat. No manual data move required.
-
----
-
-## From a source checkout
-
-The installers configure IDE entries, hooks and background services in one step. Same 79 tools and dashboard on every path.
-
-### Path A — native (macOS / Linux / WSL2)
+### Docker
 
 ```bash
-git clone https://github.com/vbcherepanov/total-agent-memory.git ~/total-agent-memory
-cd ~/total-agent-memory
-bash install.sh --ide claude-code   # or: cursor | gemini-cli | opencode | codex
+docker run -p 127.0.0.1:3737:3737 -p 127.0.0.1:37737:37737 -v ~/.tam:/data ghcr.io/vbcherepanov/total-agent-memory:15.0.2
 ```
 
-The installer:
+MCP over HTTP is on `:3737/mcp`, the dashboard on `:37737`. Always publish with
+`127.0.0.1:` as shown; a bare `-p 3737:3737` exposes the port on every interface. If a port
+is taken, for example by the dashboard of a native install, change the host side:
+`-p 127.0.0.1:47737:37737`.
 
-1. Clones + creates `~/total-agent-memory/.venv/`
-2. Installs deps from `requirements.txt` and `requirements-dev.txt`
-3. Pre-downloads the FastEmbed multilingual MiniLM model
-4. Registers the MCP server via `claude mcp add-json memory ...` (stored in `~/.claude.json`, the canonical store Claude Code actually reads)
-5. Copies **all hooks** (`session-*`, `user-prompt-submit.sh`, `post-tool-use.sh`, `pre-edit.sh`, `on-bash-error.sh`, etc.) into `~/.claude/hooks/` and registers them in `~/.claude/settings.json`
-6. Grants `permissions.allow` for 20+ `mcp__memory__*` tools so hook-driven calls don't prompt for confirmation
-7. Installs **background services** for the current OS:
-   - **macOS** — 4 LaunchAgents (`reflection`, `orphan-backfill`, `check-updates`, `dashboard`) under `~/Library/LaunchAgents/`
-   - **Linux / WSL2** — 7 systemd `--user` units (`*.service`, `*.timer`, `*.path`) under `~/.config/systemd/user/`; gracefully degrades if `systemd --user` is unavailable (WSL without `/etc/wsl.conf`)
-8. Applies all migrations to a fresh `memory.db`
-9. Starts the dashboard at `http://127.0.0.1:37737`
+Inside the container both servers listen on `0.0.0.0`, so every request must carry the
+access token from `<data dir>/state/http-token` (created with mode 0600 on first start;
+override with `TAM_HTTP_TOKEN`, at least 32 characters):
 
-Restart Claude Code → `/mcp` → `memory` should show **Connected** with 79 tools.
+- MCP and the API: `Authorization: Bearer <token>`.
+- Dashboard: open `/login#token=<token>` once per browser. The fragment is never sent to the server; the page posts it, clears it from the address bar and sets an opaque session cookie that never contains the token. `POST /logout` ends the session.
+- `/healthz` stays open.
 
-### Path A — native (Windows 10/11)
+Changing an endpoint setting (`MEMORY_LLM_API_BASE`, `MEMORY_EMBED_API_BASE`, `OLLAMA_URL`)
+in the dashboard asks for an explicit confirmation, because it redirects the stored API key
+and memory text.
 
-```powershell
-git clone https://github.com/vbcherepanov/total-agent-memory.git $HOME\total-agent-memory
-cd $HOME\total-agent-memory
-powershell -ExecutionPolicy Bypass -File install.ps1 -Ide claude-code
-```
-
-Same 9 steps as Unix, but:
-
-- MCP config path is `%USERPROFILE%\.claude\settings.json` (or `.cursor\mcp.json`, etc.)
-- Hooks copied to `%USERPROFILE%\.claude\hooks\` — `.ps1` versions (auto-capture, memory-trigger, user-prompt-submit, post-tool-use, pre-edit, on-bash-error, session-start/end, on-stop, plus codex-notify — an optional Codex desktop reminder that is not registered and does not capture memory)
-- Background services via **Task Scheduler**:
-  - `total-agent-memory-reflection` — every 5 min (no native FileSystemWatcher equivalent)
-  - `total-agent-memory-orphan-backfill` — daily 00:00 + 6h repetition
-  - `total-agent-memory-check-updates` — weekly Mon 09:00
-  - `TotalAgentMemoryDashboard` — AtLogon
-
-### Path B — Docker (everything containerized, cross-platform)
-
-```bash
-git clone https://github.com/vbcherepanov/total-agent-memory.git
-cd total-agent-memory
-bash install-docker.sh --with-compose
-```
-
-Brings up 6 services, built locally as `total-agent-memory:latest` (the one-line
-`docker run` above uses the published GHCR image instead):
+For the full stack, clone the repository and run `bash install-docker.sh --with-compose`.
+It builds `total-agent-memory:latest` locally and starts six services:
 
 | Service | Role | Exposed |
 |---|---|---|
@@ -165,33 +121,70 @@ Brings up 6 services, built locally as `total-agent-memory:latest` (the one-line
 | `ollama` | Local LLM runtime | `127.0.0.1:11434` |
 | `model-init` | Pulls the Ollama models once, then exits | internal |
 | `reflection` | File-watch queue drainer | internal |
-| `scheduler` | Ofelia cron (backfill + update check) | internal |
+| `scheduler` | Ofelia cron (backfill and update check) | internal |
 
-**Network exposure.** Inside the container both servers listen on `0.0.0.0`, so every request must carry the access token from `<data dir>/state/http-token` (created 0600 on first start; override with `TAM_HTTP_TOKEN`): `Authorization: Bearer <token>` for MCP and the API, `/login#token=<token>` once per browser for the dashboard (the fragment is never sent to the server; the page POSTs it, clears it from the address bar and sets an opaque session cookie that never contains the token; `POST /logout` ends it). The pre-14.10 form `/login?token=<token>` still works for one more release: it is exchanged at once and redirected to `/` with `Referrer-Policy: no-referrer`, but a reverse proxy in front may log the query string, so prefer the fragment. `/healthz` stays open. Always publish with `127.0.0.1:` as shown; a bare `-p 3737:3737` exposes the port on every interface. Changing an endpoint setting (`MEMORY_LLM_API_BASE`, `MEMORY_EMBED_API_BASE`, `OLLAMA_URL`) in the dashboard asks for an explicit confirmation because it redirects the stored API key and memory text.
+The first Compose start pulls `qwen2.5-coder:7b` (about 4.7 GB) and `nomic-embed-text`
+(about 275 MB), 5 to 10 minutes cold. They serve the optional LLM stages (summaries,
+contradiction checks, query rewriting); the one-line `docker run` needs neither them nor
+Ollama. Docker Desktop on macOS does not forward Metal, so a native install is faster on a
+Mac. On Linux with the NVIDIA Container Toolkit, uncomment the
+`deploy.resources.reservations.devices` block in `docker-compose.yml`.
 
-If port 37737 or 3737 is already taken, for example by a dashboard of a native install, change the host side of the mapping: `-p 127.0.0.1:47737:37737`.
+### Claude Code and Codex plugins
 
-First run pulls `qwen2.5-coder:7b` (~4.7 GB) + `nomic-embed-text` (~275 MB) — 5–10 min cold start. These models serve the optional LLM stages (summaries, contradiction checks, query rewriting); the one-line `docker run` needs neither them nor Ollama.
+| Plugin | Commands | What it does |
+|---|---|---|
+| **Claude Code plugin** (this repository) | `/plugin marketplace add vbcherepanov/total-agent-memory`, then `/plugin install total-agent-memory@vbcherepanov` | Installs the MCP server, the `memory-protocol` skill and all seven capture hooks from inside Claude Code. The bootstrap reuses an existing install if it finds one. |
+| **Claude plugin, directory edition** | `/plugin marketplace add vbcherepanov/total-agent-memory-plugin`, then `/plugin install total-agent-memory@vbcherepanov` | A small separate repository, [total-agent-memory-plugin](https://github.com/vbcherepanov/total-agent-memory-plugin), for Claude Code, Cowork and Codex. Runs a pinned server with `uvx total-agent-memory==14.8.0` and adds the `memory-protocol` skill; no hooks. Needs [uv](https://docs.astral.sh/uv/). Use either this plugin or the one above, not both. |
+| **Codex plugin** | `codex plugin marketplace add vbcherepanov/total-agent-memory-plugin`, then `codex plugin add total-agent-memory@vbcherepanov` | The directory edition for Codex CLI. Data goes to `~/.tam/`, shared with Claude Code. Needs uv. |
 
-**GPU note:** Docker Desktop on macOS doesn't forward Metal. Native install is faster on Mac. On Linux with NVIDIA Container Toolkit, uncomment the `deploy.resources.reservations.devices` block in `docker-compose.yml`.
+With the plugin from this repository, the first start builds a virtual environment in
+the memory directory (with `uv` when installed), so it takes longer; `uvx` and `npx` are
+the fallback.
 
-### Verify (both paths)
+## From a source checkout
 
+The installers configure the client entry, hooks and background services in one step. The
+checkout is also what you need to run benchmarks or change the server. Requirements: Python
+3.11 to 3.13 with the `venv` module (on Debian, Ubuntu and WSL: `sudo apt install python3-venv`),
+Git, and an MCP client. About 370 MB of models download on first use; see
+[Quick start](#quick-start).
+
+**macOS, Linux, WSL2**
+
+```bash
+git clone https://github.com/vbcherepanov/total-agent-memory.git ~/total-agent-memory
+cd ~/total-agent-memory
+bash install.sh --ide claude-code   # or another client, see the table below
 ```
-memory_save(content="install works", type="fact")
-memory_stats()
+
+**Windows 10/11 (PowerShell 5.1 or newer)**
+
+```powershell
+git clone https://github.com/vbcherepanov/total-agent-memory.git $HOME\total-agent-memory
+cd $HOME\total-agent-memory
+powershell -ExecutionPolicy Bypass -File install.ps1 -Ide claude-code
 ```
 
-Open <http://127.0.0.1:37737/> — dashboard, knowledge graph, token savings.
+The installer:
 
-### Installer IDE matrix
+1. Creates `.venv` in the clone and installs `requirements.txt`.
+2. Pre-downloads the FastEmbed multilingual MiniLM text embedder (about 240 MB). The cross-encoder downloads on first use.
+3. Registers the MCP server with the client you chose (for Claude Code, in `~/.claude.json`, the file Claude Code reads).
+4. For Claude Code only: copies the hooks into `~/.claude/hooks/`, registers them in `~/.claude/settings.json`, grants `permissions.allow` for the `mcp__memory__*` tools the hooks call, and installs the dashboard service.
+5. Installs the background services for your OS (see [Platform matrix](#platform-matrix)).
+6. Applies the migrations to a fresh `memory.db` in `~/.tam`.
 
-The same MCP server, same tools, same protocol — different installation
-locations per IDE. The installer (`install.sh --ide <name>`) registers the
-MCP server and installs the skill or rules file. It installs the capture
-hooks, the dashboard service and the background jobs for Claude Code only;
-the "Hooks installed" column says what the installer sets up, not what the
-IDE could run.
+For Claude Code, the dashboard is then at `http://127.0.0.1:37737`. Restart the client; `/mcp`
+should show `memory` as **Connected**.
+
+### What each client gets
+
+The same server, tools and protocol everywhere; the installer (`install.sh --ide <name>`,
+`install.ps1 -Ide <name>`) registers the server and installs the skill or rules file. It
+installs the capture hooks, the dashboard service and the background jobs for Claude Code
+only. The "Hooks installed" column says what the installer sets up, not what the client
+could run. `claude-desktop` is also accepted as `--ide`.
 
 | IDE | Skill API | Hooks installed | Sub-agents | Install command |
 |---|:-:|:-:|:-:|---|
@@ -205,19 +198,19 @@ IDE could run.
 | Gemini CLI | `.gemini/rules/` | ❌ | ❌ | `./install.sh --ide gemini-cli` |
 | OpenCode | `.opencode/skills/` | ❌ | custom | `./install.sh --ide opencode` |
 
-¹ Aider has no MCP yet — the bridge is via `lookup_memory.sh` /
-`save_memory.sh` shell scripts.
+¹ Aider has no MCP yet; the bridge is the `lookup_memory.sh` and `save_memory.sh` shell
+scripts.
 
 ² Codex CLI gets the MCP server in `~/.codex/config.toml` and the skills in
 `~/.codex/skills/` and `~/.agents/skills/`. No hooks are registered and
 `~/.codex/AGENTS.md` is not touched. To capture finished Codex turns, add
 `hooks/codex-notify.sh` as the `notify` program yourself, see
-[configuration.md](configuration.md).
+[configuration.md](configuration.md#ambient-memory-hooks).
 
-Full per-IDE setup, manual fallbacks, and template snippets:
+Running the installer again with a different `--ide` is safe: each client has its own
+config file, and the database and venv are reused. Per-client setup, manual fallbacks and
+template snippets:
 [`skills/memory-protocol/references/ide-setup.md`](../skills/memory-protocol/references/ide-setup.md).
-
----
 
 ## Platform matrix
 
@@ -225,176 +218,82 @@ Full per-IDE setup, manual fallbacks, and template snippets:
 |---|---|---|---|
 | macOS | `./install.sh --ide claude-code` | LaunchAgents (`launchctl`) | `~/.claude.json` + `~/.claude/settings.json` |
 | Linux | `./install.sh --ide claude-code` | systemd `--user` | `~/.claude.json` + `~/.claude/settings.json` |
-| WSL2 (systemd on) | `./install.sh --ide claude-code` | systemd `--user` | depends on where Claude Code runs — see [WSL2](#wsl2-windows-11--ubuntudebian-inside-wsl) |
-| WSL2 (systemd off) | `./install.sh --ide claude-code` | shell-loop / cron fallback | same as above |
+| WSL2 (systemd on) | `./install.sh --ide claude-code` | systemd `--user` | depends on where Claude Code runs, see [WSL2](#wsl2) |
+| WSL2 (systemd off) | `./install.sh --ide claude-code` | shell-loop fallback | same as above |
 | Windows native | `.\install.ps1 -Ide claude-code` | Task Scheduler | `%USERPROFILE%\.claude\settings.json` |
 
-All flavors share the same MCP tool surface, the same `~/.claude-memory/memory.db`
-schema, and the same dashboard (`http://127.0.0.1:37737`). The only differences
-are *where* background jobs live and *which* path Claude Code reads the MCP
-config from.
+All of them share the same MCP tools, the same `memory.db` schema in `~/.tam` and the same
+dashboard (`http://127.0.0.1:37737`). They differ in where the background jobs live and
+which file the client reads its MCP config from.
 
----
+The same four jobs run everywhere, under different orchestrators:
 
-## Prerequisites
+| Task | macOS (LaunchAgent) | Linux and WSL2 (systemd `--user`) | Windows native (Task Scheduler) |
+|---|---|---|---|
+| Reflection on save | `com.claude.memory.reflection`, triggered by `WatchPaths` on `.reflect-pending` | `claude-memory-reflection.path` + `.service` | `total-agent-memory-reflection`, every 5 minutes |
+| Orphan backfill, 4 times a day | `com.claude.memory.orphan-backfill`, 00:00, 06:00, 12:00, 18:00 | `claude-memory-orphan-backfill.timer` | `total-agent-memory-orphan-backfill`, daily 00:00 repeating every 6 hours |
+| Update check, Monday 09:00 | `com.claude.memory.check-updates` | `claude-memory-check-updates.timer` | `total-agent-memory-check-updates`, weekly |
+| Dashboard (keep-alive) | `com.total-agent-memory.dashboard` (`KeepAlive`, `RunAtLoad`) | `claude-memory-dashboard.service` (`Restart=on-failure`) | `ClaudeTotalMemoryDashboard`, at logon, `RestartCount=3` |
 
-- **Python 3.11+** (3.13 recommended)
-- **Git** for cloning the repo
-- **About 1 GB disk** (venv about 380 MB, models about 330 MB, plus the database)
-- **Claude Code** (or Codex CLI / Cursor / Gemini CLI / OpenCode — any MCP client)
-- Optional: **[Ollama](https://ollama.com)** running locally (`ollama serve`)
-  with `qwen2.5-coder:7b` + `nomic-embed-text` pulled, for the optional LLM
-  stages (summaries, contradiction checks, query rewriting)
-- Optional: `TAM_MODEL_CACHE=~/.tam/models` keeps the downloaded models out of
-  the system temp directory, which macOS clears from time to time
+Files: the database is `~/.tam/memory.db` (`%USERPROFILE%\.tam\memory.db` on Windows) and
+logs are under `~/.tam/logs/`. Service definitions are in `~/Library/LaunchAgents/` on
+macOS, `~/.config/systemd/user/` on Linux and WSL2, and Task Scheduler on Windows.
 
-Clone the repo first (same on every platform):
+### macOS
 
-```bash
-git clone https://github.com/vbcherepanov/total-agent-memory.git ~/claude-memory-server
-cd ~/claude-memory-server
-```
-
-On Windows native the equivalent is:
-
-```powershell
-git clone https://github.com/vbcherepanov/total-agent-memory.git $env:USERPROFILE\claude-memory-server
-cd $env:USERPROFILE\claude-memory-server
-```
-
----
-
-## macOS (10.15+, Apple Silicon or Intel)
-
-```bash
-./install.sh --ide claude-code
-```
-
-What happens:
-
-1. Creates `~/claude-memory-server/.venv/` and installs `requirements.txt`
-   + `requirements-dev.txt`.
-2. Pre-downloads the FastEmbed multilingual MiniLM model (~90 MB, one-time).
-3. Registers the MCP server via `claude mcp add-json memory ...` — stored in
-   `~/.claude.json`, which is the canonical store Claude Code reads.
-4. Writes hook entries into `~/.claude/settings.json` and drops the helper
-   scripts into `~/.claude/hooks/`.
-5. Substitutes `__HOME__` in the three LaunchAgent templates under
-   `launchagents/` and installs them to `~/Library/LaunchAgents/`, then
-   `launchctl bootstrap`s each one:
-   - `com.claude.memory.reflection.plist` — `WatchPaths`-triggered drainer
-     of `triple_extraction_queue` / `deep_enrichment_queue` /
-     `representations_queue`.
-   - `com.claude.memory.orphan-backfill.plist` — runs 4× daily
-     (`StartCalendarInterval` at 00:00, 06:00, 12:00, 18:00).
-   - `com.claude.memory.check-updates.plist` — Monday 09:00 weekly check.
-6. Installs the dashboard LaunchAgent
-   (`com.claude-total-memory.dashboard.plist`) with `KeepAlive` and
-   `RunAtLoad=true` so the dashboard survives reboots.
-7. Applies migrations to a fresh `~/.claude-memory/memory.db`.
-
-Verify:
+macOS 10.15 or newer, Apple Silicon or Intel. `./install.sh --ide claude-code` renders the
+templates in `launchagents/` (replacing `__HOME__`), copies them to
+`~/Library/LaunchAgents/` and runs `launchctl bootstrap` on each.
 
 ```bash
 launchctl list | grep claude.memory
 curl -sI http://127.0.0.1:37737 | head -1   # HTTP/1.1 200 OK
 ```
 
-Restart Claude Code → `/mcp` → `memory` should show **Connected**.
+### Linux
 
----
-
-## Linux (Ubuntu 22.04+, Debian 12+, Fedora 38+)
-
-```bash
-./install.sh --ide claude-code
-```
-
-What happens (differences from macOS):
-
-1. Same Python venv + MCP registration flow.
-2. Instead of LaunchAgents, the installer renders the systemd unit templates
-   from `systemd/` into `~/.config/systemd/user/`:
-   - `claude-memory-reflection.path` — `PathModified=%h/.claude-memory/.reflect-pending`
-     trigger.
-   - `claude-memory-reflection.service` — `Type=oneshot`, runs the drainer.
-   - `claude-total-memory-dashboard.service` — `Type=simple`,
-     `Restart=on-failure`.
-3. `systemctl --user daemon-reload` + `systemctl --user enable --now` on each
-   unit.
-4. Uses **XDG paths**: logs land in `~/.claude-memory/logs/`, config in
-   `~/.config/systemd/user/`.
-
-### No systemd? (containers, minimal images, WSL1)
-
-If `systemctl --user show-environment` fails at install time, the installer
-falls back to a shell-loop drop-in (`~/.claude-memory/dashboard-autostart.sh`)
-registered in `~/.profile`. Reflection then runs on a loose poll instead of
-inotify. This is automatic — no flag needed — but you lose real-time
-`WatchPaths`-equivalent behavior. To enable systemd properly on Ubuntu, make
-sure you booted under `systemd` (default on Ubuntu 22.04+ server/desktop).
-
-Verify:
+Ubuntu 22.04+, Debian 12+, Fedora 38+. The installer renders the unit templates in
+`systemd/` into `~/.config/systemd/user/`, runs `systemctl --user daemon-reload` and
+enables the reflection path, dashboard service and the two timers. Unit details:
+[systemd/README.md](../systemd/README.md).
 
 ```bash
 systemctl --user status claude-memory-reflection.path
-systemctl --user status claude-total-memory-dashboard
+systemctl --user status claude-memory-dashboard
 curl -sI http://127.0.0.1:37737 | head -1
 ```
 
----
+**No systemd** (containers, minimal images, WSL1): if `systemctl --user show-environment`
+fails, the installer falls back to a shell-loop drop-in (`~/.tam/dashboard-autostart.sh`
+registered in `~/.profile`). Reflection then runs on a loose poll instead of a file watch.
+The fallback is automatic; to get real systemd, boot under it (the default on Ubuntu 22.04+).
 
-## Windows 10/11 native (without WSL)
+### Windows 10/11 native (without WSL)
 
-PowerShell 5.1+ required (ships with Windows 10/11). Run from an **elevated**
-shell if you want the dashboard Scheduled Task to register cleanly:
+PowerShell 5.1 or newer. Run from an **elevated** shell if you want the dashboard Scheduled
+Task to register cleanly. `install.ps1` creates `.venv`, installs `requirements.txt`,
+writes the MCP entry under `mcpServers.memory` in `%USERPROFILE%\.claude\settings.json`
+(the `command` is the venv Python with forward slashes), copies the `.ps1` hook shims to
+`%USERPROFILE%\.claude\hooks\` and registers the four Scheduled Tasks above. The hooks are
+the `.ps1` versions of auto-capture, memory-trigger, user-prompt-submit, post-tool-use,
+pre-edit, on-bash-error, session-start, session-end and on-stop, plus `codex-notify`, an
+optional Codex desktop reminder that is not registered and does not capture memory. The
+dashboard task runs `.\.venv\Scripts\python.exe src\dashboard.py` with
+`AllowStartIfOnBatteries`.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -Ide claude-code
-```
+Quirks:
 
-What happens:
+- **File-watch granularity.** The reflection trigger is a 5-minute Scheduled Task, not a file watch, so reflection is slower than on macOS and Linux.
+- **Long paths.** Enable `LongPathsEnabled` in the registry if `%USERPROFILE%` is deep; some `site-packages` wheels ship paths over 260 characters.
+- **Antivirus.** Some vendors flag the model download. Allow `%USERPROFILE%\.cache\fastembed` if you see quarantined files.
 
-1. Creates `.venv\` via `python -m venv`, activates with
-   `.\.venv\Scripts\python.exe`.
-2. Installs deps (`pip install -r requirements.txt -r requirements-dev.txt`).
-3. Writes MCP config into `%USERPROFILE%\.claude\settings.json` under
-   `mcpServers.memory`. The `command` is the venv Python path with forward
-   slashes normalized by the installer.
-4. Copies hook `.ps1` shims into `%USERPROFILE%\.claude\hooks\`.
-5. Registers a Windows Scheduled Task `ClaudeTotalMemoryDashboard`:
-   - Trigger: `AtLogon`
-   - Action: `.\.venv\Scripts\python.exe src\dashboard.py`
-   - Settings: `AllowStartIfOnBatteries`, `RestartCount=3`
-6. Uses `%USERPROFILE%\.claude-memory\` as the DB/state dir.
+### WSL2
 
-### Known Windows-native quirks
+Windows 11 with Ubuntu or Debian inside WSL. There are two places Claude Code can run
+from, and the MCP server must be reachable from the one you use.
 
-- **File-watch granularity.** The reflection trigger uses a Scheduled-Task
-  `FileSystemWatcher` shim rather than `WatchPaths` / `systemd.path`. Debounce
-  is the same (5 s) but NTFS file-change latency is a touch higher than
-  macOS/Linux.
-- **Long paths.** Enable `LongPathsEnabled` in the registry if your
-  `%USERPROFILE%` is deep — some `site-packages` wheels ship paths >260 chars.
-- **Antivirus.** Some AV vendors flag the FastEmbed model download. Allow
-  `%USERPROFILE%\.cache\fastembed` if you see quarantined artifacts.
-
----
-
-## WSL2 (Windows 11 + Ubuntu/Debian inside WSL)
-
-This is the most nuanced configuration because there are **two possible
-places Claude Code can run from**, and the MCP server must be reachable from
-whichever one you use.
-
-### Scenario A — Claude Code runs on Windows (most common)
-
-Claude Code is installed via its Windows installer and shows up in the
-Windows Start menu. The MCP server lives inside WSL2 at
-`\\wsl$\Ubuntu\home\<user>\claude-memory-server`.
-
-MCP registration must point to the **Linux** Python binary, but use `wsl` as
-the command from the Windows host's perspective:
+**Scenario A: Claude Code runs on Windows** (most common). The server lives inside WSL2.
+Register it with `wsl` as the command and the Linux Python as an argument:
 
 ```json
 {
@@ -403,131 +302,69 @@ the command from the Windows host's perspective:
       "command": "wsl",
       "args": [
         "-e",
-        "/home/USERNAME/claude-memory-server/.venv/bin/python",
-        "/home/USERNAME/claude-memory-server/src/server.py"
+        "/home/USERNAME/total-agent-memory/.venv/bin/python",
+        "/home/USERNAME/total-agent-memory/src/server.py"
       ],
       "env": {
-        "CLAUDE_MEMORY_DIR": "/home/USERNAME/.claude-memory"
+        "TAM_MEMORY_DIR": "/home/USERNAME/.tam"
       }
     }
   }
 }
 ```
 
-A ready-to-edit copy lives at
-[`examples/settings/claude-code-wsl.json`](../examples/settings/claude-code-wsl.json).
-Replace `USERNAME` with your WSL username (check with `wsl -- whoami` from
-PowerShell) and merge the `mcpServers.memory` block into
-`%USERPROFILE%\.claude\settings.json`.
+Replace `USERNAME` with your WSL username (`wsl -- whoami` in PowerShell) and merge the
+block into `%USERPROFILE%\.claude\settings.json`. A ready-to-edit copy is
+[`examples/settings/claude-code-wsl.json`](../examples/settings/claude-code-wsl.json);
+it still uses the older clone name `claude-memory-server` and the legacy
+`CLAUDE_MEMORY_DIR` variable, so adjust the paths to your clone.
 
-### Scenario B — Claude Code runs inside WSL (VS Code Remote-WSL)
+**Scenario B: Claude Code runs inside WSL** (for example VS Code Remote-WSL). The setup is
+identical to [Linux](#linux): `install.sh` writes the native Linux Python path and no `wsl`
+prefix is needed.
 
-If you launch Claude Code from inside the WSL shell (e.g. via the VS Code
-Remote-WSL extension that injects its CLI into the Linux environment), the
-configuration is identical to the [Linux](#linux-ubuntu-2204-debian-12-fedora-38)
-install — `install.sh` writes the MCP command as the native Linux Python
-path, no `wsl` prefix needed.
+Whichever side runs the Claude Code binary must be able to resolve the MCP `command`: from
+Windows, prefix with `wsl -e`; inside WSL, the command is local.
 
-**Rule of thumb:** whichever side runs the Claude Code binary is the side
-that must be able to resolve the MCP `command`. If Claude Code runs on
-Windows, MCP must be callable from Windows (so prefix with `wsl -e`). If
-Claude Code runs inside WSL, MCP is local.
-
-### Enabling systemd inside WSL2
-
-`install.sh` detects WSL2 via `grep -qi microsoft /proc/version` and/or the
-`WSL_DISTRO_NAME` env var. It then tries `systemctl --user
-show-environment`. If WSL was booted without systemd, that check fails and
-the installer falls back to the shell-loop autostart path
-(`~/.claude-memory/dashboard-autostart.sh` wired through `~/.profile`).
-
-To get real systemd `--user` support inside WSL2, add or edit
-`/etc/wsl.conf`:
+**systemd inside WSL2.** `install.sh` detects WSL with `grep -qi microsoft /proc/version`
+and tries `systemctl --user show-environment`. If WSL booted without systemd, it falls back
+to the shell-loop autostart. For real systemd `--user` units, edit `/etc/wsl.conf`:
 
 ```ini
 [boot]
 systemd=true
 ```
 
-Then from PowerShell:
+Then run `wsl --shutdown` and `wsl` from PowerShell, and re-run
+`./install.sh --ide claude-code`.
 
-```powershell
-wsl --shutdown
-wsl
-```
+**Gotchas**
 
-Re-run `./install.sh --ide claude-code` and the installer will pick up
-systemd and install the `.path` + `.service` units like on native Linux.
+- **Clock drift.** WSL2 time can drift after a Windows suspend; if reflection timestamps jump, run `sudo hwclock -s` inside WSL.
+- **Port forwarding.** The dashboard binds to `127.0.0.1:37737` inside WSL; since Windows 11 22H2 `http://localhost:37737` works in a Windows browser.
+- **Filesystem.** Do not put `~/.tam/` on `/mnt/c/...`: SQLite across the 9P bridge is extremely slow. Keep the database on the Linux filesystem (the default).
+- **Slow saves.** On a CPU-only WSL2 host with an LLM stage turned on, a save can take tens of seconds. Keep the default `MEMORY_MODE=fast` or use the [enrichment worker](configuration.md#background-enrichment-worker).
+- **Ollama.** Install it inside WSL (`curl -fsSL https://ollama.com/install.sh | sh`), or use Windows Ollama and set `OLLAMA_URL` (for example `http://host.docker.internal:11434`) in the MCP env.
 
-### WSL2 gotchas
+## Client configuration files
 
-- **Clock drift.** WSL2 virtual-time can drift after a Windows suspend/resume;
-  if you see reflection timestamps jumping, run `sudo hwclock -s` inside WSL.
-- **Port forwarding.** The dashboard binds to `127.0.0.1:37737` inside WSL;
-  Windows auto-forwards localhost ports for WSL2 since Windows 11 22H2, so
-  `http://localhost:37737` in a Windows browser works out of the box.
-- **Filesystem cross-access.** Do **not** put `~/.claude-memory/` on
-  `/mnt/c/...` — SQLite performance across the 9P bridge is catastrophic.
-  Keep the DB in the Linux native filesystem (default).
-- **Ollama.** Install Ollama either fully inside WSL (`curl -fsSL
-  https://ollama.com/install.sh | sh`) or use Windows Ollama and point
-  `OLLAMA_HOST=http://host.docker.internal:11434` in the MCP env.
+Where each client keeps the MCP entry (the installer and `tam setup` write it):
 
----
+| Client | macOS | Linux | WSL2 | Windows native |
+|---|---|---|---|---|
+| Claude Code | `~/.claude.json` (MCP), `~/.claude/settings.json` (hooks) | same | ✅\* | `%USERPROFILE%\.claude.json` |
+| Cursor | `~/.cursor/mcp.json` | same | ✅\* | `%USERPROFILE%\.cursor\mcp.json` |
+| Gemini CLI | `~/.gemini/settings.json` | same | ✅\* | same under `%USERPROFILE%` |
+| OpenCode | `~/.config/opencode/opencode.json` | same | ✅\* | same |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | `~/.config/Claude/...` | ✅\* | `%APPDATA%\Claude\...` |
+| Cline | VS Code global storage `saoudrizwan.claude-dev/settings/cline_mcp_settings.json` | same | ✅\* | same |
+| Continue | `~/.continue/mcpServers/memory.yaml` | same | ✅\* | same |
+| Codex CLI | `~/.codex/config.toml` | same | ✅\* | same |
 
-## IDE coverage matrix
+\*WSL2: if the client runs on the Windows host, wrap the MCP `command` with `wsl -e` and
+use Linux paths in `args` (Scenario A above); if it runs inside WSL, use the Linux row.
 
-| IDE | macOS | Linux | WSL2 | Windows native |
-|---|:---:|:---:|:---:|:---:|
-| Claude Code | ✅ `~/.claude.json` (MCP) + `~/.claude/settings.json` (hooks) | ✅ | ✅\* | ✅ `%USERPROFILE%\.claude.json` |
-| Cursor | ✅ `~/.cursor/mcp.json` | ✅ | ✅\* | ✅ `%USERPROFILE%\.cursor\mcp.json` |
-| Gemini CLI | ✅ `~/.gemini/settings.json` | ✅ | ✅\* | ✅ |
-| OpenCode | ✅ `~/.config/opencode/opencode.json` | ✅ | ✅\* | ✅ |
-| Claude Desktop | ✅ `~/Library/Application Support/Claude/claude_desktop_config.json` | ✅ `~/.config/Claude/…` | ✅\* | ✅ `%APPDATA%\Claude\…` |
-| Cline | ✅ VS Code global storage `saoudrizwan.claude-dev/settings/cline_mcp_settings.json` | ✅ | ✅\* | ✅ |
-| Continue | ✅ `~/.continue/mcpServers/memory.yaml` | ✅ | ✅\* | ✅ |
-| Codex CLI | ✅ `~/.codex/config.toml` | ✅ | ✅\* | ✅ |
-
-\*WSL2: if the IDE runs on the Windows host, wrap the MCP `command` with
-`wsl -e` and use Linux paths in `args` (see Scenario A above). If the IDE
-runs inside WSL, use native Linux paths exactly like the Linux row.
-
-Switch IDEs by passing `--ide <name>` to `install.sh` / `install.ps1`:
-
-```bash
-./install.sh --ide cursor        # or: gemini-cli / opencode / codex
-```
-
-Running the installer twice with different `--ide` values is safe — each
-target IDE has its own config file, and the shared `memory.db` and venv are
-reused.
-
----
-
-## Background services comparison
-
-The same three jobs run everywhere, just under different orchestrators:
-
-| Task | macOS (LaunchAgent) | Linux & WSL2 (systemd `--user`) | Windows native (Task Scheduler) |
-|---|---|---|---|
-| Reflection on save | `com.claude.memory.reflection` + `WatchPaths` on `.reflect-pending` | `claude-memory-reflection.path` + `claude-memory-reflection.service` | FileSystemWatcher-backed Scheduled Task |
-| Orphan backfill, 4× daily | `com.claude.memory.orphan-backfill` + `StartCalendarInterval` @ 00/06/12/18 | `claude-memory-orphan-backfill.timer` + `OnCalendar=*-*-* 00,06,12,18:00:00` | Scheduled Task with four `DailyTrigger`s |
-| Update check, Monday 09:00 | `com.claude.memory.check-updates` weekly plist | `claude-memory-check-updates.timer` with `OnCalendar=Mon 09:00` | Scheduled Task `WeeklyTrigger -DaysOfWeek Monday -At 09:00` |
-| Dashboard (keepalive) | `com.claude-total-memory.dashboard` `KeepAlive=true` | `claude-total-memory-dashboard.service` `Restart=on-failure` | Scheduled Task `AtLogon` + `RestartCount=3` |
-
-State locations:
-
-| Artifact | macOS | Linux / WSL2 | Windows native |
-|---|---|---|---|
-| DB | `~/.claude-memory/memory.db` | `~/.claude-memory/memory.db` | `%USERPROFILE%\.claude-memory\memory.db` |
-| Logs | `/tmp/claude-memory-*.log` + `~/.claude-memory/logs/` | `~/.claude-memory/logs/` + `journalctl --user` | `%USERPROFILE%\.claude-memory\logs\` |
-| Service manifests | `~/Library/LaunchAgents/` | `~/.config/systemd/user/` | Task Scheduler (`\memory*`) |
-
----
-
-## Post-install verification
-
-The quickest way to confirm everything is wired up is the diagnostic script:
+## Verify the installation
 
 ```bash
 # macOS / Linux / WSL2
@@ -537,7 +374,8 @@ bash scripts/diagnose.sh
 powershell -ExecutionPolicy Bypass -File scripts\diagnose.ps1
 ```
 
-Expected output includes lines like:
+Expected lines look like this; exit code `0` means healthy, `1` means a check failed (details
+in the report):
 
 ```
   OK OS: Darwin 25.4.0
@@ -549,75 +387,43 @@ Expected output includes lines like:
   OK DB migrations at head
 ```
 
-Exit code `0` = healthy; `1` = one or more checks failed (details in the
-report).
-
-You can also run the smoke test in any MCP client:
-
-```
-memory_save(content="install works", type="fact")
-memory_stats()
-```
-
----
+Right after installation, before the MCP server first starts, the database is reported as "not
+created yet", a warning rather than a failure. The smoke test works in any MCP client:
+`memory_save(content="install works", type="fact")`, then `memory_stats()`.
 
 ## Uninstall
 
-- **macOS / Linux / WSL2:** `./install.sh --uninstall`
-- **Windows native:** `.\install.ps1 -Uninstall`
+- **macOS, Linux, WSL2:** `./install.sh --uninstall` removes the LaunchAgents or systemd units. It keeps the client's MCP entry and your data; to remove the entry, run `PYTHONPATH=<clone>/src python3 -m setup_wizard.register --unregister --client <ide>` or edit the client's config (`~/.claude.json` and the hooks in `~/.claude/settings.json` for Claude Code).
+- **Windows native:** `.\install.ps1 -Uninstall` stops and removes the Scheduled Tasks and the client's MCP entry and hooks, and keeps the venv and the database.
 
-Both preserve `~/.claude-memory/memory.db` (or
-`%USERPROFILE%\.claude-memory\memory.db`) by default. Pass `--purge` / `-Purge`
-to drop the database as well.
-
-What gets removed:
-
-- Registered MCP server entry in the IDE's settings file.
-- Hook scripts and their registrations in the IDE settings.
-- LaunchAgents / systemd units / Scheduled Tasks and their log paths in
-  `/tmp/` (macOS only — Linux keeps them under `~/.claude-memory/logs/`).
-- The `.venv/` inside the clone (the clone itself is left alone — delete it
-  manually if you want).
-
----
+Both keep the memory directory (`~/.tam`, containing `memory.db`). Delete it yourself to drop
+your memories, and delete the clone to remove the venv.
 
 ## Troubleshooting
 
-### "memory" MCP server shows Disconnected
+**The `memory` server shows Disconnected.**
+Run the [diagnostic script](#verify-the-installation) and look for failing checks. On macOS,
+`launchctl list | grep claude.memory` should list the agents; if it is empty, re-run
+`./install.sh`. On Linux and WSL2, `systemctl --user status claude-memory-reflection.path`
+should say `Active: active (waiting)`. On Windows, run
+`Get-ScheduledTask -TaskName "total-agent-memory*"`. Logs are in `~/.tam/logs/`, for example `tail -f ~/.tam/logs/dashboard.log`.
 
-1. Run the diagnostic script and look for failing checks.
-2. On macOS: `launchctl list | grep claude.memory` — should list 3 loaded
-   agents. If empty, re-run `./install.sh`.
-3. On Linux / WSL2: `systemctl --user status claude-memory-reflection.path`
-   — look for `Active: active (waiting)`.
-4. On Windows: `Get-ScheduledTask -TaskPath "\" -TaskName "ClaudeTotal*"`.
-5. Tail the dashboard log: `tail -f ~/.claude-memory/logs/dashboard.log`
-   (or the Windows equivalent).
+**Dashboard port 37737 is busy.**
+`DASHBOARD_PORT=37800 ./install.sh --ide claude-code` writes the new port into the unit file or
+Scheduled Task and replaces the old service.
 
-### Dashboard port 37737 is busy
-
-The installer honors `DASHBOARD_PORT`:
-
-```bash
-DASHBOARD_PORT=37800 ./install.sh --ide claude-code
-```
-
-Re-run — the old service is replaced and the new port is written into the
-unit file or Scheduled Task.
-
-### Am I really on WSL2?
+**Am I on WSL2?**
 
 ```bash
 grep -qi microsoft /proc/version && echo "WSL detected" || echo "native Linux"
 echo "$WSL_DISTRO_NAME"        # populated on WSL only
-wsl.exe --list --verbose       # from PowerShell, shows VERSION column
+wsl.exe --list --verbose       # from PowerShell, shows the VERSION column
 ```
 
-If `VERSION` column shows `1`, you are on WSL1 — systemd `--user` is
-unavailable and reflection falls back to the shell-loop path. Migrate with
-`wsl --set-version <distro> 2` from PowerShell.
+If `VERSION` is `1`, you are on WSL1: systemd `--user` is unavailable and reflection uses the
+shell-loop path. Migrate with `wsl --set-version <distro> 2` from PowerShell.
 
-### systemd `--user` is available but units don't start
+**systemd `--user` is available but units do not start.**
 
 ```bash
 systemctl --user daemon-reload
@@ -625,28 +431,28 @@ systemctl --user --no-pager status claude-memory-reflection.service
 journalctl --user -u claude-memory-reflection.service -n 100 --no-pager
 ```
 
-Common causes: Python binary path moved (re-run the installer), or
-`~/.claude-memory/.reflect-pending` was deleted and `PathExists` never
-re-armed — `touch ~/.claude-memory/.reflect-pending` to nudge it.
+Common causes: the Python path moved (re-run the installer), or `~/.tam/.reflect-pending` was
+deleted and the path unit never re-armed (`touch ~/.tam/.reflect-pending`).
 
-### Ollama integration
+**The models are downloaded again after a restart.**
+macOS clears the system temp directory, where fastembed keeps its cache by default. Set
+`TAM_MODEL_CACHE=~/.tam/models`.
 
-`memory_recall` / reflection are fully functional without Ollama (FastEmbed
-covers retrieval), but richer triples / deep enrichment need it:
+**Ollama.**
+Retrieval, reflection and everything except `memory_answer` work without it; richer triples
+and deep enrichment need it.
 
 ```bash
-curl http://127.0.0.1:11434/api/tags   # should return JSON with models list
+curl http://127.0.0.1:11434/api/tags   # should return JSON with a models list
 ollama pull qwen2.5-coder:7b
 ollama pull nomic-embed-text
 ```
 
-On WSL2 with Windows-host Ollama, export
-`OLLAMA_HOST=http://host.docker.internal:11434` in the MCP env block.
+On WSL2 with Windows-host Ollama, set `OLLAMA_URL` in the MCP env block.
 
----
+## See also
 
-See also:
-
-- [examples/README.md](../examples/README.md) — hook and rules wiring
-- [systemd/README.md](../systemd/README.md) — Linux unit details
-- [docs/MANUAL_QA.md](MANUAL_QA.md) — end-to-end smoke checklist
+- [configuration.md](configuration.md): every setting
+- [upgrading.md](upgrading.md): updating an existing install
+- [examples/README.md](../examples/README.md): hook and rules wiring
+- [archive/MANUAL_QA.md](archive/MANUAL_QA.md): end-to-end smoke checklist

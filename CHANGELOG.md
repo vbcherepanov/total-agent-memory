@@ -6,6 +6,21 @@ and versions use [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `benchmarks/locomo_rerank_modes.py --relative-date-anchor ISO` pins the date that relative phrases in questions ("a few years ago") count back from. One LoCoMo question of 1,986 has such a phrase whose date window moves across the conversation dates, so its top ten were ordered differently on 17 and 28 November 2026; no metric changed. With the option a run gives the same rankings on any day.
+- LoCoMo retrieval runs for 15.0.2 in `benchmarks/results/rerank-modes`: R@5 0.745 with the default setting and 0.609 with the cross-encoder off, the same as 15.0.0, and identical rankings in two runs.
+- `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), and a "Getting help and reporting problems" section in `CONTRIBUTING.md`.
+
+### Changed
+
+- **The documentation is ordered by reader.** `docs/README.md` is the index: what to read first, everyday use, team server, benchmarks, internals. The README's documentation section lists five pages in reading order. `docs/installation.md`, `docs/tools.md` and `docs/upgrading.md` are rewritten and a third to a half shorter; `docs/configuration.md` is grouped by topic and starts with the settings most people change.
+- **`docs/benchmarks.md` starts with the current release.** It reports LoCoMo by cross-encoder setting and by category for 15.0.2, the two known conditions under which two runs can rank differently, and measured write and search cost. The 13.0.0 tables stay under their own heading. The LoCoMo category names in the old tables were wrong for three categories (282 questions are multi-hop, 92 open-domain, 841 single-hop) and are corrected.
+- The README's benchmark section has one table of current-release numbers and the commands that reproduce it. The paragraph that compared the JOSS editor's measurements with ours is removed.
+- `docs/TEAM_SERVER_V14.md` and `docs/LLM_V14.md`, which were in Russian, are replaced by `docs/team-server-reference.md` and `docs/llm-settings.md` in English.
+- Notes on old versions, the April 2026 feature comparison and the v8 to v13 roadmap moved to `docs/archive/`.
+- The first start downloads about 370 MB of models (text embedder about 240 MB, cross-encoder about 130 MB); the README said 330 MB.
+
 ## [15.0.2] - 2026-11-26
 
 ### Fixed

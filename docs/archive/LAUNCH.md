@@ -39,7 +39,7 @@ export MEMORY_MODE=balanced
 export MEMORY_MODE=ultrafast
 ```
 
-Each preset toggles a known set of flags (see `docs/v11/audit.md` §G).
+Each preset toggles a known set of flags (see `docs/archive/v11/audit.md` §G).
 Individual flags can still be overridden after `MEMORY_MODE` resolution
 — the preset is the floor, not a lock.
 
@@ -83,7 +83,7 @@ Run the full bench:
 ./scripts/memory-bench --warmup --rounds 200
 ```
 
-Output goes to `docs/v11/benchmark.md`. Expected fast-mode shape:
+Output goes to `docs/archive/v11/benchmark.md`. Expected fast-mode shape:
 
 | metric              |   p50 |   p95 |   p99 |
 |---------------------|------:|------:|------:|
@@ -99,7 +99,7 @@ regresses by more than 25 %):
 ./scripts/memory-perf-gate
 ```
 
-The gate reads the previous artifact in `docs/v11/benchmark.md` and the
+The gate reads the previous artifact in `docs/archive/v11/benchmark.md` and the
 current `scripts/memory-bench` run, then compares per-metric p95.
 
 To inspect a single search verdict:
@@ -176,7 +176,7 @@ has the raw results, benchmarks/longmemeval_bench.py is the runner.
 
 GitHub: https://github.com/vbcherepanov/total-agent-memory
 Comparison with mem0/Letta/Zep/Supermemory/Cognee/LangMem/Mastra:
-  docs/vs-competitors.md
+  docs/archive/vs-competitors.md
 
 Feedback welcome — especially from folks who've tried the other layers
 and can tell me where they beat us.
@@ -306,7 +306,7 @@ benchmarks.
 - Npm SDK: https://www.npmjs.com/package/@vbch/total-agent-memory-client
 - Benchmarks: https://github.com/vbcherepanov/total-agent-memory/blob/main/evals/longmemeval-2026-04-17.json
 - Comparison with mem0 / Letta / Zep / Supermemory / Cognee / LangMem:
-  https://github.com/vbcherepanov/total-agent-memory/blob/main/docs/vs-competitors.md
+  https://github.com/vbcherepanov/total-agent-memory/blob/main/docs/archive/vs-competitors.md
 ```
 
 Target lists:
@@ -420,6 +420,6 @@ npm i @vbch/total-agent-memory-client  # TypeScript/JavaScript
 
 ### Comparison
 
-See `docs/vs-competitors.md` for a full side-by-side with mem0, Letta,
+See `docs/archive/vs-competitors.md` for a full side-by-side with mem0, Letta,
 Zep, Supermemory, Cognee, LangMem, Mastra.
 ```

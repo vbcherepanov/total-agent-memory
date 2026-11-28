@@ -5,6 +5,56 @@ Per-question rows (`*.rows.jsonl.gz`) and run reports (`*.json`) from
 ingests locomo10 into a fresh store, asks all 1,986 questions and grades the
 1,536 that are not adversarial and have evidence. No LLM is involved.
 
+## v15.0.2 (commit f373d21), 2026-11-28
+
+Same machine and packages as v15.0.0 below. Runs were serial. Other heavy jobs
+ran on the machine (load average 8 to 16 during the `off` runs and 113 to 174
+during the `auto` runs, on 12 cores), so **latency in these reports is not a
+measurement**; `lane_note` in the reports understates the load, the
+`load_average_*` fields record it. The retrieval code is the same as in
+v15.0.0, whose latency was measured on a quiet machine. Commands:
+
+```
+MEMORY_LLM_ENABLED=false python benchmarks/locomo_rerank_modes.py --tree . --version-label v15.0.2 --commit f373d21 --db-root <store root> --mode off --label run1
+MEMORY_LLM_ENABLED=false python benchmarks/locomo_rerank_modes.py --tree . --version-label v15.0.2 --commit f373d21 --db-root <store root> --mode off --label run2
+MEMORY_LLM_ENABLED=false python benchmarks/locomo_rerank_modes.py --tree . --version-label v15.0.2 --commit f373d21 --db-root <store root> --mode auto --label warm-run1 --wait-for-encoder --warmup-queries 3
+```
+
+and the same `auto` command with `--label warm-run2`.
+
+| Condition | Runs | R@1 | R@5 | R@10 | Queries before encoder ready |
+|---|---:|---:|---:|---:|---:|
+| `off` | 2 | 0.3314 | 0.6094 | 0.7012 | all |
+| `auto`, warm | 2 | 0.4883 | 0.7454 | 0.8190 | 0 |
+
+- The two runs of each condition returned the same ranking for every one of
+  the 1,986 questions (`v15.0.2-off-compare-run1-run2.json`,
+  `v15.0.2-auto-warm-compare-run1-run2.json`).
+- All figures equal those of v15.0.0.
+- Ingest: 5,882 turns in 300 to 320 s (18.4 to 19.6 turns per second) in the
+  first three runs and 432 s in the fourth, against 288 to 292 s on the quiet machine for v15.0.0.
+
+### One question depends on the calendar date
+
+Against the v15.0.0 runs of 2026-11-17, each v15.0.2 run of 2026-11-28 ranks
+one question differently, the same one in both settings
+(`v15.0.2-*-compare-v15.0.0-*.json`, position 1594): "What hobby did Evan
+start practicing a few years ago that he enjoys?". The ten records are the
+same, their order differs, and no metric changes.
+
+The cause is the phrase "a few years ago". Recall resolves relative dates
+against the current date, which is right for a user asking today. The phrase
+becomes a 60-day window around the date three years back: 2023-10-19 to
+2023-12-18 on 17 November 2026 and 2023-10-30 to 2023-12-29 on 28 November
+2026. A LoCoMo session dated 2023-12-26 is outside the first window and inside
+the second, and records inside the window are ranked higher.
+
+`--relative-date-anchor 2026-11-17T09:00` makes the runner resolve relative
+dates from that day. A v15.0.2 `off` run of 2026-11-28 with this option returns
+the same ranking as the v15.0.0 run of 2026-11-17 for all 1,986 questions
+(`v15.0.2-off-anchored-20261117-compare-v15.0.0-off-run1.json`). The product is
+not changed.
+
 ## v15.0.0 (commit dc8ecf9), 2026-11-17
 
 Apple M2 Max, 12 cores, macOS 27.2.1, Python 3.13.5, onnxruntime 1.30.0,

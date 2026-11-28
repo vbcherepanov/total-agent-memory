@@ -1,0 +1,10 @@
+{
+  "questions": 1986,
+  "rankings_differ": 1,
+  "top5_differ": 1,
+  "r5_gold_hits_differ": 0,
+  "first_differing_positions": [
+    1594
+  ],
+  "last_differing_position": 1594
+}

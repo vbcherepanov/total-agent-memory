@@ -3,7 +3,7 @@
 > **Snapshot, not maintained.** This page was written on 2026-04-17. Funding, star counts,
 > prices and feature marks for other projects are the author's reading of their public pages at that
 > time and have not been re-checked; tool counts for this project are out of date (77 tools as of
-> 14.6.0). For measured comparisons, see [benchmarks.md](benchmarks.md#comparison-with-published-numbers-of-other-systems).
+> 14.6.0). For measured comparisons, see [benchmarks.md](../benchmarks.md#comparison-with-other-systems).
 
 The agent-memory space grew up fast in 2025–2026. This page is an honest side-by-side with
 the money, features, and real numbers — so you can pick the right tool for your job.
@@ -105,10 +105,10 @@ python -m claude_total_memory.cli benchmark
 | mem0 | LoCoMo / LongMemEval / BEAM | 92.5 / 94.4 / 62.0 (BEAM-1M) — end-to-end accuracy, their generator + judge | ≤1.1 s p50 |
 | LangMem | — | — | p95 59.82 s |
 
-Reproducible: [`evals/longmemeval-2026-04-17.json`](../evals/longmemeval-2026-04-17.json).
+Reproducible: [`evals/longmemeval-2026-04-17.json`](../../evals/longmemeval-2026-04-17.json).
 Newer, product-path retrieval numbers on LoCoMo and BEAM:
-[`benchmarks/results/v13-locomo-retrieval.json`](../benchmarks/results/v13-locomo-retrieval.json),
-[`v13-beam-100K.json`](../benchmarks/results/v13-beam-100K.json).
+[`benchmarks/results/v13-locomo-retrieval.json`](../../benchmarks/results/v13-locomo-retrieval.json),
+[`v13-beam-100K.json`](../../benchmarks/results/v13-beam-100K.json).
 Dataset: [`xiaowu0162/longmemeval-cleaned`](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned), 470 questions (abstention type excluded by the official bench).
 
 ### Per-question-type breakdown (our R@5 recall_any)

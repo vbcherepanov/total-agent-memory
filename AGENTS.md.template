@@ -303,4 +303,4 @@ If you depended on v10.5 synchronous LLM behaviour (quality gate / contradiction
 export MEMORY_MODE=deep
 ```
 
-Migration from v10: see `docs/v11/MIGRATION-FROM-V10.md` in the server repo.
+Migration from v10: see `docs/archive/v11/MIGRATION-FROM-V10.md` in the server repo.

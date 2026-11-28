@@ -43,7 +43,7 @@ Run `tam setup --mode company`, or in `tam setup --reconfigure` choose **Add a c
 
 * The personal store and the client registrations are not touched. The data directory of the company server must not overlap the personal memory directory; the wizard refuses one that does.
 * The setup record keeps both sections: `personal` and `company`.
-* **Migration is not automatic.** TAM has no documented path that moves records from a personal store into a team workspace. `TEAM_SERVER_V14.md` explicitly warns not to mount an existing personal database as team data. The wizard says so at the end instead of offering a migration.
+* **Migration is not automatic.** TAM has no documented path that moves records from a personal store into a team workspace. `team-server-reference.md` explicitly warns not to mount an existing personal database as team data. The wizard says so at the end instead of offering a migration.
 
 ### Mode 1: "Just me"
 

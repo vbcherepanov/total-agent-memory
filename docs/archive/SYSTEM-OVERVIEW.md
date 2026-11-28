@@ -90,7 +90,7 @@ The following tests enforce that no LLM call leaks into the fast hot path:
 - `tests/test_embed_no_ollama_fallback.py` — when FastEmbed is unavailable and `MEMORY_ALLOW_OLLAMA_IN_HOT_PATH=false`, embedding raises `RuntimeError` instead of silently HTTPing Ollama.
 - `tests/test_embedding_spaces.py` — every write records a non-null `embedding_space`; backfill populated old rows; per-space search filters correctly.
 
-Architecture details and per-stage audit: [`docs/v11/audit.md`](docs/v11/audit.md). Bench artifact: [`docs/v11/benchmark.md`](docs/v11/benchmark.md). Migration: [`docs/v11/MIGRATION-FROM-V10.md`](docs/v11/MIGRATION-FROM-V10.md).
+Architecture details and per-stage audit: [`docs/archive/v11/audit.md`](v11/audit.md). Bench artifact: [`docs/archive/v11/benchmark.md`](v11/benchmark.md). Migration: [`docs/archive/v11/MIGRATION-FROM-V10.md`](v11/MIGRATION-FROM-V10.md).
 
 ---
 
