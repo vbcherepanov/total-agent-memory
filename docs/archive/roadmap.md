@@ -2,8 +2,8 @@
 
 This page was written at v13.0.0 (2026-08-27) and moved from the README. Some
 open items below may have been addressed in 14.x; the
-[CHANGELOG](../CHANGELOG.md) is authoritative, and 14.x is summarised in
-[whats-new.md](whats-new.md).
+[CHANGELOG](../../CHANGELOG.md) is authoritative, and 14.x is summarised in
+[whats-new.md](../whats-new.md).
 
 ## Shipped in v13.0.0 (2026-08-27)
 - ✅ **MCP SDK 2.x compatibility** — the blocker: every install created after
@@ -31,7 +31,7 @@ open items below may have been addressed in 14.x; the
 - ✅ **Embed fallback ladder gated** — silent Ollama fallback in `Store.embed` requires `MEMORY_ALLOW_OLLAMA_IN_HOT_PATH=true`.
 - ✅ **New MCP tools**: `memory_save_fast`, `memory_search_fast`, `memory_explain_search`, `memory_warmup`, `memory_perf_report`, `memory_rebuild_fts`, `memory_rebuild_embeddings`, `memory_eval_locomo`, `memory_eval_recall`, `memory_eval_temporal`, `memory_eval_entity_consistency`, `memory_eval_contradictions`, `memory_eval_long_context`.
 - ✅ **Migrations 021 (embedding_spaces) + 022 (embedding_cache_v11)** — idempotent on next start.
-- ✅ **Benchmark suite**: `scripts/memory-bench` (artifact `docs/v11/benchmark.md`) + `scripts/memory-perf-gate` for CI.
+- ✅ **Benchmark suite**: `scripts/memory-bench` (artifact `docs/archive/v11/benchmark.md`) + `scripts/memory-perf-gate` for CI.
 
 ## Shipped in v10.5 (2026-04-27)
 - ✅ **Universal `memory-protocol` skill** — single canonical SKILL.md + 4 references (tool cheatsheet for all MCP tools, workflow recipes for 15 common situations, hooks reference, per-IDE setup) + 4 templates (Claude Code settings.json, Codex config.toml, Cursor `.mdc`, Cline `.md`). Same content for every IDE; only the wiring differs.
@@ -41,7 +41,7 @@ open items below may have been addressed in 14.x; the
 - ✅ **v10.5 latency benchmark** — `benchmarks/v10_5_latency.py` with apples-to-apples sync vs async comparison. Demonstrates **80× p95 reduction** (`2150 ms → 27 ms`) when async is enabled with LLM stages on.
 
 ## Shipped in v10.1 (2026-04-27)
-- ✅ **Async enrichment worker** — opt-in `MEMORY_ASYNC_ENRICHMENT=true` moves quality gate / entity dedup / contradiction detector / episodic linking / wiki refresh to a background thread. Drops max save latency 5.4× on macOS, 60–100× on WSL2. See [Performance tuning](configuration.md#performance-tuning).
+- ✅ **Async enrichment worker** — opt-in `MEMORY_ASYNC_ENRICHMENT=true` moves quality gate / entity dedup / contradiction detector / episodic linking / wiki refresh to a background thread. Drops max save latency 5.4× on macOS, 60–100× on WSL2. See [Performance tuning](../configuration.md#background-enrichment-worker).
 - ✅ **`enrichment_queue` table** with stale-processing recovery (rows stuck >60 s in `processing` flip back to `pending`).
 - ✅ **Dashboard panel** for worker health: depth, throughput/min, p50/p95 ms per task, oldest pending age, recent failures.
 - ✅ **`_binary_search` ValueError fix** — `np.argpartition` requires `kth STRICTLY < N`; tiny test projects (pool ≤ 50) used to silently break `contradiction_log`.

@@ -26,11 +26,9 @@ TAM 将决策、解决方案、事实、错误和会话摘要保存在你的电�
 
 每个记忆库都是以 SQLite 数据库为核心的独立目录。检索结合 BM25 全文搜索、本地计算的稠密嵌入、
 模糊匹配和知识图谱，通过倒数排名融合（reciprocal rank fusion）合并结果。随后，本地 cross-encoder
-会对结果重新排序：默认情况下，它会在模型于后台加载完成后自动启用；设置
-`MEMORY_CROSS_RERANK=off` 可关闭。默认配置在写入和检索时均不调用 LLM，
-因此可以离线评估检索。关闭 cross-encoder 时，在全新记忆库上的 LoCoMo 重跑
-得到了完全一致的排序。使用默认设置时，进程启动后的早期查询可能发生在模型加载前，
-因此重跑结果不保证一致。事实可以附带有效时间区间（`kg_add_fact`、`kg_at`），
+会对结果重新排序；如果延迟比召回率更重要，可设置 `MEMORY_CROSS_RERANK=off` 关闭。
+默认配置在写入和检索时均不调用 LLM，因此可以离线评估检索，并且结果
+[可以复现](#复现基准测试)。事实可以附带有效时间区间（`kg_add_fact`、`kg_at`），
 单值事实的新值可以使旧值失效。
 
 TAM 适合日常使用编程 Agent 的开发者，也适合需要在本地运行、检查和修改记忆基线的研究者。
@@ -139,9 +137,9 @@ TAM_MEMORY_DIR="$(mktemp -d)" python quickstart.py
 
 **首次启动。** 不带命令运行 `tam` 时，会通过 stdio 启动 MCP 服务器，这是 MCP
 客户端的运行方式。`tam --help` 会列出命令，`tam --version` 会显示版本号（从
-14.11 开始支持；更早版本对任意参数都会启动服务器，因此请使用
-`tam setup --help`）。首次启动会下载约 330 MB 模型：文本嵌入模型约 240 MB，
-cross-encoder 约 90 MB。cross-encoder 在后台加载，因此查询次数较少、很快退出的
+15.0.0 开始支持；更早版本对任意参数都会启动服务器，因此请使用
+`tam setup --help`）。首次启动会下载约 370 MB 模型：文本嵌入模型约 240 MB，
+cross-encoder 约 130 MB。cross-encoder 在后台加载，因此查询次数较少、很快退出的
 脚本可能只使用融合排序结果。fastembed 默认把模型保存在系统临时目录中；macOS
 可能会不时清理该目录。设置 `TAM_MODEL_CACHE=~/.tam/models` 可将模型保存在此处。
 
@@ -187,45 +185,43 @@ export FASTEMBED_CACHE_PATH="$PWD/.tam-models" TAM_MEMORY_DIR="$PWD/.tam-test-me
 
 ## 复现基准测试
 
-检索基准（LoCoMo、LongMemEval、BEAM）无需 API 密钥，下载公开数据集后，
-即可使用 [benchmarks/](benchmarks) 下的脚本运行。下表测量于 v13.0.0，早于
-14.5 版本将 cross-encoder 设为默认值，因此反映的是未使用 cross-encoder 的检索结果，
-并不代表当前版本的默认安装：
+检索基准无需 API 密钥，也不调用 LLM。在
+[LoCoMo](https://github.com/snap-research/locomo)（1,536 个计分问题）上，
+15.0.2 版本的测量结果如下：
 
-| 基准 | 指标 | 结果 |
-|---|---|---:|
-| LongMemEval（470 个问题） | R@5（recall_any） | 95.1% |
-| LoCoMo（1,536 个问题） | R@5 | 0.607 |
-| BEAM，100 万 token 规模（625 个探针） | R@5 | 0.448 |
+| 设置 | R@1 | R@5 | R@10 | 每次查询的中位耗时 |
+|---|---:|---:|---:|---:|
+| 默认（启用 cross-encoder） | 0.488 | 0.745 | 0.819 | 约 0.9 秒 |
+| `MEMORY_CROSS_RERANK=off` | 0.331 | 0.609 | 0.701 | 约 50 ms |
 
-默认设置在 LoCoMo 上得分更高，但每次查询耗时也明显更长。在
-[JOSS 对 v14.6.0 的评审](https://github.com/openjournals/joss-reviews/issues/11457)
-中，编辑测得默认设置的 R@5 约为 0.745、中位耗时约 495 ms；设置
-`MEMORY_CROSS_RERANK=off` 时，R@5 为 0.607、中位耗时约 18 ms。我们在 v14.6.0
-上的测试使用每种设置各三个全新记忆库：关闭 cross-encoder 时 R@5 为 0.611，
-默认设置和 `on` 设置均为 0.746；Apple M2 Max 上每次查询的中位耗时约为
-0.95–1.0 秒，具体值取决于 CPU。三次运行中，每种设置的所有问题都返回了相同排序。
-默认设置下，进程启动后的首次查询可能发生在 cross-encoder 加载完成前并沿用融合排序；
-这些运行中，1986 个问题有 1 个因此改变了结果
-（[数据行、报告和命令](benchmarks/results/rerank-modes)）。
+耗时测量于 Apple M2 Max，具体值取决于 CPU。在全新记忆库上运行两次，
+每个问题都返回相同的排序；每次运行的逐题数据见
+[benchmarks/results/rerank-modes](benchmarks/results/rerank-modes)。
 
-数据集位置、运行命令、端到端准确率（由 LLM 评判）、阴性对照、延迟和 14.x 研究结果见
-[docs/benchmarks.md](docs/benchmarks.md)。
+如需重复测量，请将 `locomo10.json` 下载到 `benchmarks/data/locomo/data/`，然后运行：
+
+```bash
+export MEMORY_LLM_ENABLED=false
+.venv/bin/python benchmarks/locomo_rerank_modes.py --db-root /tmp/tam-locomo/stores --out-dir /tmp/tam-locomo/out --mode off --label run1
+.venv/bin/python benchmarks/locomo_rerank_modes.py --db-root /tmp/tam-locomo/stores --out-dir /tmp/tam-locomo/out --mode auto --label warm-run1 --wait-for-encoder --warmup-queries 3
+```
+
+第一条命令约需 7 分钟，第二条约需 35 分钟。
+[docs/benchmarks.md](docs/benchmarks.md) 提供按问题类别划分的结果、
+两种已知的会使两次运行排序不同的情况、写入和检索的实测开销、
+LongMemEval 与 BEAM、由 LLM 评判的准确率，以及与 Mem0 Platform 的对比。
 
 ## 文档
 
-- [安装指南](docs/installation.md)：所有安装渠道、各平台设置、WSL2、IDE 支持矩阵及故障排查
-- [设置向导](docs/SETUP_WIZARD.md)：`tam setup` 及团队服务器的网页向导
-- [工具与接口](docs/tools.md)：79 个 MCP 工具、CLI、TypeScript SDK 和 Dashboard
-- [配置](docs/configuration.md)：环境变量、LLM 提供方和性能调优
-- [本地设置页面](docs/LOCAL_SETTINGS.md)与[内部 LLM 设置](docs/LLM_V14.md)
-- [个人 Dashboard 国际化](docs/dashboard-i18n.md)：中英文切换、翻译范围和词典维护
-- [架构](docs/architecture.md)
-- [团队服务器快速开始](docs/team-server.md)，以及[管理页面](docs/TEAM_DASHBOARD.md)、[PostgreSQL](docs/TEAM_POSTGRES.md)、[备份](docs/TEAM_BACKUP.md)、[新成员接入](docs/TEAM_ONBOARDING.md)和[报告](docs/REPORTS.md)
-- [基准测试](docs/benchmarks.md)与[其他系统比较（2026 年 4 月快照）](docs/vs-competitors.md)
-- [更新与升级](docs/upgrading.md)
-- [14.x 新功能](docs/whats-new.md)、[路线图及 v8–v13 历史](docs/roadmap.md)、[更新日志](CHANGELOG.md)
-- [安全政策](SECURITY.md)
+多数用户只需阅读上面的快速开始。需要更多信息时，请按以下顺序阅读：
+
+1. [安装指南](docs/installation.md)：快速开始不适用于你的平台或客户端时阅读。
+2. [工具与接口](docs/tools.md)：Agent 可以调用的工具。
+3. [配置](docs/configuration.md)：值得调整的设置。
+4. [团队服务器](docs/team-server.md)：多人共享记忆时阅读。
+5. [基准测试](docs/benchmarks.md)：实测结果及复现方法。
+
+其余文档按读者分组列在[文档索引](docs/README.md)中。
 
 ## 引用
 

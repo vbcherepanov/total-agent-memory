@@ -77,6 +77,6 @@ that the `fast` hot path makes no LLM or network call.
 ```
 
 `/graph/live`, `/graph/hive` and `/graph/matrix` are the dashboard's graph
-views; see [tools.md](tools.md#dashboard-localhost37737). A longer walkthrough
+views; see [tools.md](tools.md#dashboard). A longer walkthrough
 of the v11 hot path and background workers, in Russian, is in
-[SYSTEM-OVERVIEW.md](../SYSTEM-OVERVIEW.md).
+[SYSTEM-OVERVIEW.md](archive/SYSTEM-OVERVIEW.md).

@@ -140,3 +140,49 @@ def test_compare_refuses_runs_that_asked_different_questions(runner, tmp_path):
     b = write_rows(tmp_path / "b.rows.jsonl.gz", [row("z", ["D1:1"], ["D1:1"])])
     with pytest.raises(ValueError):
         runner.compare(a, b)
+
+
+def test_relative_dates_count_back_from_the_pinned_day(runner):
+    from datetime import datetime
+
+    seen: list[datetime | None] = []
+
+    def temporal_rerank(query, entries, *, anchor=None, **options):
+        seen.append(anchor)
+        return entries
+
+    server = type("Server", (), {"temporal_rerank": staticmethod(temporal_rerank)})
+    pinned_day = datetime(2026, 11, 17)
+    runner.pin_relative_dates(server, pinned_day)
+
+    assert server.temporal_rerank("a few years ago", [{"content": "x"}]) == [{"content": "x"}]
+    own_anchor = datetime(2024, 1, 1)
+    server.temporal_rerank("a few years ago", [], anchor=own_anchor)
+    assert seen == [pinned_day, own_anchor]
+
+
+def test_a_pinned_day_reproduces_the_ranking_of_that_day(runner):
+    """The product's own re-ranker: the same entries, asked on two days, pinned to the first."""
+    from datetime import datetime
+
+    src = str(SCRIPT.parent.parent / "src")
+    sys.path.insert(0, src)
+    try:
+        import temporal_filter
+    finally:
+        sys.path.remove(src)
+
+    query = "What hobby did Evan start practicing a few years ago that he enjoys?"
+    entries = [{"content": "[4:25 pm on 26 December, 2023] Evan: I took up watercolor painting", "score": 0.5},
+               {"content": "[6:48 pm on 17 December, 2023] Evan: the trip was great", "score": 0.4}]
+    first_day, later_day = datetime(2026, 11, 17, 9), datetime(2026, 11, 28, 9)
+
+    def order(anchor):
+        ranked = temporal_filter.temporal_rerank(query, [dict(e) for e in entries], anchor=anchor)
+        return [e["content"] for e in ranked]
+
+    assert order(first_day) != order(later_day)
+    server = type("Server", (), {"temporal_rerank": staticmethod(temporal_filter.temporal_rerank)})
+    runner.pin_relative_dates(server, first_day)
+    pinned = [e["content"] for e in server.temporal_rerank(query, [dict(e) for e in entries])]
+    assert pinned == order(first_day)

@@ -10,6 +10,11 @@ rerun is checked for identity (see --compare).
 `--tree` points at any source tree, so a released tag can be measured unmodified.
 Each run ingests into a fresh store unless --skip-ingest is given.
 
+A question that says "a few years ago" is searched with a date window counted
+back from the day of the run, as it is for a user. On a fixed dataset that makes
+such a question depend on the calendar: --relative-date-anchor pins the day, so
+a run can be repeated exactly on any later date.
+
     python benchmarks/locomo_rerank_modes.py --mode auto --label run1 \
         --db-root /tmp/stores --out-dir benchmarks/results/rerank-modes
     python benchmarks/locomo_rerank_modes.py --compare a.rows.jsonl.gz b.rows.jsonl.gz
@@ -29,6 +34,7 @@ import subprocess
 import sys
 import time
 from collections import defaultdict, deque
+from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -75,6 +81,21 @@ def cap_encoder_threads(threads: int) -> None:
     from memory_core.fastembed_loader import load_model
 
     CrossReranker._load_fastembed = staticmethod(lambda model: load_model(TextCrossEncoder, model, threads=threads))
+
+
+def pin_relative_dates(server_mod, anchor: datetime) -> None:
+    """Resolve relative dates in questions ("a few years ago") from `anchor` instead of the clock.
+
+    A search that passes its own anchor keeps it. Patched here, not in the
+    product, so that a released tag stays unmodified.
+    """
+    original = server_mod.temporal_rerank
+    pinned_at = anchor
+
+    def pinned(query, entries, *, anchor=None, **options):
+        return original(query, entries, anchor=anchor or pinned_at, **options)
+
+    server_mod.temporal_rerank = pinned
 
 
 def load_bench(tree: Path):
@@ -230,6 +251,8 @@ def run(args: argparse.Namespace) -> dict:
         samples = samples[:args.limit_samples]
     if args.encoder_threads:
         cap_encoder_threads(args.encoder_threads)
+    if args.relative_date_anchor:
+        pin_relative_dates(server_mod, args.relative_date_anchor)
     ingest_stats = {} if args.skip_ingest else bench.ingest(server_mod, samples)
 
     from config import get_cross_rerank_mode
@@ -268,6 +291,8 @@ def run(args: argparse.Namespace) -> dict:
         "wait_for_encoder": args.wait_for_encoder,
         "warmup": warmup,
         "encoder_threads": args.encoder_threads or "onnxruntime default",
+        "relative_date_anchor": (args.relative_date_anchor.isoformat() if args.relative_date_anchor
+                                 else "day of the run"),
         "lane_note": args.lane_note,
         "summary": summarize(recorder.rows),
         "ingest": ingest_stats,
@@ -299,6 +324,8 @@ def main() -> int:
                         help="untimed queries asked after --wait-for-encoder and before the measured run")
     parser.add_argument("--encoder-threads", type=int, default=None,
                         help="cross-encoder threads; default lets onnxruntime use every core")
+    parser.add_argument("--relative-date-anchor", type=datetime.fromisoformat, default=None, metavar="ISO",
+                        help="date that relative phrases in questions count back from; default is the day of the run")
     parser.add_argument("--limit-samples", type=int, default=None)
     parser.add_argument("--limit-qa", type=int, default=None)
     parser.add_argument("--lane-note", default="", help="free text: what else ran on the machine")

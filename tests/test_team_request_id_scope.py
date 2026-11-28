@@ -1,4 +1,4 @@
-"""Pins the documented scope of request_id idempotency (docs/TEAM_SERVER_V14.md).
+"""Pins the documented scope of request_id idempotency (docs/team-server-reference.md).
 
 The request table lives in each workspace's SQLite file, in the same transaction as the write.
 A repeated request_id is therefore recognised within one scope only; another scope runs it anew.

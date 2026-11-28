@@ -1,6 +1,6 @@
 # Team server quick start
 
-One server holds personal, team and shared memory for several people. This page is the short English walkthrough; the full reference is [TEAM_SERVER_V14.md](TEAM_SERVER_V14.md) (Russian), with [TEAM_DASHBOARD.md](TEAM_DASHBOARD.md), [TEAM_POSTGRES.md](TEAM_POSTGRES.md), [TEAM_BACKUP.md](TEAM_BACKUP.md) and [TEAM_ONBOARDING.md](TEAM_ONBOARDING.md) for the individual features. `tam setup` → **Company server** runs the same steps interactively ([SETUP_WIZARD.md](SETUP_WIZARD.md)).
+One server holds personal, team and shared memory for several people. This page is the short English walkthrough; the full reference is [team-server-reference.md](team-server-reference.md), with [TEAM_DASHBOARD.md](TEAM_DASHBOARD.md), [TEAM_POSTGRES.md](TEAM_POSTGRES.md), [TEAM_BACKUP.md](TEAM_BACKUP.md) and [TEAM_ONBOARDING.md](TEAM_ONBOARDING.md) for the individual features. `tam setup` → **Company server** runs the same steps interactively ([SETUP_WIZARD.md](SETUP_WIZARD.md)).
 
 ## Choose local or server mode
 
@@ -42,7 +42,7 @@ tam-team --root ./team-data token-create petya --client cursor --out ./petya.tok
 tam-team --root ./team-data serve --host 127.0.0.1 --port 3738
 ```
 
-Open `http://127.0.0.1:3738/` and sign in with the contents of your token file. Keep each token private; give Petya his own token, not Vasya's. For access from other machines, configure an HTTPS reverse proxy to the server's `/mcp/` endpoint and web interface. [Permissions, backup, restore and server configuration](TEAM_SERVER_V14.md).
+Open `http://127.0.0.1:3738/` and sign in with the contents of your token file. Keep each token private; give Petya his own token, not Vasya's. For access from other machines, configure an HTTPS reverse proxy to the server's `/mcp/` endpoint and web interface. [Permissions, backup, restore and server configuration](team-server-reference.md).
 
 ## Start a server with Docker Compose
 
@@ -58,7 +58,7 @@ docker compose -f docker-compose.team.yml cp team-memory:/team-data/vasya.token 
 
 The web interface is at `http://127.0.0.1:3738/`. The token copied to the host is a credential: restrict file access to its owner. To add Petya, a team and membership, use the same CLI subcommands shown above through `docker compose -f docker-compose.team.yml run --rm team-memory python /app/src/team_memory/cli.py`.
 
-Compose keeps data and model caches in persistent volumes. Set `TAM_TEAM_PORT`, `TAM_TEAM_MAX_WORKERS` and LLM settings in `.env` as needed; see [.env.example](../.env.example). Plan at least 4 GiB RAM for three warm MiniLM workers and measure your own workload. [Docker server details](TEAM_SERVER_V14.md#docker).
+Compose keeps data and model caches in persistent volumes. Set `TAM_TEAM_PORT`, `TAM_TEAM_MAX_WORKERS` and LLM settings in `.env` as needed; see [.env.example](../.env.example). Plan at least 4 GiB RAM for three warm MiniLM workers and measure your own workload. [Docker server details](team-server-reference.md#docker).
 
 Continuous backup is optional: set `TAM_TEAM_REPLICA_URL=s3://bucket/path` and the bucket credentials, then add `--profile litestream`. A Litestream sidecar streams every transaction of the server's SQLite files to the bucket while the server runs, and `tam-team replication restore --to DIR [--timestamp ...]` rebuilds the server on any machine. [Backup, point-in-time restore and data deletion](TEAM_BACKUP.md).
 
@@ -81,7 +81,7 @@ Copy `src/team_memory/remote.py` to the client and supply its personal token fil
 }
 ```
 
-Replace the paths and server address. On Windows use the path to `python.exe` and Windows file paths. Local testing may use `http://127.0.0.1:3738/mcp/`; remote connections require HTTPS. If the package is installed on the client, `tam-remote` is also available. [Client configuration details](TEAM_SERVER_V14.md#лёгкий-удалённый-клиент).
+Replace the paths and server address. On Windows use the path to `python.exe` and Windows file paths. Local testing may use `http://127.0.0.1:3738/mcp/`; remote connections require HTTPS. If the package is installed on the client, `tam-remote` is also available. [Client configuration details](team-server-reference.md#lightweight-remote-client).
 
 ## Save, search and see who changed what
 
@@ -100,7 +100,7 @@ Ask your agent to call `memory_scopes` first to list available areas. These are 
 
 Call `memory_recall` with `{"query":"release checklist"}` to search all accessible areas, or add a `scope` to narrow the search. Use `memory_get` and `memory_history` with the returned record's `id` and `scope` to inspect content, author and changes. `memory_update` requires those fields plus `expected_revision`, `content` and `reason`; use the new ID returned by the update for subsequent operations. The author is taken from the token automatically.
 
-The remote tools are `memory_scopes`, `memory_save`, `memory_recall`, `memory_get`, `memory_update`, `memory_delete`, `memory_history` and `memory_export`. History and export are paginated. [Full behavior and retry rules](TEAM_SERVER_V14.md).
+The remote tools are `memory_scopes`, `memory_save`, `memory_recall`, `memory_get`, `memory_update`, `memory_delete`, `memory_history` and `memory_export`. History and export are paginated. [Full behavior and retry rules](team-server-reference.md).
 
 ## Configure internal models and CPU
 
@@ -115,6 +115,6 @@ MEMORY_EMBED_THREADS=1
 MEMORY_TORCH_THREADS=1
 ```
 
-For Docker, the Ollama address must be reachable from the container; the team profile defaults to `http://host.docker.internal:11434`. For another compatible server, select `MEMORY_LLM_PROVIDER=openai-compatible` and set `MEMORY_LLM_API_BASE`, `MEMORY_LLM_MODEL` and, if required, `MEMORY_LLM_API_KEY`. Compatibility means Chat Completions, with JSON Schema support for structured tasks. Set `MEMORY_VISION_MODEL` separately for images. Restart after changing environment settings. [Provider settings and CPU limits](LLM_V14.md).
+For Docker, the Ollama address must be reachable from the container; the team profile defaults to `http://host.docker.internal:11434`. For another compatible server, select `MEMORY_LLM_PROVIDER=openai-compatible` and set `MEMORY_LLM_API_BASE`, `MEMORY_LLM_MODEL` and, if required, `MEMORY_LLM_API_KEY`. Compatibility means Chat Completions, with JSON Schema support for structured tasks. Set `MEMORY_VISION_MODEL` separately for images. Restart after changing environment settings. [Provider settings and CPU limits](llm-settings.md).
 
 Optional remote LLM providers receive the content used in those tasks. Keep Ollama local or set `MEMORY_LLM_ENABLED=false` if that content must stay on your own infrastructure.

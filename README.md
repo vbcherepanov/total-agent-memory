@@ -30,13 +30,11 @@ any MCP client can use it without code changes.
 Each store is one directory built around a SQLite database. Recall combines
 full-text BM25, dense embeddings computed locally, fuzzy matching and a
 knowledge graph, and fuses the ranked lists with reciprocal rank fusion. A local
-cross-encoder then reranks the result: by default it starts as soon as its model
-has loaded in the background, and `MEMORY_CROSS_RERANK=off` turns it off. The
-default profile makes no LLM call on write or search, so retrieval can be
-measured offline. With the cross-encoder off, reruns on fresh stores returned
-the same ranking for every LoCoMo question. With the default setting the first
-queries of a process can run before the model has loaded, so reruns are not
-guaranteed to match. Facts can carry validity intervals (`kg_add_fact`, `kg_at`),
+cross-encoder then reranks the result; `MEMORY_CROSS_RERANK=off` turns it off
+when latency matters more than recall. The default profile makes no LLM call on
+write or search, so retrieval can be measured offline and
+[repeated](#reproducing-the-benchmarks). Facts can carry validity intervals
+(`kg_add_fact`, `kg_at`),
 and a newer value of a single-valued fact can retire the older one.
 
 TAM is for developers who use coding agents daily and for researchers who need
@@ -71,10 +69,10 @@ the ones you pick ([setup wizard](docs/SETUP_WIZARD.md)).
 
 **First start.** With no command, `tam` starts the MCP server on stdio, which
 is how MCP clients run it. `tam --help` lists the commands and `tam --version`
-prints the version (from 14.11; earlier versions start the server for any
+prints the version (from 15.0.0; earlier versions start the server for any
 argument, so use `tam setup --help` there). The first start downloads about
-330 MB of models: the text embedder (about 240 MB) and the cross-encoder (about
-90 MB). The cross-encoder loads in the background, so a short script that exits
+370 MB of models: the text embedder (about 240 MB) and the cross-encoder (about
+130 MB). The cross-encoder loads in the background, so a short script that exits
 after a few queries gets the fused order without it. fastembed keeps the models
 in the system temp directory, which macOS clears from time to time; set
 `TAM_MODEL_CACHE=~/.tam/models` to keep them.
@@ -197,50 +195,48 @@ have are skipped:
 
 ## Reproducing the benchmarks
 
-The retrieval benchmarks (LoCoMo, LongMemEval, BEAM) need no API key and run
-with scripts in [benchmarks/](benchmarks) once the public datasets are
-downloaded. The table below was measured on v13.0.0, before the cross-encoder
-became the default in 14.5, so it describes retrieval without the cross-encoder
-and not a default install of the current version:
+The retrieval benchmarks need no API key and no LLM. On
+[LoCoMo](https://github.com/snap-research/locomo) (1,536 graded questions),
+release 15.0.2 measures:
 
-| Benchmark | Metric | Result |
-|---|---|---:|
-| LongMemEval (470 questions) | R@5 (recall_any) | 95.1% |
-| LoCoMo (1,536 questions) | R@5 | 0.607 |
-| BEAM, 1M-token scale (625 probes) | R@5 | 0.448 |
+| Setting | R@1 | R@5 | R@10 | Median per query |
+|---|---:|---:|---:|---:|
+| Default (cross-encoder on) | 0.488 | 0.745 | 0.819 | about 0.9 s |
+| `MEMORY_CROSS_RERANK=off` | 0.331 | 0.609 | 0.701 | about 50 ms |
 
-Default settings score higher on LoCoMo and take much longer per query. In the
-[JOSS review](https://github.com/openjournals/joss-reviews/issues/11457) of
-v14.6.0 the editor measured R@5 of about 0.745 at about 495 ms median with the
-defaults, against 0.607 at about 18 ms with `MEMORY_CROSS_RERANK=off`. Our own
-runs of v14.6.0, three on a fresh store per setting, gave R@5 0.611 with the
-cross-encoder off and 0.746 with the default and with `on`, at about 0.95-1.0 s
-median per query on an Apple M2 Max; the median depends on the CPU. Each setting
-returned the same ranking for every question in all three runs. With the default,
-the first query of a process can arrive before the cross-encoder has loaded and
-keeps the fused order; in these runs that changed one question out of 1,986
-([rows, reports and commands](benchmarks/results/rerank-modes)). On v15.0.0,
-whose default cross-encoder is multilingual, the same machine gave R@5 0.745 at
-about 0.9 s median with the default and 0.609 at about 50 ms with the
-cross-encoder off.
+Timings are from an Apple M2 Max and depend on the CPU. Two runs on fresh
+stores return the same ranking for every question; the per-question rows of
+each run are in [benchmarks/results/rerank-modes](benchmarks/results/rerank-modes).
 
-Dataset locations, commands, end-to-end (LLM-judged) accuracy, negative
-controls, latency and the 14.x studies are in
-[docs/benchmarks.md](docs/benchmarks.md).
+To repeat the measurement, download `locomo10.json` to
+`benchmarks/data/locomo/data/` and run:
+
+```bash
+export MEMORY_LLM_ENABLED=false
+.venv/bin/python benchmarks/locomo_rerank_modes.py --db-root /tmp/tam-locomo/stores --out-dir /tmp/tam-locomo/out --mode off --label run1
+.venv/bin/python benchmarks/locomo_rerank_modes.py --db-root /tmp/tam-locomo/stores --out-dir /tmp/tam-locomo/out --mode auto --label warm-run1 --wait-for-encoder --warmup-queries 3
+```
+
+The first command takes about 7 minutes, the second about 35.
+[docs/benchmarks.md](docs/benchmarks.md) has the results by question category,
+the two known conditions under which a ranking can differ between runs,
+measured write and search cost, LongMemEval and BEAM, LLM-judged accuracy and
+the comparison with Mem0 Platform.
 
 ## Documentation
 
-- [Installation guide](docs/installation.md): all channels, per-platform setup, WSL2, IDE matrix, troubleshooting
-- [Setup wizard](docs/SETUP_WIZARD.md): `tam setup` and the team server's web wizard
-- [Tools and interfaces](docs/tools.md): the 79 MCP tools, CLI, TypeScript SDK, dashboard
-- [Configuration](docs/configuration.md): environment variables, LLM providers, performance tuning
-- [Local settings page](docs/LOCAL_SETTINGS.md) and [internal LLM settings](docs/LLM_V14.md)
-- [Architecture](docs/architecture.md)
-- [Team server quick start](docs/team-server.md), with [dashboard](docs/TEAM_DASHBOARD.md), [PostgreSQL](docs/TEAM_POSTGRES.md), [backup](docs/TEAM_BACKUP.md), [onboarding](docs/TEAM_ONBOARDING.md) and [reports](docs/REPORTS.md)
-- [Benchmarks](docs/benchmarks.md) and [comparison with other systems (April 2026 snapshot)](docs/vs-competitors.md)
-- [Updating and upgrading](docs/upgrading.md)
-- [What is new in 14.x](docs/whats-new.md), [roadmap and v8–v13 history](docs/roadmap.md), [CHANGELOG](CHANGELOG.md)
-- [Security policy](SECURITY.md)
+Most people need only the quick start above. When you need more, read in this
+order:
+
+1. [Installation guide](docs/installation.md), if the quick start did not fit
+   your platform or client.
+2. [Tools](docs/tools.md): what the agent can call.
+3. [Configuration](docs/configuration.md): the settings worth changing.
+4. [Team server](docs/team-server.md), if several people share a memory.
+5. [Benchmarks](docs/benchmarks.md): measured results and how to reproduce them.
+
+Everything else, grouped by reader, is in the
+[documentation index](docs/README.md).
 
 ## Citation
 

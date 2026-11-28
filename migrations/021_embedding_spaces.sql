@@ -7,7 +7,7 @@
 -- text → BGE-small, code → jina-embeddings-v2-base-code) without a full
 -- re-encode of the whole DB.
 --
--- The design is documented in docs/v11/audit.md §J.
+-- The design is documented in docs/archive/v11/audit.md §J.
 
 -- ── New columns ──────────────────────────────────────────────────────
 -- ALTER TABLE in SQLite is idempotent only if we guard with the column

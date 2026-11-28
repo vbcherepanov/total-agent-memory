@@ -31,7 +31,7 @@ analyze_query / query_rewriter on retrieval.
 | `MEMORY_RERANK_ENABLED`                         | _(did not exist; `rerank=true` honoured)_      | `false` (caller `rerank=true` ignored unless flag set) |
 | `MEMORY_ASYNC_ENRICHMENT`                       | `false` (opt-in)                               | auto-`true` in `balanced` / `deep`, else `false`    |
 
-Source of truth: [`docs/v11/audit.md` § A–G](audit.md).
+Source of truth: [`docs/archive/v11/audit.md` § A–G](audit.md).
 
 ---
 

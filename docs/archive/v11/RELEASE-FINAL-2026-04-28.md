@@ -1,13 +1,13 @@
 # v11.0.0 Release Final Summary (2026-04-28)
 
 This is the session-end record. The full architecture overview lives in
-`docs/v11/RELEASE-NOTES.md`. This file captures **what actually shipped**
+`docs/archive/v11/RELEASE-NOTES.md`. This file captures **what actually shipped**
 after benchmarking, what's known to regress, and what to do next.
 
 ## Final LoCoMo numbers (1986 QA, gpt-4o gen, gpt-4o-mini judge)
 
 Run: `benchmarks/results/v11_FINAL_v2_recall_fixed.json`
-Command: see `docs/v11/RELEASE-NOTES.md` § Roadmap.
+Command: see `docs/archive/v11/RELEASE-NOTES.md` § Roadmap.
 
 | Category | n | Acc | R@1 | R@5 | R@10 |
 |---|---|---|---|---|---|

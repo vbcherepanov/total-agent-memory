@@ -7,7 +7,7 @@ telemetry counters report **zero** LLM/network calls. If a counter rises,
 the bench exits non-zero and prints which counter spiked — that surfaces a
 silent regression in the hot path immediately.
 
-Outputs a Markdown table to stdout AND to `docs/v11/benchmark.md`.
+Outputs a Markdown table to stdout AND to `docs/archive/v11/benchmark.md`.
 
 Usage:
     python scripts/memory-bench
@@ -200,7 +200,7 @@ def main() -> int:
     print(table)
 
     # Persist.
-    out_path = ROOT / "docs" / "v11" / "benchmark.md"
+    out_path = ROOT / "docs" / "archive" / "v11" / "benchmark.md"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     header = "# v11.0 hot-path benchmark\n\n"
     header += f"_Generated: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}_\n\n"

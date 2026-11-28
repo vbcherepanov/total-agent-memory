@@ -6,6 +6,18 @@ save or recall hot path, open an issue first; those two paths carry latency
 guarantees and a CI gate, and it is cheaper to agree on an approach than to
 rewrite a merged PR.
 
+## Getting help and reporting problems
+
+- **Questions and usage help:** open an issue at
+  <https://github.com/vbcherepanov/total-agent-memory/issues>. Questions are
+  welcome there.
+- **Bugs:** use the same tracker; see [Reporting a bug](#reporting-a-bug) for
+  what to include.
+- **Security problems:** follow [SECURITY.md](SECURITY.md); do not open a
+  public issue.
+
+Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Development setup
 
 ```bash

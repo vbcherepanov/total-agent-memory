@@ -8839,10 +8839,10 @@ async def _dispatch_tool(name, a):
             report["embedding_cache_v11"] = _v11_ec.stats(store.db)
         except Exception as e:
             report["embedding_cache_v11_error"] = str(e)
-        # Optional benchmark snapshot from docs/v11/benchmark.md.
+        # Optional benchmark snapshot from docs/archive/v11/benchmark.md.
         try:
             from pathlib import Path as _P
-            bench = _P(__file__).resolve().parent.parent / "docs" / "v11" / "benchmark.md"
+            bench = _P(__file__).resolve().parent.parent / "docs" / "archive" / "v11" / "benchmark.md"
             if bench.is_file():
                 report["benchmark_md_bytes"] = bench.stat().st_size
                 report["benchmark_md_path"] = str(bench)
